@@ -55,7 +55,7 @@ async def handle_upload(file: UploadFile = File(...)):
      - No markdown code blocks (like ```html), no preamble, no conversational text. Just the <table> tag."""
 
         # Using gemini-1.5-flash as requested
-        model = GenerativeModel("gemini-1.5-flash")
+        model = GenerativeModel("gemini-2.0-flash")
         
         # Generate content
         response = model.generate_content(
