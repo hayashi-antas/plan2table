@@ -1,4 +1,5 @@
 import os
+import re
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 from fastapi import FastAPI, File, UploadFile, Request
@@ -65,7 +66,15 @@ async def handle_upload(file: UploadFile = File(...)):
             }
         )
         
-        return response.text
+        raw_text = response.text or ""
+        # Prefer the HTML table if the model wrapped it in markdown fences or extra text.
+        table_match = re.search(r"<table\\b[\\s\\S]*?</table>", raw_text, re.IGNORECASE)
+        if table_match:
+            return table_match.group(0)
+        # Fallback: strip markdown code fences if present.
+        cleaned_text = re.sub(r"^```[a-zA-Z]*\\n?", "", raw_text.strip())
+        cleaned_text = re.sub(r"```$", "", cleaned_text.strip())
+        return cleaned_text
 
     except Exception as e:
         # Log the error for debugging (on the server console)
