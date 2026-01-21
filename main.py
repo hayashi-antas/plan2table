@@ -1,23 +1,27 @@
 import os
 import json
 import html
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from google import genai
+from google.genai import types
 from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 import uvicorn
+import markdown
 from prompts import load_prompt
 from extractors.text_extractor import extract_text_from_pdf
 from extractors.area_regex import extract_summary_areas
+from extractors.tool_definitions import TOOLS, SKILL_REGISTRY
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# Initialize Vertex AI
+# Initialize Vertex AI (new google-genai client)
 # We use the environment variable GOOGLE_CLOUD_PROJECT as requested.
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-location = "us-central1" # Defaulting to us-central1
+location = os.getenv("VERTEX_LOCATION", "global")
+MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3-flash-preview")
+genai_client = None
 
 # Handle Credentials for Hugging Face Spaces
 # If GCP_SERVICE_ACCOUNT_KEY env var exists (JSON content), write it to a file
@@ -29,8 +33,13 @@ if service_account_json:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
     print(f"Credentials saved to {cred_file_path}")
 
-if project_id:
-    vertexai.init(project=project_id, location=location)
+try:
+    if project_id:
+        genai_client = genai.Client(vertexai=True, project=project_id, location=location)
+    else:
+        genai_client = genai.Client(vertexai=True, location=location)
+except Exception as exc:
+    print(f"Failed to initialize Vertex AI client: {exc}")
 
 def _stringify_cell(value):
     if value is None:
@@ -210,6 +219,76 @@ def _build_debug_html(extracted_text, regex_summary, raw_text):
         f"</details>"
     )
 
+
+def _get_function_calls(response):
+    """Extract all function calls from all parts of all candidates."""
+    func_calls = []
+    try:
+        candidates = response.candidates or []
+    except Exception:
+        return []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            func_call = getattr(part, "function_call", None)
+            if func_call:
+                func_calls.append(func_call)
+    return func_calls
+
+
+def _execute_function_call(func_call):
+    name = getattr(func_call, "name", "")
+    args = getattr(func_call, "args", None) or {}
+    handler = SKILL_REGISTRY.get(name)
+    if not handler:
+        return name, {"error": f"Unknown tool: {name}"}
+    try:
+        result = handler(**args)
+        return name, {"result": result}
+    except Exception as exc:
+        return name, {"error": str(exc)}
+
+
+def _generate_with_tools(client, model_name, parts, generation_config):
+    """Handle chat + tool execution loop with the google-genai models API."""
+    if client is None:
+        raise RuntimeError("Vertex AI client is not initialized.")
+
+    config = types.GenerateContentConfig(
+        tools=TOOLS,
+        **generation_config,
+    )
+
+    messages = [types.Content(role="user", parts=parts)]
+    response = client.models.generate_content(
+        model=model_name,
+        contents=messages,
+        config=config,
+    )
+
+    for _ in range(6):
+        func_calls = _get_function_calls(response)
+        if not func_calls:
+            break
+
+        tool_responses = []
+        for func_call in func_calls:
+            name, payload = _execute_function_call(func_call)
+            tool_part = types.Part.from_function_response(name=name, response=payload)
+            tool_responses.append(tool_part)
+
+        # Append model turn and tool responses to the conversation history
+        messages.append(response.candidates[0].content)
+        messages.append(types.Content(role="user", parts=tool_responses))
+
+        response = client.models.generate_content(
+            model=model_name,
+            contents=messages,
+            config=config,
+        )
+    return response
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
@@ -232,20 +311,21 @@ async def handle_upload(file: UploadFile = File(...)):
         regex_summary = extract_summary_areas(extracted_text)
 
         # Prepare the request for Vertex AI
-        pdf_part = Part.from_data(data=file_bytes, mime_type="application/pdf")
+        pdf_part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
         
         prompt_text = load_prompt("area_extract")
+        prompt_part = types.Part.from_text(text=prompt_text)
 
-        # Using gemini-2.0-flash for extraction
-        model = GenerativeModel("gemini-2.0-flash")
-        
-        # Generate content
-        response = model.generate_content(
-            [pdf_part, prompt_text],
-            generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 2048,
-            }
+        generation_config = {
+            "temperature": 0.1,
+            "max_output_tokens": 8192,
+        }
+
+        response = _generate_with_tools(
+            genai_client,
+            MODEL_NAME,
+            [pdf_part, prompt_part],
+            generation_config=generation_config,
         )
         
         raw_text = response.text or ""
@@ -253,22 +333,27 @@ async def handle_upload(file: UploadFile = File(...)):
         if not isinstance(data, dict):
             return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
 
-        columns = data.get("columns", [])
-        rows = data.get("rows", [])
-        summary = data.get("summary", {})
-        if not isinstance(columns, list) or not isinstance(rows, list):
-            return _render_parse_error(raw_text, "columnsまたはrowsの形式が不正です。")
+        report_md = data.get("report_markdown", "")
+        if not report_md:
+            return _render_parse_error(raw_text, "レポート内容（report_markdown）が空です。")
 
-        if not isinstance(summary, dict):
-            summary = {}
-        for key, value in regex_summary.items():
-            if summary.get(key, "") == "":
-                summary[key] = value
+        # Convert Markdown to HTML
+        report_html = markdown.markdown(
+            report_md,
+            extensions=['tables', 'fenced_code']
+        )
 
-        summary_html = _build_summary_html(summary)
-        table_html = _build_table_html(columns, rows)
+        # Build debug info
         debug_html = _build_debug_html(extracted_text, regex_summary, raw_text)
-        return summary_html + table_html + debug_html
+        
+        # Wrapping in a styled div for better look
+        styled_report = f"""
+        <div class="prose prose-invert max-w-5xl mx-auto bg-slate-800/50 p-6 rounded-2xl border border-slate-700 shadow-xl space-y-6">
+            {report_html}
+        </div>
+        """
+        
+        return styled_report + debug_html
 
     except Exception as e:
         # Log the error for debugging (on the server console)

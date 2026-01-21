@@ -2,6 +2,9 @@ fastapi
 uvicorn
 python-multipart
 google-cloud-aiplatform
+google-genai
 jinja2
 pdfplumber
 pytest
+markdown
+markupsafe
