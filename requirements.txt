@@ -3,3 +3,5 @@ uvicorn
 python-multipart
 google-cloud-aiplatform
 jinja2
+pdfplumber
+pytest

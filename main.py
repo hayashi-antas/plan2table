@@ -7,6 +7,9 @@ from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 import uvicorn
+from prompts import load_prompt
+from extractors.text_extractor import extract_text_from_pdf
+from extractors.area_regex import extract_summary_areas
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -129,6 +132,44 @@ def _build_table_html(columns, rows):
         f"</table>"
     )
 
+def _build_summary_html(summary):
+    if not isinstance(summary, dict) or not summary:
+        return ""
+    labels = {
+        "exclusive_area_m2": "住戸専用面積(m2)",
+        "balcony_area_m2": "バルコニー面積(m2)",
+        "total_area_m2": "延床面積(m2)",
+        "unit_type": "間取りタイプ",
+        "floor": "階数",
+        "orientation": "方位",
+    }
+    rows = []
+    for key, label in labels.items():
+        value = _stringify_cell(summary.get(key, ""))
+        if value == "":
+            continue
+        rows.append((label, value))
+    if not rows:
+        return ""
+
+    card_class = "mb-6 rounded-xl border border-slate-700 bg-slate-800/70 p-4 text-slate-200"
+    title_class = "mb-3 text-sm font-semibold uppercase tracking-wider text-sky-300"
+    grid_class = "grid grid-cols-1 gap-3 md:grid-cols-2"
+    label_class = "text-xs uppercase tracking-wider text-slate-400"
+    value_class = "text-sm text-slate-100"
+    items = []
+    for label, value in rows:
+        items.append(
+            f"<div><div class=\"{label_class}\">{html.escape(label)}</div>"
+            f"<div class=\"{value_class}\">{html.escape(str(value))}</div></div>"
+        )
+    return (
+        f"<section class=\"{card_class}\">"
+        f"<div class=\"{title_class}\">住戸概要</div>"
+        f"<div class=\"{grid_class}\">{''.join(items)}</div>"
+        f"</section>"
+    )
+
 def _render_parse_error(raw_text, reason):
     snippet = (raw_text or "").strip() or "(empty response)"
     if len(snippet) > 2000:
@@ -141,6 +182,33 @@ def _render_parse_error(raw_text, reason):
         <pre class="mt-3 max-h-72 overflow-auto rounded-md bg-slate-900/60 p-3 text-xs text-slate-200">{snippet}</pre>
     </div>
     """
+
+def _build_debug_html(extracted_text, regex_summary, raw_text):
+    text_snippet = (extracted_text or "").strip() or "(no text extracted)"
+    if len(text_snippet) > 2000:
+        text_snippet = text_snippet[:2000] + "\n... (truncated)"
+    text_snippet = html.escape(text_snippet, quote=True)
+
+    regex_json = html.escape(json.dumps(regex_summary, ensure_ascii=False, indent=2), quote=True)
+    raw_snippet = (raw_text or "").strip() or "(empty response)"
+    if len(raw_snippet) > 2000:
+        raw_snippet = raw_snippet[:2000] + "\n... (truncated)"
+    raw_snippet = html.escape(raw_snippet, quote=True)
+
+    container_class = "mt-6 rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-slate-200"
+    summary_class = "cursor-pointer text-sm font-semibold text-sky-300"
+    pre_class = "mt-3 max-h-64 overflow-auto rounded-md bg-slate-900/80 p-3 text-xs text-slate-200"
+    return (
+        f"<details class=\"{container_class}\">"
+        f"<summary class=\"{summary_class}\">デバッグ情報</summary>"
+        f"<div class=\"mt-4 text-xs uppercase tracking-wider text-slate-400\">抽出テキスト</div>"
+        f"<pre class=\"{pre_class}\">{text_snippet}</pre>"
+        f"<div class=\"mt-4 text-xs uppercase tracking-wider text-slate-400\">正規表現ヒット</div>"
+        f"<pre class=\"{pre_class}\">{regex_json}</pre>"
+        f"<div class=\"mt-4 text-xs uppercase tracking-wider text-slate-400\">LLM生レスポンス</div>"
+        f"<pre class=\"{pre_class}\">{raw_snippet}</pre>"
+        f"</details>"
+    )
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -159,28 +227,14 @@ async def handle_upload(file: UploadFile = File(...)):
         # Read file content
         file_bytes = await file.read()
         
+        # Extract text from PDF for rule-based fallback
+        extracted_text = extract_text_from_pdf(file_bytes)
+        regex_summary = extract_summary_areas(extracted_text)
+
         # Prepare the request for Vertex AI
         pdf_part = Part.from_data(data=file_bytes, mime_type="application/pdf")
         
-        prompt_text = """あなたは建築図面を解析する専門家です。添付のPDF図面を解析し、表形式の情報を抽出してください。
-出力は必ずJSONのみ。Markdown、コードブロック、前置き、説明文は禁止です。
-必ず以下のトップレベル構造にしてください。
-{
-  "columns": [
-    {"key": "room_name", "label": "室名", "hint": "任意"}
-  ],
-  "rows": [
-    {"room_name": "玄関"}
-  ],
-  "meta": {"notes": "..."}
-}
-ルール:
-- columnsは表示順序。labelは画面表示名。keyはrowsのキー名（英数字と_のみ推奨）。
-- rowsの各行はcolumns.keyに対応する値を持つ。無い場合は""で良い。
-- 図面に表が存在する場合：表の見出しをcolumns.labelにして忠実にcolumns/rows化する。
-- 表が無い場合：推定でcolumnsを構成して良い（例：室名/面積/仕上げ/天井高 など）。
-- 不明な値は""（空文字）。
-- 出力はJSONのみ。余計な文字は一切出力しない。"""
+        prompt_text = load_prompt("area_extract")
 
         # Using gemini-2.0-flash for extraction
         model = GenerativeModel("gemini-2.0-flash")
@@ -201,10 +255,20 @@ async def handle_upload(file: UploadFile = File(...)):
 
         columns = data.get("columns", [])
         rows = data.get("rows", [])
+        summary = data.get("summary", {})
         if not isinstance(columns, list) or not isinstance(rows, list):
             return _render_parse_error(raw_text, "columnsまたはrowsの形式が不正です。")
 
-        return _build_table_html(columns, rows)
+        if not isinstance(summary, dict):
+            summary = {}
+        for key, value in regex_summary.items():
+            if summary.get(key, "") == "":
+                summary[key] = value
+
+        summary_html = _build_summary_html(summary)
+        table_html = _build_table_html(columns, rows)
+        debug_html = _build_debug_html(extracted_text, regex_summary, raw_text)
+        return summary_html + table_html + debug_html
 
     except Exception as e:
         # Log the error for debugging (on the server console)
