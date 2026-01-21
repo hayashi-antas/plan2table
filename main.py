@@ -106,12 +106,12 @@ def _build_table_html(columns, rows):
     if not safe_columns:
         safe_columns = [{"key": "_empty", "label": "データなし", "hint": ""}]
 
-    table_class = "min-w-full table-auto border border-slate-700 rounded-xl overflow-hidden bg-slate-800 text-slate-200"
-    thead_class = "bg-slate-900"
-    th_class = "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-sky-300 border-b border-slate-700"
-    td_class = "px-4 py-3 text-sm text-slate-200 border-b border-slate-700 whitespace-pre-wrap"
-    row_class = "hover:bg-slate-700/60"
-    empty_td_class = "px-4 py-6 text-sm text-slate-400 text-center"
+    table_class = "min-w-full table-auto border border-stone/30 overflow-hidden bg-paper text-ink"
+    thead_class = "bg-paper-dark"
+    th_class = "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-wood-dark border-b border-wood"
+    td_class = "px-4 py-3 text-sm text-ink-light border-b border-stone/20 whitespace-pre-wrap"
+    row_class = "hover:bg-paper-dark/50"
+    empty_td_class = "px-4 py-6 text-sm text-ink-muted text-center"
 
     header_cells = []
     for col in safe_columns:
@@ -161,11 +161,11 @@ def _build_summary_html(summary):
     if not rows:
         return ""
 
-    card_class = "mb-6 rounded-xl border border-slate-700 bg-slate-800/70 p-4 text-slate-200"
-    title_class = "mb-3 text-sm font-semibold uppercase tracking-wider text-sky-300"
+    card_class = "mb-6 rounded-sm border border-stone/30 bg-paper-dark p-4 text-ink"
+    title_class = "mb-3 text-sm font-semibold uppercase tracking-wider text-wood-dark"
     grid_class = "grid grid-cols-1 gap-3 md:grid-cols-2"
-    label_class = "text-xs uppercase tracking-wider text-slate-400"
-    value_class = "text-sm text-slate-100"
+    label_class = "text-xs uppercase tracking-wider text-ink-muted"
+    value_class = "text-sm text-ink-light"
     items = []
     for label, value in rows:
         items.append(
@@ -186,38 +186,46 @@ def _render_parse_error(raw_text, reason):
     snippet = html.escape(snippet, quote=True)
     reason = html.escape(reason, quote=True)
     return f"""
-    <div class="p-4 bg-amber-900/40 border border-amber-500 text-amber-100 rounded-lg">
+    <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
         <strong>JSON解析に失敗しました:</strong> {reason}
-        <pre class="mt-3 max-h-72 overflow-auto rounded-md bg-slate-900/60 p-3 text-xs text-slate-200">{snippet}</pre>
+        <pre class="mt-3 max-h-72 overflow-auto rounded-sm bg-paper-dark p-3 text-xs text-ink-light">{snippet}</pre>
     </div>
     """
 
-def _build_debug_html(extracted_text, regex_summary, raw_text):
+def _build_debug_script(extracted_text, regex_summary, raw_text):
+    """Build a script tag that logs debug info to browser console."""
     text_snippet = (extracted_text or "").strip() or "(no text extracted)"
-    if len(text_snippet) > 2000:
-        text_snippet = text_snippet[:2000] + "\n... (truncated)"
-    text_snippet = html.escape(text_snippet, quote=True)
+    if len(text_snippet) > 5000:
+        text_snippet = text_snippet[:5000] + "\n... (truncated)"
 
-    regex_json = html.escape(json.dumps(regex_summary, ensure_ascii=False, indent=2), quote=True)
+    regex_json_str = json.dumps(regex_summary, ensure_ascii=False, indent=2)
     raw_snippet = (raw_text or "").strip() or "(empty response)"
-    if len(raw_snippet) > 2000:
-        raw_snippet = raw_snippet[:2000] + "\n... (truncated)"
-    raw_snippet = html.escape(raw_snippet, quote=True)
+    if len(raw_snippet) > 5000:
+        raw_snippet = raw_snippet[:5000] + "\n... (truncated)"
 
-    container_class = "mt-6 rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-slate-200"
-    summary_class = "cursor-pointer text-sm font-semibold text-sky-300"
-    pre_class = "mt-3 max-h-64 overflow-auto rounded-md bg-slate-900/80 p-3 text-xs text-slate-200"
-    return (
-        f"<details class=\"{container_class}\">"
-        f"<summary class=\"{summary_class}\">デバッグ情報</summary>"
-        f"<div class=\"mt-4 text-xs uppercase tracking-wider text-slate-400\">抽出テキスト</div>"
-        f"<pre class=\"{pre_class}\">{text_snippet}</pre>"
-        f"<div class=\"mt-4 text-xs uppercase tracking-wider text-slate-400\">正規表現ヒット</div>"
-        f"<pre class=\"{pre_class}\">{regex_json}</pre>"
-        f"<div class=\"mt-4 text-xs uppercase tracking-wider text-slate-400\">LLM生レスポンス</div>"
-        f"<pre class=\"{pre_class}\">{raw_snippet}</pre>"
-        f"</details>"
-    )
+    # Escape for JavaScript string (handle quotes, newlines, backslashes)
+    def js_escape(s):
+        return (s
+            .replace("\\", "\\\\")
+            .replace("`", "\\`")
+            .replace("${", "\\${"))
+
+    text_escaped = js_escape(text_snippet)
+    regex_escaped = js_escape(regex_json_str)
+    raw_escaped = js_escape(raw_snippet)
+
+    return f"""
+    <script>
+    console.group('%c📐 図面解析デバッグ情報', 'font-weight: bold; font-size: 14px; color: #8b5a2b;');
+    console.log('%c抽出テキスト:', 'font-weight: bold; color: #6b4423;');
+    console.log(`{text_escaped}`);
+    console.log('%c正規表現ヒット:', 'font-weight: bold; color: #6b4423;');
+    console.log(`{regex_escaped}`);
+    console.log('%cLLM生レスポンス:', 'font-weight: bold; color: #6b4423;');
+    console.log(`{raw_escaped}`);
+    console.groupEnd();
+    </script>
+    """
 
 
 def _get_function_calls(response):
@@ -297,7 +305,7 @@ async def read_root(request: Request):
 async def handle_upload(file: UploadFile = File(...)):
     if not file.filename.lower().endswith('.pdf'):
         return """
-        <div class="p-4 bg-red-900/50 border border-red-500 text-red-200 rounded-lg">
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
             <strong>Error:</strong> Please upload a valid PDF file.
         </div>
         """
@@ -343,24 +351,24 @@ async def handle_upload(file: UploadFile = File(...)):
             extensions=['tables', 'fenced_code']
         )
 
-        # Build debug info
-        debug_html = _build_debug_html(extracted_text, regex_summary, raw_text)
+        # Build debug info (outputs to browser console)
+        debug_script = _build_debug_script(extracted_text, regex_summary, raw_text)
         
         # Wrapping in a styled div for better look
         styled_report = f"""
-        <div class="prose prose-invert max-w-5xl mx-auto bg-slate-800/50 p-6 rounded-2xl border border-slate-700 shadow-xl space-y-6">
+        <div class="prose max-w-5xl mx-auto bg-paper p-6 rounded-sm border border-stone/30 space-y-6">
             {report_html}
         </div>
         """
         
-        return styled_report + debug_html
+        return styled_report + debug_script
 
     except Exception as e:
         # Log the error for debugging (on the server console)
         print(f"Error processing upload: {e}")
         safe_error = html.escape(str(e), quote=True)
         return f"""
-        <div class="p-4 bg-red-900/50 border border-red-500 text-red-200 rounded-lg">
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
             <strong>Error Processing Request:</strong><br>
             {safe_error}
         </div>

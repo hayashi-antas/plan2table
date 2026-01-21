@@ -3,222 +3,613 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>図面解析ツール</title>
+    <title>図面解析ツール | Blueprint Analyzer</title>
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Noto+Serif+JP:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
     
-    <!-- Tails and Htmx -->
+    <!-- Tailwind and HTMX -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        serif: ['Cormorant Garamond', 'Noto Serif JP', 'serif'],
+                        sans: ['Source Sans 3', 'sans-serif'],
+                    },
+                    colors: {
+                        // Warm architectural palette
+                        paper: '#f7f3ed',
+                        'paper-dark': '#ebe5db',
+                        ink: '#2c2416',
+                        'ink-light': '#5c5243',
+                        'ink-muted': '#8a8072',
+                        wood: '#8b5a2b',
+                        'wood-dark': '#6b4423',
+                        copper: '#b87333',
+                        'copper-light': '#d4956a',
+                        blueprint: '#1e3a5f',
+                        'blueprint-light': '#2d5a8a',
+                        stone: '#9c9486',
+                    }
+                }
+            }
+        }
+    </script>
 
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #0f172a; /* Slate 900 */
-            color: #e2e8f0; /* Slate 200 */
+        * {
+            box-sizing: border-box;
         }
         
-        /* Markdown Styles (Tailwindなしでシンプルに記述) */
-        .prose {
-            line-height: 1.6;
-        }
-        .prose h1 { font-size: 1.9rem; font-weight: 700; margin: 0 0 1rem; color: #fff; }
-        .prose h2 { font-size: 1.4rem; font-weight: 700; margin: 1.4rem 0 0.75rem; color: #7dd3fc; border-bottom: 1px solid #334155; padding-bottom: 0.35rem; }
-        .prose h3 { font-size: 1.2rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #e2e8f0; }
-        .prose p { margin: 0 0 0.85rem; color: #cbd5e1; }
-        .prose ul { margin: 0 0 1rem 1.25rem; color: #cbd5e1; }
-        .prose ol { margin: 0 0 1rem 1.25rem; color: #cbd5e1; }
-        .prose li { margin-bottom: 0.35rem; }
-        .prose strong { font-weight: 700; color: #e2e8f0; }
-
-        /* テーブルを横スクロール可能にし、詰まりを解消 */
-        .prose table {
-            display: block;
-            width: 100%;
-            overflow-x: auto;
-            border-collapse: separate;
-            border-spacing: 0;
-            background: rgba(15, 23, 42, 0.8); /* Slate 900 / 80% */
-            border: 1px solid #334155; /* Slate 700 */
-            border-radius: 12px;
-            margin-bottom: 1rem;
-            white-space: nowrap;
-        }
-        .prose thead { background: #0b1224; }
-        .prose th {
-            padding: 0.75rem 1rem;
-            text-align: left;
-            font-size: 0.75rem;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            font-weight: 700;
-            color: #7dd3fc; /* Sky 300 */
-            border-bottom: 1px solid #334155;
-            background: #0b1224;
-        }
-        .prose td {
-            padding: 0.75rem 1rem;
-            font-size: 0.92rem;
-            color: #cbd5e1;
-            border-bottom: 1px solid #334155;
-        }
-        .prose tr:last-child td { border-bottom: none; }
-        .prose table::-webkit-scrollbar { height: 8px; }
-        .prose table::-webkit-scrollbar-track { background: #1e293b; }
-        .prose table::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-        .prose table::-webkit-scrollbar-thumb:hover { background: #64748b; }
-
-        .glass-panel {
-            background: rgba(30, 41, 59, 0.7);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        body {
+            font-family: 'Source Sans 3', sans-serif;
+            background-color: #f7f3ed;
+            color: #2c2416;
         }
 
-        /* Loading Animation */
+        /* Blueprint grid background - like old drafting paper */
+        .blueprint-grid {
+            background-color: #f7f3ed;
+            background-image: 
+                linear-gradient(#e8e0d4 1px, transparent 1px),
+                linear-gradient(90deg, #e8e0d4 1px, transparent 1px),
+                linear-gradient(#ebe5db 0.5px, transparent 0.5px),
+                linear-gradient(90deg, #ebe5db 0.5px, transparent 0.5px);
+            background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+        }
+
+        /* Decorative corner marks like architectural drawings */
+        .corner-marks::before,
+        .corner-marks::after {
+            content: '';
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border-color: #8a8072;
+            opacity: 0.5;
+        }
+        .corner-marks::before {
+            top: -1px;
+            left: -1px;
+            border-top: 2px solid;
+            border-left: 2px solid;
+        }
+        .corner-marks::after {
+            bottom: -1px;
+            right: -1px;
+            border-bottom: 2px solid;
+            border-right: 2px solid;
+        }
+
+        /* Main card with paper texture feel */
+        .paper-card {
+            background: linear-gradient(135deg, #ffffff 0%, #faf8f5 50%, #f5f1ea 100%);
+            box-shadow: 
+                0 1px 3px rgba(44, 36, 22, 0.08),
+                0 8px 32px rgba(44, 36, 22, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+
+        /* Upload dropzone - like a drafting table area */
+        .dropzone {
+            border: 2px dashed #b8a68c;
+            background: linear-gradient(135deg, #fdfcfa 0%, #f9f6f1 100%);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .dropzone::before {
+            content: '';
+            position: absolute;
+            inset: 8px;
+            border: 1px solid #e8e0d4;
+            pointer-events: none;
+        }
+        
+        .dropzone:hover,
+        .dropzone.dragover {
+            border-color: #8b5a2b;
+            background: linear-gradient(135deg, #fdfcfa 0%, #f5efe5 100%);
+        }
+
+        /* File input styling */
+        input[type="file"] {
+            display: none;
+        }
+
+        /* Loading Animation - compass style */
         .loader {
-            border: 3px solid rgba(255,255,255,0.1);
-            border-radius: 50%;
-            border-top: 3px solid #38bdf8; /* Sky 400 */
             width: 24px;
             height: 24px;
-            -webkit-animation: spin 1s linear infinite; /* Safari */
+            border: 2px solid #e8e0d4;
+            border-radius: 50%;
+            border-top-color: #8b5a2b;
             animation: spin 1s linear infinite;
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            to { transform: rotate(360deg); }
         }
 
-        /* Custom scrollbar */
+        /* Pulse animation for loading text */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .animate-pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        /* Button with wood/copper feel */
+        .btn-architectural {
+            background: linear-gradient(135deg, #8b5a2b 0%, #6b4423 100%);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-architectural::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.15), transparent);
+            pointer-events: none;
+        }
+        
+        .btn-architectural:hover {
+            background: linear-gradient(135deg, #9d6a35 0%, #7d5429 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(107, 68, 35, 0.3);
+        }
+
+        /* HTMX indicator - use opacity for HTMX compatibility */
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 200ms ease-in;
+        }
+        
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+        
+        .htmx-request.htmx-indicator {
+            opacity: 1;
+        }
+        
+        /* Hide text during request */
+        .hide-on-request {
+            transition: opacity 200ms ease-in;
+        }
+        
+        .htmx-request .hide-on-request {
+            opacity: 0;
+        }
+
+        /* Disable button during request */
+        .htmx-request button[type="submit"],
+        form.htmx-request button[type="submit"] {
+            opacity: 0.7;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Typography for headings */
+        .heading-serif {
+            font-family: 'Cormorant Garamond', 'Noto Serif JP', serif;
+            letter-spacing: 0.02em;
+        }
+
+        /* Result/Prose Styles - like technical documentation */
+        .prose {
+            line-height: 1.8;
+            font-family: 'Source Sans 3', sans-serif;
+        }
+        .prose h1 { 
+            font-family: 'Cormorant Garamond', 'Noto Serif JP', serif;
+            font-size: 1.75rem; 
+            font-weight: 600; 
+            margin: 0 0 1rem; 
+            color: #2c2416;
+            border-bottom: 2px solid #8b5a2b;
+            padding-bottom: 0.5rem;
+        }
+        .prose h2 { 
+            font-family: 'Cormorant Garamond', 'Noto Serif JP', serif;
+            font-size: 1.25rem; 
+            font-weight: 600; 
+            margin: 1.5rem 0 0.75rem; 
+            color: #6b4423;
+        }
+        .prose h3 { 
+            font-size: 1rem; 
+            font-weight: 600; 
+            margin: 1rem 0 0.5rem; 
+            color: #5c5243; 
+        }
+        .prose p { margin: 0 0 1rem; color: #5c5243; }
+        .prose ul, .prose ol { margin: 0 0 1rem 1.5rem; color: #5c5243; }
+        .prose li { margin-bottom: 0.5rem; }
+        .prose strong { font-weight: 600; color: #2c2416; }
+
+        /* Table styles - like specification sheets */
+        .prose table,
+        #result table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fdfcfa;
+            border: 1px solid #d4cbbe;
+            margin: 1rem 0;
+            font-size: 0.875rem;
+        }
+        
+        .prose thead,
+        #result thead {
+            background: linear-gradient(135deg, #f5f1ea 0%, #ebe5db 100%);
+        }
+        
+        .prose th,
+        #result th {
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #6b4423;
+            border-bottom: 2px solid #8b5a2b;
+            font-family: 'Source Sans 3', sans-serif;
+        }
+        
+        .prose td,
+        #result td {
+            padding: 0.875rem 1rem;
+            color: #5c5243;
+            border-bottom: 1px solid #e8e0d4;
+        }
+        
+        .prose tr:last-child td,
+        #result tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .prose tbody tr:hover,
+        #result tbody tr:hover {
+            background: #f9f6f1;
+        }
+
+        /* Scrollbar */
         ::-webkit-scrollbar {
             width: 8px;
             height: 8px;
         }
         ::-webkit-scrollbar-track {
-            background: #1e293b; 
+            background: #f5f1ea;
         }
         ::-webkit-scrollbar-thumb {
-            background: #475569; 
+            background: #c4b8a8;
             border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: #64748b; 
+            background: #a89a88;
+        }
+
+        /* File name display */
+        .file-name {
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Decorative divider */
+        .divider-ornament {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            color: #b8a68c;
+        }
+        .divider-ornament::before,
+        .divider-ornament::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #d4cbbe, transparent);
+        }
+
+        /* Stamp/seal decoration */
+        .seal {
+            width: 48px;
+            height: 48px;
+            border: 2px solid #8b5a2b;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #fdfcfa 0%, #f5f1ea 100%);
         }
     </style>
 </head>
-<body class="min-h-screen flex flex-col items-center justify-center p-4 selection:bg-sky-500 selection:text-white">
+<body class="min-h-screen blueprint-grid">
+    <div class="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative z-10">
+        
+        <!-- Main Container -->
+        <div class="w-full max-w-4xl">
+            
+            <!-- Header -->
+            <header class="text-center mb-10">
+                <!-- Decorative seal -->
+                <div class="flex justify-center mb-6">
+                    <div class="seal">
+                        <svg class="w-6 h-6 text-wood" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                        </svg>
+                    </div>
+                </div>
+                
+                <h1 class="heading-serif text-3xl md:text-4xl font-semibold text-ink mb-3">
+                    図面解析ツール
+                </h1>
+                
+                <div class="divider-ornament text-sm mb-4">
+                    <span class="font-medium tracking-widest uppercase text-stone">Blueprint Analyzer</span>
+                </div>
+                
+                <p class="text-ink-muted text-sm md:text-base max-w-md mx-auto leading-relaxed">
+                    建築図面のPDFをアップロードすると、<br class="hidden md:block">部屋の情報を自動で抽出します
+                </p>
+            </header>
 
-    <div class="w-full max-w-4xl glass-panel rounded-2xl p-8 md:p-12 shadow-2xl relative">
-        <!-- Background decoration -->
-        <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-500"></div>
+            <!-- Upload Card -->
+            <div class="paper-card border border-stone/30 rounded-sm p-6 md:p-8 relative corner-marks">
+                <form id="upload-form" 
+                      hx-encoding="multipart/form-data" 
+                      hx-post="/upload" 
+                      hx-target="#result" 
+                      hx-indicator="#loading">
+                    
+                    <!-- Section label -->
+                    <div class="flex items-center gap-3 mb-5">
+                        <span class="text-xs font-semibold tracking-widest uppercase text-stone">File Upload</span>
+                        <div class="flex-1 h-px bg-gradient-to-r from-stone/40 to-transparent"></div>
+                    </div>
+                    
+                    <!-- Dropzone -->
+                    <label for="file-upload" class="dropzone block rounded-sm p-8 md:p-12 cursor-pointer mb-6">
+                        <div class="flex flex-col items-center text-center">
+                            <!-- Upload Icon -->
+                            <div class="w-16 h-16 rounded-full border-2 border-dashed border-wood/50 flex items-center justify-center mb-5 bg-paper-dark/50">
+                                <svg class="w-7 h-7 text-wood" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                </svg>
+                            </div>
+                            <p class="heading-serif text-xl text-ink font-medium mb-2">ファイルをドロップ</p>
+                            <p class="text-ink-muted text-sm mb-1">または<span class="text-wood hover:text-wood-dark cursor-pointer underline underline-offset-2">クリックして選択</span></p>
+                            <p class="text-xs text-stone mt-2">対応形式: PDF</p>
+                            
+                            <!-- Selected file name -->
+                            <div id="file-name-display" class="hidden mt-5 px-4 py-2.5 bg-paper-dark border border-wood/30 rounded-sm">
+                                <div class="flex items-center gap-2 text-wood text-sm">
+                                    <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                    </svg>
+                                    <span id="file-name" class="file-name font-medium"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="file" name="file" id="file-upload" accept=".pdf" required>
+                    </label>
 
-        <header class="text-center mb-10">
-            <h1 class="text-3xl md:text-4xl font-bold text-white mb-2 tracking-tight">図面解析ツール</h1>
-            <p class="text-slate-400">建築図面のPDFをアップロードすると、部屋の情報を自動で抽出します。</p>
-        </header>
+                    <!-- Submit Button -->
+                    <button type="submit" 
+                            id="submit-btn"
+                            class="btn-architectural w-full text-white font-medium py-3.5 px-6 rounded-sm flex items-center justify-center gap-2 tracking-wide">
+                        <span class="hide-on-request">解析を開始する</span>
+                        <svg class="w-4 h-4 hide-on-request" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                        </svg>
+                    </button>
 
-        <form id="upload-form" hx-encoding="multipart/form-data" hx-post="/upload" hx-target="#result" hx-indicator="#loading">
-            <div class="mb-8">
-                <label for="file-upload" class="block text-sm font-medium text-slate-300 mb-2">図面をアップロード（PDFのみ）</label>
-                <div class="relative group">
-                    <input type="file" name="file" id="file-upload" accept=".pdf" required
-                        class="block w-full text-sm text-slate-400
-                        file:mr-4 file:py-3 file:px-6
-                        file:rounded-xl file:border-0
-                        file:text-sm file:font-semibold
-                        file:bg-sky-950 file:text-sky-300
-                        hover:file:bg-sky-900
-                        border border-slate-700 rounded-xl
-                        bg-slate-800/50 cursor-pointer
-                        focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500
-                        transition-all duration-300
-                        ">
+                    <!-- Loading indicator (separate from button) -->
+                    <div id="loading" class="htmx-indicator flex items-center justify-center gap-3 text-wood mt-4 py-3" style="display: flex;">
+                        <div class="loader"></div>
+                        <span class="text-sm font-medium animate-pulse">図面を解析中です…少しお待ちください。</span>
+                    </div>
+                </form>
+
+                <!-- Results Area -->
+                <div id="result" class="mt-6 overflow-x-auto prose">
+                    <!-- Results will be injected here by HTMX -->
                 </div>
             </div>
 
-            <div class="flex flex-col items-center gap-4">
-                <button type="submit" 
-                    class="group relative inline-flex items-center justify-center px-8 py-3 
-                    text-base font-medium text-white bg-sky-600 rounded-xl shadow-lg 
-                    hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-900
-                    transition-all duration-300 w-full md:w-auto overflow-hidden">
-                    <span class="absolute w-full h-full bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:animate-shine"></span>
-                    <span>表を生成する</span>
-                </button>
-
-                <div id="loading" class="htmx-indicator flex items-center gap-3 text-sky-400 mt-2">
-                    <div class="loader"></div>
-                    <span class="text-sm font-medium animate-pulse">図面を解析中です…少しお待ちください。</span>
+            <!-- Footer -->
+            <footer class="mt-8 text-center">
+                <div class="divider-ornament text-xs mb-3">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                    </svg>
                 </div>
-            </div>
-        </form>
-
-        <div id="result" class="mt-10 overflow-x-auto overflow-y-visible rounded-xl">
-            <!-- Results will be injected here -->
+                <p class="text-stone text-xs tracking-wide">
+                    Powered by Vertex AI（Gemini 3.0 Flash Preview）
+                </p>
+            </footer>
         </div>
     </div>
-    
-    <footer class="mt-8 text-slate-500 text-sm">
-        提供：Vertex AI（Gemini 3.0 Flash Preview）
-    </footer>
 
-    <style>
-        /* Table Styles (for injected content) */
-        table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-            background-color: #1e293b; /* Slate 800 */
-            color: #e2e8f0;
-            border-radius: 0.75rem; /* rounded-xl */
-            overflow: hidden;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    <!-- Floating formulas container -->
+    <div id="formulas-container" class="fixed inset-0 pointer-events-none overflow-hidden z-0"></div>
+
+    <!-- JavaScript for file name display and drag & drop -->
+    <script>
+        // ========== Floating Formula Animation ==========
+        const formulas = [
+            // Structural engineering formulas
+            { formula: 'σ = M·y / I', result: '= 156.2 MPa' },
+            { formula: 'M = P·L / 4', result: '= 125 kN·m' },
+            { formula: 'δ = PL³ / 48EI', result: '= 2.4 mm' },
+            { formula: 'τ = VQ / Ib', result: '= 42.8 MPa' },
+            { formula: 'I = bh³ / 12', result: '= 2.67×10⁸ mm⁴' },
+            { formula: 'A = π·r²', result: '= 314.16 m²' },
+            { formula: 'V = L × W × H', result: '= 1,250 m³' },
+            { formula: 'P = F / A', result: '= 2.5 N/mm²' },
+            { formula: 'E = σ / ε', result: '= 200 GPa' },
+            { formula: 'W = γ × V', result: '= 24.5 kN' },
+            // Japanese structural terms
+            { formula: '応力度 σ = N/A', result: '= 85.3 N/mm²' },
+            { formula: '断面係数 Z = I/y', result: '= 1,890 cm³' },
+            { formula: '座屈荷重 Pcr', result: '= 2,450 kN' },
+            { formula: 'たわみ δmax', result: '= L/300' },
+            { formula: '曲げモーメント M', result: '= wL²/8' },
+            // Geometry
+            { formula: 'sin²θ + cos²θ', result: '= 1' },
+            { formula: '√(a² + b²)', result: '= 12.73 m' },
+            { formula: 'tan θ = a/b', result: '= 0.577' },
+        ];
+
+        const container = document.getElementById('formulas-container');
+
+        function createFormula() {
+            const item = formulas[Math.floor(Math.random() * formulas.length)];
+            const el = document.createElement('div');
+            
+            // Random position (avoid center where the card is)
+            const side = Math.random() > 0.5 ? 'left' : 'right';
+            const xPos = side === 'left' 
+                ? Math.random() * 25 + 5  // 5-30%
+                : Math.random() * 25 + 70; // 70-95%
+            const yPos = Math.random() * 80 + 10; // 10-90%
+            
+            el.style.cssText = `
+                position: absolute;
+                left: ${xPos}%;
+                top: ${yPos}%;
+                font-family: 'Cormorant Garamond', serif;
+                font-size: ${Math.random() * 6 + 14}px;
+                color: #8b5a2b;
+                opacity: 0;
+                white-space: nowrap;
+                transform: translateY(20px);
+                transition: opacity 0.8s ease, transform 0.8s ease;
+            `;
+            
+            el.innerHTML = `<span class="formula-text">${item.formula}</span><span class="formula-result" style="opacity:0; margin-left: 8px; color: #6b4423; font-weight: 500;"> ${item.result}</span>`;
+            container.appendChild(el);
+            
+            // Animation sequence
+            setTimeout(() => {
+                el.style.opacity = '0.35';
+                el.style.transform = 'translateY(0)';
+            }, 50);
+            
+            // Show result after delay (like calculation happening)
+            setTimeout(() => {
+                const resultSpan = el.querySelector('.formula-result');
+                resultSpan.style.transition = 'opacity 0.5s ease';
+                resultSpan.style.opacity = '1';
+            }, 1500);
+            
+            // Fade out
+            setTimeout(() => {
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(-20px)';
+            }, 4000);
+            
+            // Remove element
+            setTimeout(() => {
+                el.remove();
+            }, 5000);
         }
-        
-        thead {
-            background-color: #0f172a; /* Slate 900 */
+
+        // Create formulas at intervals
+        function startFormulaAnimation() {
+            createFormula();
+            setInterval(() => {
+                if (document.visibilityState === 'visible') {
+                    createFormula();
+                }
+            }, 2500);
         }
-        
-        th {
-            padding: 1rem;
-            text-align: left;
-            font-weight: 600;
-            color: #38bdf8; /* Sky 400 */
-            border-bottom: 1px solid #334155; /* Slate 700 */
-            text-transform: uppercase;
-            font-size: 0.75rem;
-            letter-spacing: 0.05em;
-        }
-        
-        td {
-            padding: 1rem;
-            border-bottom: 1px solid #334155;
-            color: #cbd5e1; /* Slate 300 */
-        }
-        
-        tr:last-child td {
-            border-bottom: none;
-        }
-        
-        tbody tr:hover {
-            background-color: #334155; /* Slate 700 */
-        }
-        
-        /* Shimmer animation for button */
-        @keyframes shine {
-            100% {
-                transform: translateX(100%);
+
+        // Start after page loads
+        startFormulaAnimation();
+
+        // ========== File Upload Logic ==========
+        const fileInput = document.getElementById('file-upload');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const fileNameSpan = document.getElementById('file-name');
+        const dropzone = document.querySelector('.dropzone');
+
+        // Display selected file name
+        fileInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                fileNameSpan.textContent = this.files[0].name;
+                fileNameDisplay.classList.remove('hidden');
+            } else {
+                fileNameDisplay.classList.add('hidden');
             }
-        }
-        .group-hover\:animate-shine:hover {
-            animation: shine 0.75s;
-        }
-    </style>
+        });
+
+        // Drag and drop visual feedback
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropzone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('dragover');
+            });
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].type === 'application/pdf') {
+                fileInput.files = files;
+                fileNameSpan.textContent = files[0].name;
+                fileNameDisplay.classList.remove('hidden');
+            }
+        });
+
+        // ========== HTMX Event Handlers ==========
+        const submitBtn = document.getElementById('submit-btn');
+        const uploadForm = document.getElementById('upload-form');
+
+        // Disable button and show loading on request start
+        document.body.addEventListener('htmx:beforeRequest', function(event) {
+            if (event.target === uploadForm || event.detail.elt === uploadForm) {
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-70', 'cursor-not-allowed');
+            }
+        });
+
+        // Re-enable button after request completes (success or error)
+        document.body.addEventListener('htmx:afterRequest', function(event) {
+            if (event.target === uploadForm || event.detail.elt === uploadForm) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+            }
+        });
+
+        // Also handle response swap completion
+        document.body.addEventListener('htmx:afterSwap', function(event) {
+            if (event.detail.target.id === 'result') {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+            }
+        });
+    </script>
 </body>
 </html>
