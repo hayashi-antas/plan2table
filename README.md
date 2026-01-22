@@ -13,7 +13,8 @@ license: mit
 
 > 📐 **建築図面を「読む」から「使えるデータ」に変えるAIエージェント**
 
-建築図面（PDF）から部屋情報を自動抽出し、美しいMarkdownレポートを生成するWebアプリケーションです。Google Cloud Vertex AI（Gemini 3.0 Flash Preview）と **Function Calling** を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。
+建築図面（PDF）から部屋情報を自動抽出し、美しいMarkdownレポートを生成するWebアプリケーションです。  
+Google Cloud Vertex AI（Gemini 3.0 Flash Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。
 
 ## 特徴
 
@@ -25,6 +26,9 @@ license: mit
 ## アーキテクチャ
 
 本アプリケーションは、従来の「一発でAIに回答を求める」方式ではなく、**AIが自律的にツールを呼び出して検証・計算する「エージェント方式」** を採用しています。
+
+以下は、Plan2Table における「論理的な処理フロー」を示した図です。
+基盤モデル（エージェント）とスキル群の役割分担に焦点を当てています。
 
 ```mermaid
 flowchart LR
@@ -56,15 +60,30 @@ flowchart LR
     Gemini --> Report
 ```
 
+> ℹ️ **実行環境について**  
+> 図中の「エージェント（Gemini）」は Google Cloud Vertex AI 上で実行されており、「スキル群（面積計算・単位変換・整合性検証）」は、本アプリケーションとしてデプロイされた **Python関数** が実行主体です。エージェントはスキルを直接実行することはなく、**必要な処理を判断し、呼び出しを指示する役割**を担っています。
+
 ### 処理の流れ
 
-1. **PDF読み込み**: ユーザーがアップロードした図面PDFをバイナリとして取得
-2. **テキスト抽出**: pdfplumberで補助的にテキストを抽出（正規表現によるフォールバック用）
-3. **AIへ送信**: PDFバイナリとプロンプトをGemini 3.0 Flash Previewに送信
-4. **Function Calling**: AIが必要に応じてスキル（計算・変換・検証）を呼び出し
-5. **スキル実行**: Python関数で正確な計算を実行し、結果をAIに返却
-6. **レポート生成**: AIが検証済みの数値を使ってMarkdownレポートを生成
-7. **HTML変換**: MarkdownをHTMLに変換し、スタイル付きで表示
+1. **データの入力と送信**:
+   ユーザーがアップロードした図面PDFをバイナリ形式のまま、指示書（プロンプト）と共に Gemini 3.0 Flash Preview へ直接送信します。
+
+2. **マルチモーダル図面解析**:
+   AIがPDFのレイアウトや図面（線や記号）を「視覚的」に直接読み取り、室名や面積などの情報を抽出します。
+
+3. **スキルの自律実行 (Function Calling)**:
+   AIが自身の判断で、計算や単位変換などの「スキル（Python関数）」を呼び出し、抽出した数値の正確性を精密に検証します。
+
+4. **構造化レポートの生成**:
+   検証済みの正しい数値に基づき、AIがMarkdown形式のレポートを生成します。
+
+5. **HTMLレンダリングと表示**:
+   Markdownを即座にHTMLへ変換して画面上に表示します。
+
+---
+
+> **※ 補助プロセス（デバッグ・検証用）**
+> 上記のメインフローとは別に、内部では `pdfplumber` を用いてテキスト抽出を行い、正規表現による面積の取得も並行して実施しています。これは主に開発者向けのデバッグ情報や、AIの回答を検証する補助データとして活用されています。
 
 ## 利用可能なスキル
 
@@ -77,7 +96,7 @@ AIエージェントは以下のスキルを自律的に呼び出すことがで
 | `calculate_tatami_area_m2` | 帖数からm²へ変換 | `tatami=6.0` | `9.92` |
 | `validate_area_sum` | 合計面積の整合性を検証 | `room_areas=[19.89, 11.48], expected_total=31.37` | `{diff: 0.0, is_valid: true}` |
 
-これにより、AIの「頭の中の計算」に依存せず、**LLMの推論誤差を許容せずに数値だけは必ずPython関数で機械的に正しくする**という設計を実現しています。
+これにより、AIの「頭の中の計算」ではなく、実際のPython関数による正確な計算・検証が行われます。その結果、**基盤モデルの推論誤差を許容せず、数値だけは必ず機械的に正しくする**という設計を実現しています。
 
 ## ファイル構成
 
@@ -139,7 +158,7 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
 
 - **Backend**: FastAPI + Uvicorn
 - **AI**: Google Cloud Vertex AI (Gemini 3.0 Flash Preview)
-- **SDK**: google-genai (新SDK)
+- **SDK**: google-genai
 - **PDF処理**: pdfplumber
 - **Frontend**: HTML + Tailwind CSS + htmx
 - **Infrastructure**: Docker
@@ -350,3 +369,7 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
 ※本レポートの面積値は図面上の帖数からの換算値であり、実際の施工面積や登記面積とは異なる場合があります。
 
 </details>
+
+[^1]: ここでいう Function Calling は、視覚・言語・構造理解を統合した基盤モデル（Foundation Model）が、推論の一部をアプリケーション側の関数に委譲するための仕組みです。Plan2Table では、基盤モデルに判断を任せつつ、数値計算や検証といった決定的処理はコード側で実行することで、**再現性と信頼性を優先したシステム設計**を採用しています。
+
+
