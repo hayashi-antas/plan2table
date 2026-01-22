@@ -192,7 +192,7 @@ def _render_parse_error(raw_text, reason):
     </div>
     """
 
-def _build_debug_script(extracted_text, regex_summary, raw_text):
+def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=None):
     """Build a script tag that logs debug info to browser console."""
     text_snippet = (extracted_text or "").strip() or "(no text extracted)"
     if len(text_snippet) > 5000:
@@ -213,6 +213,28 @@ def _build_debug_script(extracted_text, regex_summary, raw_text):
     text_escaped = js_escape(text_snippet)
     regex_escaped = js_escape(regex_json_str)
     raw_escaped = js_escape(raw_snippet)
+    
+    # Build tool calls log script
+    tool_calls_script = ""
+    if tool_calls_log:
+        tool_calls_json = json.dumps(tool_calls_log, ensure_ascii=False, indent=2)
+        tool_calls_escaped = js_escape(tool_calls_json)
+        tool_calls_script = f"""
+    console.group('%c🔧 Function Calling (ツール呼び出し)', 'font-weight: bold; font-size: 14px; color: #2d5a8a;');
+    console.log('%c呼び出されたツール数:', 'font-weight: bold; color: #1e3a5f;', {len(tool_calls_log)});
+    const toolCalls = JSON.parse(`{tool_calls_escaped}`);
+    toolCalls.forEach((call, index) => {{
+        console.group('%c[' + (index + 1) + '] ' + call.name, 'font-weight: bold; color: #b87333;');
+        console.log('%c引数:', 'color: #5c5243;', call.args);
+        console.log('%c結果:', 'color: #5c5243;', call.result);
+        console.groupEnd();
+    }});
+    console.groupEnd();
+"""
+    else:
+        tool_calls_script = """
+    console.log('%c🔧 Function Calling: ツールは呼び出されませんでした', 'font-weight: bold; font-size: 14px; color: #8a8072;');
+"""
 
     return f"""
     <script>
@@ -224,6 +246,7 @@ def _build_debug_script(extracted_text, regex_summary, raw_text):
     console.log('%cLLM生レスポンス:', 'font-weight: bold; color: #6b4423;');
     console.log(`{raw_escaped}`);
     console.groupEnd();
+    {tool_calls_script}
     </script>
     """
 
@@ -250,16 +273,21 @@ def _execute_function_call(func_call):
     args = getattr(func_call, "args", None) or {}
     handler = SKILL_REGISTRY.get(name)
     if not handler:
-        return name, {"error": f"Unknown tool: {name}"}
+        return name, args, {"error": f"Unknown tool: {name}"}
     try:
         result = handler(**args)
-        return name, {"result": result}
+        return name, args, {"result": result}
     except Exception as exc:
-        return name, {"error": str(exc)}
+        return name, args, {"error": str(exc)}
 
 
 def _generate_with_tools(client, model_name, parts, generation_config):
-    """Handle chat + tool execution loop with the google-genai models API."""
+    """Handle chat + tool execution loop with the google-genai models API.
+    
+    Returns:
+        tuple: (response, tool_calls_log) where tool_calls_log is a list of dicts
+               containing name, args, and result for each tool call.
+    """
     if client is None:
         raise RuntimeError("Vertex AI client is not initialized.")
 
@@ -275,6 +303,8 @@ def _generate_with_tools(client, model_name, parts, generation_config):
         config=config,
     )
 
+    tool_calls_log = []
+
     for _ in range(6):
         func_calls = _get_function_calls(response)
         if not func_calls:
@@ -282,9 +312,17 @@ def _generate_with_tools(client, model_name, parts, generation_config):
 
         tool_responses = []
         for func_call in func_calls:
-            name, payload = _execute_function_call(func_call)
+            name, args, payload = _execute_function_call(func_call)
             tool_part = types.Part.from_function_response(name=name, response=payload)
             tool_responses.append(tool_part)
+            
+            # Log the tool call
+            tool_calls_log.append({
+                "name": name,
+                "args": dict(args) if args else {},
+                "result": payload,
+            })
+            print(f"[Tool Call] {name}({args}) -> {payload}")
 
         # Append model turn and tool responses to the conversation history
         messages.append(response.candidates[0].content)
@@ -295,7 +333,7 @@ def _generate_with_tools(client, model_name, parts, generation_config):
             contents=messages,
             config=config,
         )
-    return response
+    return response, tool_calls_log
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -329,7 +367,7 @@ async def handle_upload(file: UploadFile = File(...)):
             "max_output_tokens": 8192,
         }
 
-        response = _generate_with_tools(
+        response, tool_calls_log = _generate_with_tools(
             genai_client,
             MODEL_NAME,
             [pdf_part, prompt_part],
@@ -352,7 +390,7 @@ async def handle_upload(file: UploadFile = File(...)):
         )
 
         # Build debug info (outputs to browser console)
-        debug_script = _build_debug_script(extracted_text, regex_summary, raw_text)
+        debug_script = _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log)
         
         # Wrapping in a styled div for better look
         styled_report = f"""
