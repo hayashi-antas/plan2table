@@ -11,7 +11,7 @@ license: mit
 
 # Plan2Table
 
-> 📐 **建築図面を「読む」から「使えるデータ」に変えるAIエージェント**
+> 📐 **建築図面を「読む」から「使えるデータ」に変えるAIエージェント（Domain-Specific Agent）**
 
 建築図面（PDF）から部屋情報を自動抽出し、美しいMarkdownレポートを生成するWebアプリケーションです。  
 Google Cloud Vertex AI（Gemini 3.0 Flash Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。
