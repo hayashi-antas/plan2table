@@ -124,40 +124,6 @@ plan2table/
 └── README.md
 ```
 
-## セットアップ
-
-### 環境変数
-
-以下の環境変数を設定してください：
-
-| 変数名 | 必須 | 説明 |
-|--------|------|------|
-| `GOOGLE_CLOUD_PROJECT` | ✅ | Google CloudプロジェクトID |
-| `GCP_SERVICE_ACCOUNT_KEY` | ✅ | サービスアカウントJSONキーの**内容全体** |
-| `VERTEX_LOCATION` | - | Vertex AIのロケーション（デフォルト: `global`） |
-| `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3-flash-preview`） |
-
-### ローカル開発（Docker + 1Password）
-
-本プロジェクトでは、1Password CLIを使って認証情報を安全に管理しています：
-
-```bash
-# 1Password CLIでシークレットが取得できることを確認
-make check
-
-# Dockerイメージをビルドして起動
-make run
-
-# ロケーションやモデルを変更する場合
-make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
-```
-
-ブラウザで http://localhost:7860 にアクセスしてください。
-
-### Hugging Face Spacesへのデプロイ
-
-1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`と`GCP_SERVICE_ACCOUNT_KEY`を設定
-2. Dockerfileが自動的にビルド・デプロイされます
 
 ## 技術スタック
 
@@ -375,6 +341,47 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
 
 </details>
 
+<br>
+
+## セットアップ
+
+### 環境変数
+
+以下の環境変数を設定してください：
+
+| 変数名 | 必須 | 説明 |
+|--------|------|------|
+| `GOOGLE_CLOUD_PROJECT` | ✅ | Google CloudプロジェクトID |
+| `GCP_SERVICE_ACCOUNT_KEY` | ✅ | サービスアカウントJSONキーの**内容全体** |
+| `VERTEX_LOCATION` | - | Vertex AIのロケーション（デフォルト: `global`） |
+| `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3-flash-preview`） |
+
+### ローカル開発（Docker + 1Password）
+
+本プロジェクトでは、1Password CLIを使って認証情報を安全に管理しています：
+
+```bash
+# 1Password CLIでシークレットが取得できることを確認
+make check
+
+# Dockerイメージをビルドして起動
+make run
+
+# ロケーションやモデルを変更する場合
+make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
+```
+
+ブラウザで http://localhost:7860 にアクセスしてください。
+
+### Hugging Face Spacesへのデプロイ
+
+1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`と`GCP_SERVICE_ACCOUNT_KEY`を設定
+2. Dockerfileが自動的にビルド・デプロイされます
+
+
+
 [^1]: ここでいう Function Calling は、視覚・言語・構造理解を統合した基盤モデル（Foundation Model）が、推論の一部をアプリケーション側の関数に委譲するための仕組みです。Plan2Table では、基盤モデルに判断を任せつつ、数値計算や検証といった決定的処理はコード側で実行することで、**再現性と信頼性を優先したシステム設計**を採用しています。
+
+
 
 
