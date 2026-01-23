@@ -65,6 +65,8 @@ flowchart LR
 
 ### 処理の流れ
 
+[![Image from Gyazo](https://i.gyazo.com/5e8be0b192a99b9197779a894dba15cb.png)](https://gyazo.com/5e8be0b192a99b9197779a894dba15cb)
+
 1. **データの入力と送信**:
    ユーザーがアップロードした図面PDFをバイナリ形式のまま、指示書（プロンプト）と共に Gemini 3.0 Flash Preview へ直接送信します。
 
