@@ -87,7 +87,7 @@ flowchart LR
 ---
 
 > [!NOTE]
-> 精度向上のため、`pdfplumber` を用いたテキスト解析（正規表現）を並行して実施。AIの回答を裏打ちする補助データとして活用し、信頼性の高い出力を実現しています。
+> 開発・デバッグ用途として、`pdfplumber` を用いたテキスト解析（正規表現）も並行して実施しています。抽出結果はブラウザの開発者コンソールに出力され、AIの出力と比較確認できます。
 
 
 ## 利用可能なスキル
@@ -110,14 +110,21 @@ plan2table/
 ├── main.py                     # FastAPIアプリケーション本体
 ├── extractors/
 │   ├── __init__.py
-│   ├── area_regex.py           # 正規表現による面積抽出（フォールバック）
+│   ├── area_regex.py           # 正規表現による面積抽出（デバッグ用）
 │   ├── text_extractor.py       # PDFからのテキスト抽出
 │   ├── skills.py               # スキル関数の実装
 │   └── tool_definitions.py     # Function Calling用のツール定義
 ├── prompts/
+│   ├── __init__.py             # プロンプト読み込みユーティリティ
 │   └── area_extract.md         # AIへのプロンプト
 ├── templates/
 │   └── index.html              # フロントエンドUI
+├── tests/
+│   ├── test_area_regex.py      # 正規表現抽出のテスト
+│   └── test_prompt_load.py     # プロンプト読み込みのテスト
+├── .github/
+│   └── workflows/
+│       └── sync-to-hf-spaces.yml  # Hugging Face Spaces自動同期
 ├── Dockerfile
 ├── Makefile
 ├── requirements.txt
@@ -377,6 +384,9 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
 
 1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`と`GCP_SERVICE_ACCOUNT_KEY`を設定
 2. Dockerfileが自動的にビルド・デプロイされます
+
+> [!TIP]
+> 本リポジトリには GitHub Actions（`.github/workflows/sync-to-hf-spaces.yml`）が設定されており、`main`ブランチへのプッシュ時に Hugging Face Spaces へ自動同期されます。
 
 
 
