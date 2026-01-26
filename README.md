@@ -14,13 +14,16 @@ license: mit
 > 📐 **建築図面を「読む」から「使えるデータ」に変えるAIエージェント（Domain-Specific Agent）**
 
 建築図面（PDF）から部屋情報を自動抽出し、美しいMarkdownレポートを生成するWebアプリケーションです。  
-Google Cloud Vertex AI（Gemini 3.0 Flash Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。
+Google Cloud Vertex AI（Gemini 3.0 Pro Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。  
+**図面タイプ自動判断機能**により、寸法線がある詳細図面と面積が記載されている簡易図面の両方に対応しています。
 
 ## 特徴
 
 - **ドラッグ&ドロップでPDFをアップロード**: 平面詳細図や仕上表を含む図面に対応
+- **図面タイプ自動判断**: 寸法線がある詳細図面（`detailed`）と面積が記載されている簡易図面（`simple`）を自動判別し、適切な処理を実行
 - **AIによる自動抽出**: 室名、帖数、面積、床・壁・天井仕上げ、備考などを一括抽出
 - **エージェントスキルによる検証**: AIが自律的にツールを呼び出し、計算・単位変換・整合性チェックを実行
+- **柔軟な検証ロジック**: 固定の必須部屋リストに依存せず、図面から読み取れる情報に基づいて柔軟に検証
 - **Markdownレポート出力**: プロフェッショナルな外観のレポートを即座に生成
 
 ## アーキテクチャ
@@ -37,7 +40,7 @@ flowchart LR
     end
     
     subgraph agent [エージェント]
-        Gemini[Gemini 3.0 Flash Preview]
+        Gemini[Gemini 3.0 Pro Preview]
     end
     
     subgraph skills [スキル群]
@@ -70,13 +73,15 @@ flowchart LR
 
 
 1. **Ingest: データの入力と送信**
-   図面PDFをバイナリ形式のまま、**Gemini 3.0 Flash Preview** へダイレクトにストリーム。プロンプトと共にコンテキストを保持した状態で処理を開始します。
+   図面PDFをバイナリ形式のまま、**Gemini 3.0 Pro Preview** へダイレクトにストリーム。プロンプトと共にコンテキストを保持した状態で処理を開始します。
 
-2. **Analyze: マルチモーダル図面解析**
-   LLMによる視覚的解析を実行。図面内の線画・記号・レイアウトを直接読み取り、室名や面積などの情報を**空間的に認識**して抽出します。
+2. **Analyze: マルチモーダル図面解析とタイプ判断**
+   LLMによる視覚的解析を実行。図面内の線画・記号・レイアウトを直接読み取り、室名や面積などの情報を**空間的に認識**して抽出します。  
+   同時に、図面タイプ（`detailed`/`simple`）を自動判断し、適切な処理方法を選択します。
 
 3. **Validate: スキルの自律実行 (Function Calling)**
-   抽出された数値を**Python関数**へ渡し、計算整合性や単位変換を自律的に検証。AIの判断とプログラムの正確性を組み合わせて精度を担保します。
+   抽出された数値を**Python関数**へ渡し、計算整合性や単位変換を自律的に検証。AIの判断とプログラムの正確性を組み合わせて精度を担保します。  
+   **`detailed`図面の場合**: 寸法線を読み取って面積を計算。**`simple`図面の場合**: 記載されている面積をそのまま抽出。
 
 4. **Export: 構造化レポートの生成**
    検証をパスしたクリーンなデータに基づき、再利用性の高い**Markdown形式**のレポートを動的に生成します。
@@ -100,8 +105,26 @@ AIエージェントは以下のスキルを自律的に呼び出すことがで
 | `convert_tsubo_to_m2` | 坪からm²へ変換 | `tsubo=12.58` | `41.59` |
 | `calculate_tatami_area_m2` | 帖数からm²へ変換 | `tatami=6.0` | `9.92` |
 | `validate_area_sum` | 合計面積の整合性を検証 | `room_areas=[19.89, 11.48], expected_total=31.37` | `{diff: 0.0, is_valid: true}` |
+| `calculate_room_area_from_dimensions` | 寸法（mm）から部屋の面積と帖数を計算 | `room_name="玄関", width_mm=1200, depth_mm=1400` | `{area_m2: 1.68, tatami: 1.0, calculation: "1.2m × 1.4m = 1.68㎡"}` |
+| `calculate_composite_area` | 複数の矩形領域を加算・減算して面積を計算 | `room_name="LDK", areas=[{width_mm: 3900, depth_mm: 5100, operation: "add"}]` | `{area_m2: 19.89, tatami: 12.3, steps: [...]}` |
 
 これにより、AIの「頭の中の計算」ではなく、実際のPython関数による正確な計算・検証が行われます。その結果、**基盤モデルの推論誤差を許容せず、数値だけは必ず機械的に正しくする**という設計を実現しています。
+
+### 図面タイプ自動判断
+
+本アプリケーションは、入力された図面を以下の2タイプに自動分類し、適切な処理を行います：
+
+- **`detailed`（詳細図面）**: 寸法線（mm単位）があり、面積を計算できる図面
+  - 平面詳細図、施工図など
+  - 寸法線を読み取って`calculate_room_area_from_dimensions`で面積を計算
+  - 仕上表に記載されている全ての室について、必ず面積を算出
+  
+- **`simple`（簡易図面）**: 面積が文字で直接記載されており、寸法線がない図面
+  - 間取り図、パンフレットなど
+  - 記載されている面積をそのまま抽出
+  - 記載がない場合は空欄でも可
+
+この判断により、様々なタイプの図面に柔軟に対応できます。
 
 ## ファイル構成
 
@@ -135,7 +158,7 @@ plan2table/
 ## 技術スタック
 
 - **Backend**: FastAPI + Uvicorn
-- **AI**: Google Cloud Vertex AI (Gemini 3.0 Flash Preview)
+- **AI**: Google Cloud Vertex AI (Gemini 3.0 Pro Preview)
 - **SDK**: google-genai
 - **PDF処理**: pdfplumber
 - **Frontend**: HTML + Tailwind CSS + htmx
@@ -361,7 +384,7 @@ plan2table/
 | `GOOGLE_CLOUD_PROJECT` | ✅ | Google CloudプロジェクトID |
 | `GCP_SERVICE_ACCOUNT_KEY` | ✅ | サービスアカウントJSONキーの**内容全体** |
 | `VERTEX_LOCATION` | - | Vertex AIのロケーション（デフォルト: `global`） |
-| `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3-flash-preview`） |
+| `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3-pro-preview`） |
 
 ### ローカル開発（Docker + 1Password）
 
@@ -375,7 +398,7 @@ make check
 make run
 
 # ロケーションやモデルを変更する場合
-make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-2.0-flash
+make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-3-flash-preview
 ```
 
 ブラウザで http://localhost:7860 にアクセスしてください。
