@@ -7,7 +7,7 @@ PROJECT_ID_REF := op://antas/bm73hxcmcbxk4fnzvdtp6oiose/add more/ceag3cqkcxsoyjc
 
 # Vertex AI settings (override via environment or command line, e.g. make run VERTEX_LOCATION=asia-northeast1)
 VERTEX_LOCATION ?= global
-VERTEX_MODEL_NAME ?= gemini-3-flash-preview
+VERTEX_MODEL_NAME ?= gemini-3-pro-preview
 
 .PHONY: build check run
 

@@ -20,8 +20,9 @@ templates = Jinja2Templates(directory="templates")
 # We use the environment variable GOOGLE_CLOUD_PROJECT as requested.
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
 location = os.getenv("VERTEX_LOCATION", "global")
-MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3-flash-preview")
+MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3-pro-preview")
 genai_client = None
+# 固定の必須部屋リストは削除 - 図面から読み取れる情報を柔軟に処理
 
 # Handle Credentials for Hugging Face Spaces
 # If GCP_SERVICE_ACCOUNT_KEY env var exists (JSON content), write it to a file
@@ -251,6 +252,98 @@ def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=
     """
 
 
+def _is_empty_value(value):
+    """Check if a value is considered empty (None, "", "-", or similar)."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        v = value.strip()
+        return v == "" or v == "-" or v == "－" or v == "—"
+    return False
+
+def _get_diagram_type(data):
+    """Get the diagram type from the parsed data."""
+    if not isinstance(data, dict):
+        return "unknown"
+    diagram_type = str(data.get("diagram_type") or "").strip().lower()
+    if diagram_type in ("detailed", "simple"):
+        return diagram_type
+    return "unknown"
+
+def _validate_room_areas(data):
+    """Validate room_areas based on diagram type.
+    
+    For 'detailed' diagrams: Check if rooms have empty area_m2 when calculation is possible.
+    For 'simple' diagrams: Only check if calculation/tatami exists but area_m2 is empty.
+    
+    Returns:
+        tuple: (warnings, found_rooms, warning_rooms) where:
+               - warnings is a list of warning messages
+               - found_rooms is a list of all detected room names
+               - warning_rooms is a list of room names with warnings
+    """
+    warnings = []
+    found_rooms = []
+    warning_rooms = []
+    
+    if not isinstance(data, dict):
+        return warnings, found_rooms, warning_rooms
+    
+    diagram_type = _get_diagram_type(data)
+    room_rows = data.get("data", {}).get("room_areas", [])
+    if not isinstance(room_rows, list):
+        return warnings, found_rooms, warning_rooms
+    
+    for row in room_rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("room_name") or "").strip()
+        if not name:
+            continue
+        
+        found_rooms.append(name)
+        area_m2 = row.get("area_m2")
+        calculation = str(row.get("calculation") or "").strip()
+        tatami = row.get("tatami")
+        
+        # area_m2が空欄かどうかを判定
+        area_is_empty = _is_empty_value(area_m2)
+        tatami_is_empty = _is_empty_value(tatami)
+        
+        if not area_is_empty:
+            # area_m2がある場合はOK
+            continue
+        
+        # area_m2が空欄の場合の検証
+        # 1. calculationがある場合は必ず警告（どちらのタイプでも）
+        if calculation:
+            warnings.append(
+                f"部屋「{name}」に計算根拠（{calculation}）がありますが、area_m2が空欄です。"
+            )
+            warning_rooms.append(name)
+        # 2. tatamiがある場合は必ず警告（どちらのタイプでも）
+        elif not tatami_is_empty:
+            warnings.append(
+                f"部屋「{name}」に帖数（{tatami}）がありますが、area_m2が空欄です。"
+            )
+            warning_rooms.append(name)
+        # 3. detailed図面の場合のみ、仕上表に記載されている室は計算が必要
+        elif diagram_type == "detailed":
+            # 仕上表に記載があるかどうかをチェック（床、壁、天井などの情報があるか）
+            has_finish_info = any(
+                not _is_empty_value(row.get(key))
+                for key in ["floor", "wall", "ceiling", "baseboard", "床", "壁", "天井", "巾木"]
+            )
+            if has_finish_info:
+                warnings.append(
+                    f"部屋「{name}」は仕上表に記載されていますが、area_m2が空欄です。寸法を読み取って計算してください。"
+                )
+                warning_rooms.append(name)
+        # simple図面の場合は、記載がなければ空欄でもOK
+    
+    return warnings, found_rooms, warning_rooms
+
+
 def _get_function_calls(response):
     """Extract all function calls from all parts of all candidates."""
     func_calls = []
@@ -364,20 +457,66 @@ async def handle_upload(file: UploadFile = File(...)):
 
         generation_config = {
             "temperature": 0.1,
-            "max_output_tokens": 8192,
+            "max_output_tokens": 16384,
         }
 
-        response, tool_calls_log = _generate_with_tools(
-            genai_client,
-            MODEL_NAME,
-            [pdf_part, prompt_part],
-            generation_config=generation_config,
-        )
-        
-        raw_text = response.text or ""
-        data = _extract_json(raw_text)
+        def _run_generation(extra_instruction=""):
+            combined_prompt = prompt_text
+            if extra_instruction:
+                combined_prompt = f"{prompt_text}\n\n{extra_instruction}"
+            combined_prompt_part = types.Part.from_text(text=combined_prompt)
+            response, tool_calls_log = _generate_with_tools(
+                genai_client,
+                MODEL_NAME,
+                [pdf_part, combined_prompt_part],
+                generation_config=generation_config,
+            )
+            raw_text = response.text or ""
+            data = _extract_json(raw_text)
+            return response, tool_calls_log, raw_text, data
+
+        response, tool_calls_log, raw_text, data = _run_generation()
         if not isinstance(data, dict):
             return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
+
+        # 図面タイプを取得
+        diagram_type = _get_diagram_type(data)
+        print(f"[Debug] 図面タイプ: {diagram_type}")
+        
+        # 柔軟な検証: 読み取れる情報があるのに空欄になっている場合のみ警告
+        warnings, found_rooms, warning_rooms = _validate_room_areas(data)
+        
+        if warnings:
+            # Debug: log warnings
+            print(f"[Debug] 検出された室: {found_rooms}")
+            print(f"[Debug] 警告: {warnings}")
+            
+            # 警告がある場合のみ、再生成を試みる（detailed図面のみ）
+            if diagram_type == "detailed":
+                extra_instruction = (
+                    "【追加指示 - 必ず実行してください】\n"
+                    "この図面は寸法線がある「detailed」タイプです。\n"
+                    "以下の部屋について、area_m2が空欄（「-」含む）になっています。\n"
+                    "これらの部屋は仕上表に記載されているため、図面から寸法線を読み取って面積を計算する必要があります。\n\n"
+                    f"**面積が未計算の部屋**: {', '.join(warning_rooms)}\n\n"
+                    "【対応手順】\n"
+                    "1. 各部屋の寸法線を図面から読み取る（幅mm × 奥行mm）\n"
+                    "2. calculate_room_area_from_dimensions ツールを使用して面積を計算\n"
+                    "3. room_areasのarea_m2フィールドに計算結果を記載\n"
+                    "4. calculationフィールドに計算根拠（例: 「幅1000mm × 奥行1500mm = 1.50㎡」）を記載\n\n"
+                    "推測や一般値は禁止。寸法(mm)を明示してください。\n"
+                    "「-」や空欄にせず、必ず数値で埋めてください。"
+                )
+                response, tool_calls_log, raw_text, data = _run_generation(extra_instruction)
+                if not isinstance(data, dict):
+                    return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
+                
+                # 再検証
+                warnings, found_rooms, warning_rooms = _validate_room_areas(data)
+            
+            if warnings:
+                # 警告があってもエラーにはしない（柔軟性のため）
+                print(f"[Warning] 以下の警告がありますが、処理を続行します: {warnings}")
 
         report_md = data.get("report_markdown", "")
         if not report_md:
