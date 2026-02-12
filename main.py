@@ -1,17 +1,22 @@
 import os
+import csv
 import json
 import html
+from pathlib import Path
 from google import genai
 from google.genai import types
-from fastapi import FastAPI, File, UploadFile, Request
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
 import markdown
 from prompts import load_prompt
 from extractors.text_extractor import extract_text_from_pdf
 from extractors.area_regex import extract_summary_areas
 from extractors.tool_definitions import TOOLS, SKILL_REGISTRY
+from extractors.raster_extractor import extract_raster_pdf
+from extractors.vector_extractor import extract_vector_pdf_four_columns
+from extractors.job_store import create_job, resolve_job_csv_path, save_metadata
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -22,15 +27,17 @@ project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
 location = os.getenv("VERTEX_LOCATION", "global")
 MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3-pro-preview")
 genai_client = None
+vision_service_account_json = os.getenv("VISION_SERVICE_ACCOUNT_KEY", "")
 # 固定の必須部屋リストは削除 - 図面から読み取れる情報を柔軟に処理
 
 # Handle Credentials for Hugging Face Spaces
-# If GCP_SERVICE_ACCOUNT_KEY env var exists (JSON content), write it to a file
-service_account_json = os.getenv("GCP_SERVICE_ACCOUNT_KEY")
-if service_account_json:
+# If VERTEX_SERVICE_ACCOUNT_KEY env var exists (JSON content), write it to a file.
+# Backward compatibility: fallback to GCP_SERVICE_ACCOUNT_KEY.
+vertex_service_account_json = os.getenv("VERTEX_SERVICE_ACCOUNT_KEY") or os.getenv("GCP_SERVICE_ACCOUNT_KEY")
+if vertex_service_account_json:
     cred_file_path = "gcp_credentials.json"
     with open(cred_file_path, "w") as f:
-        f.write(service_account_json)
+        f.write(vertex_service_account_json)
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
     print(f"Credentials saved to {cred_file_path}")
 
@@ -428,13 +435,50 @@ def _generate_with_tools(client, model_name, parts, generation_config):
         )
     return response, tool_calls_log
 
+def _csv_profile(csv_path: Path) -> dict:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    if not rows:
+        return {"rows": 0, "columns": []}
+    return {"rows": max(0, len(rows) - 1), "columns": rows[0]}
+
+
+def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str]) -> str:
+    label = "Raster" if kind == "raster" else "Vector"
+    download_path = f"/jobs/{job_id}/{kind}.csv"
+    columns_html = ", ".join(html.escape(c) for c in columns) if columns else "-"
+    return f"""
+    <section class="mt-4 rounded-sm border border-stone/30 bg-paper-dark p-4 text-ink">
+        <div class="text-sm font-semibold text-wood-dark">{label} CSV作成完了</div>
+        <div class="mt-2 text-sm">Job ID: <code class="font-mono">{html.escape(job_id)}</code></div>
+        <div class="mt-1 text-sm">Rows: {rows}</div>
+        <div class="mt-1 text-sm">Columns: {columns_html}</div>
+        <a href="{download_path}" class="mt-3 inline-block rounded-sm border border-wood px-3 py-2 text-sm font-semibold text-wood hover:bg-paper">
+            CSVをダウンロード
+        </a>
+    </section>
+    """
+
+
+def _is_pdf_upload(file: UploadFile) -> bool:
+    name = (file.filename or "").lower()
+    return name.endswith(".pdf")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.post("/upload", response_class=HTMLResponse)
-async def handle_upload(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith('.pdf'):
+
+@app.get("/area", response_class=HTMLResponse)
+async def read_area(request: Request):
+    return templates.TemplateResponse("area.html", {"request": request})
+
+
+@app.post("/area/upload", response_class=HTMLResponse)
+async def handle_area_upload(file: UploadFile = File(...)):
+    if not _is_pdf_upload(file):
         return """
         <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
             <strong>Error:</strong> Please upload a valid PDF file.
@@ -453,7 +497,6 @@ async def handle_upload(file: UploadFile = File(...)):
         pdf_part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
         
         prompt_text = load_prompt("area_extract")
-        prompt_part = types.Part.from_text(text=prompt_text)
 
         generation_config = {
             "temperature": 0.1,
@@ -550,6 +593,145 @@ async def handle_upload(file: UploadFile = File(...)):
             {safe_error}
         </div>
         """
+
+
+@app.post("/upload", response_class=HTMLResponse)
+async def handle_upload_compat(file: UploadFile = File(...)):
+    # Backward compatibility route.
+    return await handle_area_upload(file)
+
+
+@app.post("/raster/upload", response_class=HTMLResponse)
+async def handle_raster_upload(file: UploadFile = File(...)):
+    if not _is_pdf_upload(file):
+        return """
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+            <strong>Error:</strong> Please upload a valid PDF file.
+        </div>
+        """
+    if not vision_service_account_json:
+        return """
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+            <strong>Error:</strong> VISION_SERVICE_ACCOUNT_KEY is not configured.
+        </div>
+        """
+
+    try:
+        file_bytes = await file.read()
+        job = create_job(kind="raster", source_filename=file.filename or "upload.pdf")
+        input_pdf_path = job.job_dir / "input.pdf"
+        input_pdf_path.write_bytes(file_bytes)
+        csv_path = job.job_dir / "raster.csv"
+        debug_dir = job.job_dir / "debug"
+
+        extract_result = extract_raster_pdf(
+            pdf_path=input_pdf_path,
+            out_csv=csv_path,
+            debug_dir=debug_dir,
+            vision_service_account_json=vision_service_account_json,
+            page=1,
+            dpi=300,
+            y_cluster=20.0,
+        )
+        profile = _csv_profile(csv_path)
+        save_metadata(
+            job,
+            {
+                "csv_files": ["raster.csv"],
+                "row_count": profile["rows"],
+                "columns": profile["columns"],
+                "extractor_version": "raster-v1",
+                "extract_result": extract_result,
+            },
+        )
+        return _render_job_result_html(
+            kind="raster",
+            job_id=job.job_id,
+            rows=int(profile["rows"]),
+            columns=list(profile["columns"]),
+        )
+    except Exception as exc:
+        print(f"Raster extraction failed: {exc}")
+        safe_error = html.escape(str(exc), quote=True)
+        return f"""
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+            <strong>Error Processing Raster PDF:</strong><br>
+            {safe_error}
+        </div>
+        """
+
+
+@app.post("/vector/upload", response_class=HTMLResponse)
+async def handle_vector_upload(file: UploadFile = File(...)):
+    if not _is_pdf_upload(file):
+        return """
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+            <strong>Error:</strong> Please upload a valid PDF file.
+        </div>
+        """
+
+    try:
+        file_bytes = await file.read()
+        job = create_job(kind="vector", source_filename=file.filename or "upload.pdf")
+        input_pdf_path = job.job_dir / "input.pdf"
+        input_pdf_path.write_bytes(file_bytes)
+        csv_path = job.job_dir / "vector.csv"
+
+        extract_result = extract_vector_pdf_four_columns(
+            pdf_path=input_pdf_path,
+            out_csv_path=csv_path,
+        )
+        profile = _csv_profile(csv_path)
+        save_metadata(
+            job,
+            {
+                "csv_files": ["vector.csv"],
+                "row_count": profile["rows"],
+                "columns": profile["columns"],
+                "extractor_version": "vector-v1",
+                "extract_result": extract_result,
+            },
+        )
+        return _render_job_result_html(
+            kind="vector",
+            job_id=job.job_id,
+            rows=int(profile["rows"]),
+            columns=list(profile["columns"]),
+        )
+    except Exception as exc:
+        print(f"Vector extraction failed: {exc}")
+        safe_error = html.escape(str(exc), quote=True)
+        return f"""
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+            <strong>Error Processing Vector PDF:</strong><br>
+            {safe_error}
+        </div>
+        """
+
+
+def _download_job_csv(job_id: str, kind: str):
+    try:
+        csv_path = resolve_job_csv_path(job_id=job_id, kind=kind)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="CSV not found")
+    return FileResponse(
+        path=csv_path,
+        media_type="text/csv; charset=utf-8",
+        filename=f"{kind}.csv",
+    )
+
+
+@app.get("/jobs/{job_id}/raster.csv")
+async def download_raster_csv(job_id: str):
+    return _download_job_csv(job_id=job_id, kind="raster")
+
+
+@app.get("/jobs/{job_id}/vector.csv")
+async def download_vector_csv(job_id: str):
+    return _download_job_csv(job_id=job_id, kind="vector")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

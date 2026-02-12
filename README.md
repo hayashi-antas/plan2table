@@ -335,7 +335,9 @@ plan2table/
 | 変数名 | 必須 | 説明 |
 |--------|------|------|
 | `GOOGLE_CLOUD_PROJECT` | ✅ | Google CloudプロジェクトID |
-| `GCP_SERVICE_ACCOUNT_KEY` | ✅ | サービスアカウントJSONキーの**内容全体** |
+| `VERTEX_SERVICE_ACCOUNT_KEY` | ✅ | Vertex AI用サービスアカウントJSONキーの**内容全体** |
+| `VISION_SERVICE_ACCOUNT_KEY` | ✅ | Raster OCR（Vision API）用サービスアカウントJSONキーの**内容全体** |
+| `GCP_SERVICE_ACCOUNT_KEY` | - | 旧互換用（未設定時は`VERTEX_SERVICE_ACCOUNT_KEY`を利用） |
 | `VERTEX_LOCATION` | - | Vertex AIのロケーション（デフォルト: `global`） |
 | `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3-pro-preview`） |
 
@@ -356,9 +358,22 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-3-flash-preview
 
 ブラウザで http://localhost:7860 にアクセスしてください。
 
+### 画面とエンドポイント
+
+- `GET /` : 統合ページ（Raster/Vector抽出）
+- `POST /raster/upload` : Raster PDF抽出、`raster.csv` を生成
+- `POST /vector/upload` : Vector PDF抽出（4列CSVのみ）、`vector.csv` を生成
+- `GET /jobs/{job_id}/raster.csv` : Raster結果CSVをダウンロード
+- `GET /jobs/{job_id}/vector.csv` : Vector結果CSVをダウンロード
+- `GET /area` : 既存LLM解析ページ
+- `POST /area/upload` : 既存LLM解析API
+- `POST /upload` : 互換エンドポイント（`/area/upload`へ委譲）
+
+抽出ジョブはUUID v4で管理され、成果物は `/tmp/plan2table/jobs/<job_id>/` に保存されます（`metadata.json` を含む）。
+
 ### Hugging Face Spacesへのデプロイ
 
-1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`と`GCP_SERVICE_ACCOUNT_KEY`を設定
+1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`、`VERTEX_SERVICE_ACCOUNT_KEY`、`VISION_SERVICE_ACCOUNT_KEY`を設定
 2. Dockerfileが自動的にビルド・デプロイされます
 
 > [!TIP]
@@ -367,7 +382,6 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-3-flash-preview
 
 
 [^1]: ここでいう Function Calling は、視覚・言語・構造理解を統合した基盤モデル（Foundation Model）が、推論の一部をアプリケーション側の関数に委譲するための仕組みです。Plan2Table では、基盤モデルに判断を任せつつ、数値計算や検証といった決定的処理はコード側で実行することで、**再現性と信頼性を優先したシステム設計**を採用しています。
-
 
 
 
