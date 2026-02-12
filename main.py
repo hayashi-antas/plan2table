@@ -456,7 +456,7 @@ def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str
     download_path = f"/jobs/{job_id}/{kind}.csv"
     columns_html = ", ".join(html.escape(c) for c in columns) if columns else "-"
     return f"""
-    <section class="mt-4 rounded-sm border border-stone/30 bg-paper-dark p-4 text-ink">
+    <section class="mt-4 rounded-sm border border-stone/30 bg-paper-dark p-4 text-ink" data-kind="{html.escape(kind)}" data-job-id="{html.escape(job_id)}">
         <div class="text-sm font-semibold text-wood-dark">{label} CSV作成完了</div>
         <div class="mt-2 text-sm">Job ID: <code class="font-mono">{html.escape(job_id)}</code></div>
         <div class="mt-1 text-sm">Rows: {rows}</div>

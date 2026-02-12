@@ -35,6 +35,7 @@ def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
         files={"file": ("raster.pdf", b"%PDF-1.4\n", "application/pdf")},
     )
     assert resp.status_code == 200
+    assert re.search(r'data-kind="raster"\s+data-job-id="[0-9a-f\-]+"', resp.text)
     path = _extract_download_path(resp.text, "raster")
 
     dl = client.get(path)
@@ -56,6 +57,7 @@ def test_vector_upload_and_download_fixed_path(tmp_path, monkeypatch):
         files={"file": ("vector.pdf", b"%PDF-1.4\n", "application/pdf")},
     )
     assert resp.status_code == 200
+    assert re.search(r'data-kind="vector"\s+data-job-id="[0-9a-f\-]+"', resp.text)
     path = _extract_download_path(resp.text, "vector")
 
     dl = client.get(path)

@@ -46,8 +46,8 @@
         <h2 class="text-xl font-semibold">Merge → unified.csv</h2>
         <p class="mt-1 text-sm text-stone-600">Raster/VectorのJob IDから統合CSVを生成します。</p>
         <form id="unified-form" class="mt-4 space-y-3" hx-post="/unified/merge" hx-target="#unified-result" hx-indicator="#unified-loading">
-          <input type="text" name="raster_job_id" required placeholder="Raster Job ID (UUID)" class="block w-full rounded border border-stone-300 p-2 text-sm font-mono">
-          <input type="text" name="vector_job_id" required placeholder="Vector Job ID (UUID)" class="block w-full rounded border border-stone-300 p-2 text-sm font-mono">
+          <input id="unified-raster-job-id" type="text" name="raster_job_id" required placeholder="Raster Job ID (UUID)" class="block w-full rounded border border-stone-300 p-2 text-sm font-mono">
+          <input id="unified-vector-job-id" type="text" name="vector_job_id" required placeholder="Vector Job ID (UUID)" class="block w-full rounded border border-stone-300 p-2 text-sm font-mono">
           <button type="submit" class="rounded bg-stone-900 px-4 py-2 text-sm font-semibold text-white hover:bg-stone-700">統合CSVを生成</button>
           <div id="unified-loading" class="htmx-indicator text-sm text-stone-500">処理中...</div>
         </form>
@@ -55,5 +55,34 @@
       </article>
     </section>
   </main>
+  <script>
+    (function () {
+      function updateUnifiedJobId(kind, jobId) {
+        if (!jobId) return;
+        if (kind === "raster") {
+          var rasterInput = document.getElementById("unified-raster-job-id");
+          if (rasterInput) rasterInput.value = jobId;
+          return;
+        }
+        if (kind === "vector") {
+          var vectorInput = document.getElementById("unified-vector-job-id");
+          if (vectorInput) vectorInput.value = jobId;
+        }
+      }
+
+      document.body.addEventListener("htmx:afterSwap", function (event) {
+        var target = event && event.detail ? event.detail.target : null;
+        if (!target || (target.id !== "raster-result" && target.id !== "vector-result")) {
+          return;
+        }
+        var card = target.querySelector("section[data-kind][data-job-id]");
+        if (!card) return;
+
+        var kind = card.getAttribute("data-kind");
+        var jobId = card.getAttribute("data-job-id");
+        updateUnifiedJobId(kind, jobId);
+      });
+    })();
+  </script>
 </body>
 </html>
