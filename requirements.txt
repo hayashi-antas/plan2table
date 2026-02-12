@@ -3,8 +3,10 @@ uvicorn
 python-multipart
 google-cloud-aiplatform
 google-genai
+google-cloud-vision
 jinja2
 pdfplumber
 pytest
 markdown
 markupsafe
+Pillow

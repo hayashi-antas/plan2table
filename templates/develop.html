@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plan2Table | Develop</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Noto+Serif+JP:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            serif: ['Cormorant Garamond', 'Noto Serif JP', 'serif'],
+            sans: ['Source Sans 3', 'sans-serif'],
+          },
+          colors: {
+            paper: '#f7f3ed',
+            'paper-dark': '#ebe5db',
+            ink: '#2c2416',
+            'ink-light': '#5c5243',
+            'ink-muted': '#8a8072',
+            wood: '#8b5a2b',
+            'wood-dark': '#6b4423',
+            copper: '#b87333',
+            'copper-light': '#d4956a',
+            blueprint: '#1e3a5f',
+            'blueprint-light': '#2d5a8a',
+            stone: '#9c9486',
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/static/shared-ui.css">
+</head>
+<body class="min-h-screen blueprint-grid">
+  <div class="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative z-10">
+    <div class="w-full max-w-6xl">
+      <header class="text-center mb-10">
+        <div class="flex justify-center mb-6">
+          <div class="seal">
+            <svg class="w-6 h-6 text-wood" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+            </svg>
+          </div>
+        </div>
+
+        <h1 class="heading-serif text-3xl md:text-4xl font-semibold text-ink mb-3">M-E-Check Develop</h1>
+        <div class="divider-ornament text-sm mb-4">
+          <span class="font-medium tracking-widest uppercase text-stone">Developer Console</span>
+        </div>
+        <p class="text-ink-muted text-sm md:text-base max-w-2xl mx-auto leading-relaxed">
+          Raster / Vector / Unified を個別に実行し、CSV生成の挙動を確認します
+        </p>
+        <a href="/area" class="mt-4 inline-block rounded-sm border border-wood px-4 py-2 text-sm font-semibold text-wood hover:bg-paper-dark">
+          LLM解析ページへ
+        </a>
+      </header>
+
+      <div class="paper-card border border-stone/30 rounded-sm p-6 md:p-8 relative corner-marks">
+        <div class="flex items-center gap-3 mb-5">
+          <span class="text-xs font-semibold tracking-widest uppercase text-stone">Tools</span>
+          <div class="flex-1 h-px bg-gradient-to-r from-stone/40 to-transparent"></div>
+        </div>
+
+        <section class="grid gap-6 md:grid-cols-3">
+          <article class="rounded-sm border border-stone/40 bg-paper p-4">
+            <h2 class="heading-serif text-xl text-ink font-semibold">Raster PDF → raster.csv</h2>
+            <p class="mt-1 text-sm text-ink-muted">Vision OCRで4列抽出</p>
+            <form id="raster-form" class="mt-4 space-y-3" hx-encoding="multipart/form-data" hx-post="/raster/upload" hx-target="#raster-result" hx-indicator="#raster-loading">
+              <input type="file" name="file" accept=".pdf" required class="block w-full rounded-sm border border-stone-300 bg-white p-2 text-sm">
+              <button type="submit" class="btn-architectural w-full rounded-sm px-4 py-2 text-sm font-semibold text-white">Raster抽出を実行</button>
+              <div id="raster-loading" class="htmx-indicator flex items-center gap-2 text-sm text-wood"><div class="loader !w-4 !h-4"></div><span>処理中...</span></div>
+            </form>
+            <div id="raster-result" class="prose mt-4 overflow-x-auto"></div>
+          </article>
+
+          <article class="rounded-sm border border-stone/40 bg-paper p-4">
+            <h2 class="heading-serif text-xl text-ink font-semibold">Vector PDF → vector.csv</h2>
+            <p class="mt-1 text-sm text-ink-muted">表抽出後、4列CSVを出力</p>
+            <form id="vector-form" class="mt-4 space-y-3" hx-encoding="multipart/form-data" hx-post="/vector/upload" hx-target="#vector-result" hx-indicator="#vector-loading">
+              <input type="file" name="file" accept=".pdf" required class="block w-full rounded-sm border border-stone-300 bg-white p-2 text-sm">
+              <button type="submit" class="btn-architectural w-full rounded-sm px-4 py-2 text-sm font-semibold text-white">Vector抽出を実行</button>
+              <div id="vector-loading" class="htmx-indicator flex items-center gap-2 text-sm text-wood"><div class="loader !w-4 !h-4"></div><span>処理中...</span></div>
+            </form>
+            <div id="vector-result" class="prose mt-4 overflow-x-auto"></div>
+          </article>
+
+          <article class="rounded-sm border border-stone/40 bg-paper p-4">
+            <h2 class="heading-serif text-xl text-ink font-semibold">Merge → unified.csv</h2>
+            <p class="mt-1 text-sm text-ink-muted">Raster/Vector Job IDを統合</p>
+            <form id="unified-form" class="mt-4 space-y-3" hx-post="/unified/merge" hx-target="#unified-result" hx-indicator="#unified-loading">
+              <input id="unified-raster-job-id" type="text" name="raster_job_id" required placeholder="Raster Job ID (UUID)" class="block w-full rounded-sm border border-stone-300 bg-white p-2 text-sm font-mono">
+              <input id="unified-vector-job-id" type="text" name="vector_job_id" required placeholder="Vector Job ID (UUID)" class="block w-full rounded-sm border border-stone-300 bg-white p-2 text-sm font-mono">
+              <button type="submit" class="btn-architectural w-full rounded-sm px-4 py-2 text-sm font-semibold text-white">統合CSVを生成</button>
+              <div id="unified-loading" class="htmx-indicator flex items-center gap-2 text-sm text-wood"><div class="loader !w-4 !h-4"></div><span>処理中...</span></div>
+            </form>
+            <div id="unified-result" class="prose mt-4 overflow-x-auto"></div>
+          </article>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="formulas-container" class="fixed inset-0 pointer-events-none overflow-hidden z-0"></div>
+
+  <script src="/static/shared-ui.js"></script>
+  <script>
+    window.initFormulaAnimation('formulas-container');
+
+    (function () {
+      function updateUnifiedJobId(kind, jobId) {
+        if (!jobId) return;
+        if (kind === 'raster') {
+          var rasterInput = document.getElementById('unified-raster-job-id');
+          if (rasterInput) rasterInput.value = jobId;
+          return;
+        }
+        if (kind === 'vector') {
+          var vectorInput = document.getElementById('unified-vector-job-id');
+          if (vectorInput) vectorInput.value = jobId;
+        }
+      }
+
+      document.body.addEventListener('htmx:afterSwap', function (event) {
+        var target = event && event.detail ? event.detail.target : null;
+        if (!target || (target.id !== 'raster-result' && target.id !== 'vector-result')) {
+          return;
+        }
+        var card = target.querySelector('section[data-kind][data-job-id]');
+        if (!card) return;
+
+        var kind = card.getAttribute('data-kind');
+        var jobId = card.getAttribute('data-job-id');
+        updateUnifiedJobId(kind, jobId);
+      });
+    })();
+  </script>
+</body>
+</html>
