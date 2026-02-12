@@ -31,7 +31,14 @@ APPENDED_COLUMNS = [
     "vector_容量(kW)_calc",
     "容量差分(kW)",
     "台数差分",
+    "存在判定(○/×)",
+    "台数判定(○/×)",
+    "容量判定(○/×)",
+    "総合判定(○/×)",
+    "不一致理由",
 ]
+
+EPS_KW = 0.1
 
 
 def _normalize_header(text: str) -> str:
@@ -88,6 +95,10 @@ def _unique_in_order(values: Iterable[str]) -> List[str]:
 
 def _join_unique(values: Iterable[str]) -> str:
     return " / ".join(_unique_in_order(values))
+
+
+def _judge_mark(ok: bool) -> str:
+    return "○" if ok else "×"
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -181,6 +192,25 @@ def merge_vector_raster_csv(
         if vector_count is not None:
             count_diff = float(raster_match_count) - vector_count
 
+        exists_ok = raster_match_count > 0
+        qty_ok = count_diff is not None and count_diff == 0.0
+        kw_ok = capacity_diff is not None and abs(capacity_diff) <= EPS_KW
+        overall_ok = exists_ok and qty_ok and kw_ok
+
+        mismatch_reason = ""
+        if not overall_ok:
+            if not exists_ok:
+                mismatch_reason = "rasterなし"
+            elif not qty_ok:
+                if count_diff is None:
+                    mismatch_reason = "台数差分=欠損"
+                else:
+                    mismatch_reason = f"台数差分={_format_number(count_diff)}"
+            elif capacity_diff is None:
+                mismatch_reason = "容量欠損"
+            else:
+                mismatch_reason = f"容量差分={capacity_diff:.3f}"
+
         out_row = dict(vector_row)
         out_row["raster_機器名称"] = (
             _join_unique(agg["names"]) if agg else ""  # type: ignore[arg-type]
@@ -199,6 +229,11 @@ def merge_vector_raster_csv(
         out_row["vector_容量(kW)_calc"] = _format_number(vector_capacity_calc)
         out_row["容量差分(kW)"] = _format_number(capacity_diff)
         out_row["台数差分"] = _format_number(count_diff)
+        out_row["存在判定(○/×)"] = _judge_mark(exists_ok)
+        out_row["台数判定(○/×)"] = _judge_mark(qty_ok)
+        out_row["容量判定(○/×)"] = _judge_mark(kw_ok)
+        out_row["総合判定(○/×)"] = _judge_mark(overall_ok)
+        out_row["不一致理由"] = mismatch_reason
         out_rows.append(out_row)
 
     out_csv_path.parent.mkdir(parents=True, exist_ok=True)

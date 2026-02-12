@@ -61,9 +61,49 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert float(a1["vector_容量(kW)_calc"]) == 3.0
     assert float(a1["容量差分(kW)"]) == 2.0
     assert float(a1["台数差分"]) == 1.0
+    assert a1["存在判定(○/×)"] == "○"
+    assert a1["台数判定(○/×)"] == "×"
+    assert a1["容量判定(○/×)"] == "×"
+    assert a1["総合判定(○/×)"] == "×"
+    assert a1["不一致理由"] == "台数差分=1"
 
     b1 = rows[1]
     assert b1["機械番号"] == "B-1"
     assert b1["raster_match_count"] == "0"
     assert b1["raster_台数_calc"] == "0"
     assert b1["raster_機器名称"] == ""
+    assert b1["存在判定(○/×)"] == "×"
+    assert b1["台数判定(○/×)"] == "×"
+    assert b1["容量判定(○/×)"] == "×"
+    assert b1["総合判定(○/×)"] == "×"
+    assert b1["不一致理由"] == "rasterなし"
+
+
+def test_merge_sets_kw_missing_reason_when_capacity_diff_is_empty(tmp_path):
+    vector_csv = tmp_path / "vector.csv"
+    raster_csv = tmp_path / "raster.csv"
+    out_csv = tmp_path / "unified.csv"
+
+    vector_csv.write_text(
+        "機器番号,名称,動力 (50Hz)_消費電力 (KW),台数\nA-1,排風機,1.5,1\n",
+        encoding="utf-8",
+    )
+    raster_csv.write_text(
+        "機器番号,機器名称,電圧(V),容量(kW)\nA-1,送風機,200,\n",
+        encoding="utf-8",
+    )
+
+    merge_vector_raster_csv(
+        vector_csv_path=vector_csv,
+        raster_csv_path=raster_csv,
+        out_csv_path=out_csv,
+    )
+
+    rows = _read_rows(out_csv)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["存在判定(○/×)"] == "○"
+    assert row["台数判定(○/×)"] == "○"
+    assert row["容量判定(○/×)"] == "×"
+    assert row["総合判定(○/×)"] == "×"
+    assert row["不一致理由"] == "容量欠損"

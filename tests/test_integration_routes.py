@@ -135,6 +135,11 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert row["raster_台数_calc"] == "3"
     assert float(row["台数差分"]) == 1.0
     assert float(row["容量差分(kW)"]) == 2.0
+    assert row["存在判定(○/×)"] == "○"
+    assert row["台数判定(○/×)"] == "×"
+    assert row["容量判定(○/×)"] == "×"
+    assert row["総合判定(○/×)"] == "×"
+    assert row["不一致理由"] == "台数差分=1"
 
     m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
     assert m
