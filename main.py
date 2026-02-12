@@ -719,6 +719,11 @@ async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/me-check", response_class=HTMLResponse)
+async def read_me_check(request: Request):
+    return templates.TemplateResponse("me-check.html", {"request": request})
+
+
 @app.get("/develop", response_class=HTMLResponse)
 async def read_develop(request: Request):
     return templates.TemplateResponse("develop.html", {"request": request})

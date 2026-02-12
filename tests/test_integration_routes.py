@@ -104,10 +104,16 @@ def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
 def test_root_and_develop_routes_are_split():
     root = client.get("/")
     assert root.status_code == 200
-    assert 'hx-post="/customer/run"' in root.text
-    assert 'name="panel_file"' in root.text
-    assert 'name="equipment_file"' in root.text
-    assert "/develop" not in root.text
+    assert "Plan2Table Portal" in root.text
+    assert 'href="/area"' in root.text
+    assert 'href="/me-check"' in root.text
+    assert 'hx-post="/customer/run"' not in root.text
+
+    me_check = client.get("/me-check")
+    assert me_check.status_code == 200
+    assert 'hx-post="/customer/run"' in me_check.text
+    assert 'name="panel_file"' in me_check.text
+    assert 'name="equipment_file"' in me_check.text
 
     develop = client.get("/develop")
     assert develop.status_code == 200
