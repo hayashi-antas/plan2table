@@ -1,3 +1,5 @@
+import csv
+import io
 import re
 from uuid import uuid4
 
@@ -68,7 +70,7 @@ def test_fixed_download_returns_404_when_missing():
 
 
 def test_fixed_download_rejects_invalid_job_id_format():
-    assert client.get("/jobs/not-a-uuid/raster.csv").status_code == 404
+    assert client.get("/jobs/not-a-uuid/raster.csv").status_code == 422
 
 
 def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
@@ -83,3 +85,97 @@ def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
     )
     assert resp.status_code == 200
     assert "compat-ok" in resp.text
+
+
+def test_unified_merge_and_download(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+
+    raster_job = job_store.create_job(kind="raster", source_filename="raster.pdf")
+    vector_job = job_store.create_job(kind="vector", source_filename="vector.pdf")
+
+    (raster_job.job_dir / "raster.csv").write_text(
+        "\n".join(
+            [
+                "機器番号,機器名称,電圧(V),容量(Kw)",
+                "A-1,送風機,200,1.5",
+                "A-1,送風機,200,2.0",
+                "A-1,予備,100,1.5",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (vector_job.job_dir / "vector.csv").write_text(
+        "機器番号,名称,動力(50Hz)_消費電力(Kw),台数\nA-1,排風機,1.5,2\n",
+        encoding="utf-8",
+    )
+
+    resp = client.post(
+        "/unified/merge",
+        data={
+            "raster_job_id": raster_job.job_id,
+            "vector_job_id": vector_job.job_id,
+        },
+    )
+    assert resp.status_code == 200
+    path = _extract_download_path(resp.text, "unified")
+
+    dl = client.get(path)
+    assert dl.status_code == 200
+
+    rows = list(csv.DictReader(io.StringIO(dl.text)))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["機器番号"] == "A-1"
+    assert row["raster_容量(kW)_values"] == "1.5 / 2.0"
+    assert row["raster_機器名称"] == "送風機 / 予備"
+    assert row["raster_電圧(V)"] == "200 / 100"
+    assert float(row["raster_容量(kW)_sum"]) == 5.0
+    assert row["raster_match_count"] == "3"
+    assert row["raster_台数_calc"] == "3"
+    assert float(row["台数差分"]) == 1.0
+    assert float(row["容量差分(kW)"]) == 2.0
+
+    m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
+    assert m
+    unified_job_id = m.group(1)
+    unified_csv_path = tmp_path / unified_job_id / "unified.csv"
+    raw = unified_csv_path.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")
+
+
+def test_unified_merge_returns_404_when_job_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+
+    missing_id = str(uuid4())
+    resp = client.post(
+        "/unified/merge",
+        data={
+            "raster_job_id": missing_id,
+            "vector_job_id": missing_id,
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_unified_merge_returns_404_when_csv_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    raster_job = job_store.create_job(kind="raster", source_filename="raster.pdf")
+    vector_job = job_store.create_job(kind="vector", source_filename="vector.pdf")
+
+    resp = client.post(
+        "/unified/merge",
+        data={
+            "raster_job_id": raster_job.job_id,
+            "vector_job_id": vector_job.job_id,
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_unified_merge_rejects_invalid_uuid():
+    resp = client.post(
+        "/unified/merge",
+        data={"raster_job_id": "not-a-uuid", "vector_job_id": "not-a-uuid"},
+    )
+    assert resp.status_code == 422

@@ -28,3 +28,10 @@ def test_job_store_rejects_non_v4_uuid(tmp_path, monkeypatch):
         raise AssertionError("Expected ValueError")
     except ValueError:
         pass
+
+
+def test_job_store_supports_unified_kind(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    job = job_store.create_job(kind="unified", source_filename="merge")
+    csv_path = job_store.save_csv(job, b"a,b\n1,2\n")
+    assert csv_path.name == "unified.csv"

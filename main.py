@@ -3,9 +3,10 @@ import csv
 import json
 import html
 from pathlib import Path
+from uuid import UUID
 from google import genai
 from google.genai import types
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Form
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
@@ -17,6 +18,7 @@ from extractors.tool_definitions import TOOLS, SKILL_REGISTRY
 from extractors.raster_extractor import extract_raster_pdf
 from extractors.vector_extractor import extract_vector_pdf_four_columns
 from extractors.job_store import create_job, resolve_job_csv_path, save_metadata
+from extractors.unified_csv import merge_vector_raster_csv
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -445,7 +447,12 @@ def _csv_profile(csv_path: Path) -> dict:
 
 
 def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str]) -> str:
-    label = "Raster" if kind == "raster" else "Vector"
+    label_map = {
+        "raster": "Raster",
+        "vector": "Vector",
+        "unified": "Unified",
+    }
+    label = label_map.get(kind, kind.capitalize())
     download_path = f"/jobs/{job_id}/{kind}.csv"
     columns_html = ", ".join(html.escape(c) for c in columns) if columns else "-"
     return f"""
@@ -709,10 +716,76 @@ async def handle_vector_upload(file: UploadFile = File(...)):
         """
 
 
-def _download_job_csv(job_id: str, kind: str):
+@app.post("/unified/merge", response_class=HTMLResponse)
+async def handle_unified_merge(
+    raster_job_id: UUID = Form(...),
+    vector_job_id: UUID = Form(...),
+):
+    raster_job_id_str = str(raster_job_id)
+    vector_job_id_str = str(vector_job_id)
+
     try:
-        csv_path = resolve_job_csv_path(job_id=job_id, kind=kind)
+        raster_csv_path = resolve_job_csv_path(job_id=raster_job_id_str, kind="raster")
+        vector_csv_path = resolve_job_csv_path(job_id=vector_job_id_str, kind="vector")
     except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not raster_csv_path.parent.exists() or not vector_csv_path.parent.exists():
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not raster_csv_path.exists() or not vector_csv_path.exists():
+        raise HTTPException(status_code=404, detail="CSV not found")
+
+    try:
+        source_name = f"merge:{raster_job_id_str}+{vector_job_id_str}"
+        job = create_job(kind="unified", source_filename=source_name)
+        out_csv_path = job.job_dir / "unified.csv"
+
+        merge_result = merge_vector_raster_csv(
+            vector_csv_path=vector_csv_path,
+            raster_csv_path=raster_csv_path,
+            out_csv_path=out_csv_path,
+        )
+        profile = _csv_profile(out_csv_path)
+        save_metadata(
+            job,
+            {
+                "csv_files": ["unified.csv"],
+                "row_count": profile["rows"],
+                "columns": profile["columns"],
+                "extractor_version": "unified-v1",
+                "source_job_ids": {
+                    "raster_job_id": raster_job_id_str,
+                    "vector_job_id": vector_job_id_str,
+                },
+                "extract_result": merge_result,
+            },
+        )
+        return _render_job_result_html(
+            kind="unified",
+            job_id=job.job_id,
+            rows=int(profile["rows"]),
+            columns=list(profile["columns"]),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"Unified merge failed: {exc}")
+        safe_error = html.escape(str(exc), quote=True)
+        return f"""
+        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+            <strong>Error Processing Unified CSV:</strong><br>
+            {safe_error}
+        </div>
+        """
+
+
+def _download_job_csv(job_id: UUID, kind: str):
+    job_id_str = str(job_id)
+    try:
+        csv_path = resolve_job_csv_path(job_id=job_id_str, kind=kind)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not csv_path.parent.exists():
         raise HTTPException(status_code=404, detail="Job not found")
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="CSV not found")
@@ -724,13 +797,18 @@ def _download_job_csv(job_id: str, kind: str):
 
 
 @app.get("/jobs/{job_id}/raster.csv")
-async def download_raster_csv(job_id: str):
+async def download_raster_csv(job_id: UUID):
     return _download_job_csv(job_id=job_id, kind="raster")
 
 
 @app.get("/jobs/{job_id}/vector.csv")
-async def download_vector_csv(job_id: str):
+async def download_vector_csv(job_id: UUID):
     return _download_job_csv(job_id=job_id, kind="vector")
+
+
+@app.get("/jobs/{job_id}/unified.csv")
+async def download_unified_csv(job_id: UUID):
+    return _download_job_csv(job_id=job_id, kind="unified")
 
 
 if __name__ == "__main__":
