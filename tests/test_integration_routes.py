@@ -3,6 +3,7 @@ import io
 import re
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 import main as app_main
@@ -17,6 +18,17 @@ def _extract_download_path(html: str, kind: str) -> str:
     m = re.search(pattern, html)
     assert m, f"download path for {kind} was not found"
     return m.group(0)
+
+
+def _fake_raster_extract_success(**kwargs):
+    out_csv = kwargs["out_csv"]
+    out_csv.write_text("機器番号,機器名称,電圧(V),容量(kW)\nA-1,送風機,200,1.5\n", encoding="utf-8")
+    return {"rows": 1, "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]}
+
+
+def _fake_vector_extract_success(pdf_path, out_csv_path):
+    out_csv_path.write_text("機器番号,名称,動力 (50Hz)_消費電力 (KW),台数\nA-1,排風機,1.5,1\n", encoding="utf-8")
+    return {"rows": 1, "columns": ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数"]}
 
 
 def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
@@ -87,6 +99,189 @@ def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
     )
     assert resp.status_code == 200
     assert "compat-ok" in resp.text
+
+
+def test_root_and_develop_routes_are_split():
+    root = client.get("/")
+    assert root.status_code == 200
+    assert 'hx-post="/customer/run"' in root.text
+    assert 'name="panel_file"' in root.text
+    assert 'name="equipment_file"' in root.text
+    assert "/develop" not in root.text
+
+    develop = client.get("/develop")
+    assert develop.status_code == 200
+    assert 'hx-post="/raster/upload"' in develop.text
+    assert 'hx-post="/vector/upload"' in develop.text
+    assert 'hx-post="/unified/merge"' in develop.text
+
+
+def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
+    monkeypatch.setattr(app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+
+    job_id_match = re.search(r'data-unified-job-id="([0-9a-f\\-]+)"', resp.text)
+    assert job_id_match
+    unified_job_id = job_id_match.group(1)
+
+    assert f'data-download-url="/jobs/{unified_job_id}/unified.csv"' in resp.text
+    assert f'/jobs/{unified_job_id}/unified.csv' in resp.text
+
+    assert "判定(◯/✗)" in resp.text
+    assert "機器番号" in resp.text
+    assert "機器名" in resp.text
+    assert "機器kW" in resp.text
+    assert "機器台数" in resp.text
+    assert "盤台数" in resp.text
+    assert "合計差(kW)" in resp.text
+    assert "理由" in resp.text
+    assert "raster_機器名称" not in resp.text
+    assert "vector_容量(kW)_calc" not in resp.text
+
+    dl = client.get(f"/jobs/{unified_job_id}/unified.csv")
+    assert dl.status_code == 200
+    assert "総合判定(○/×)" in dl.text
+
+
+@pytest.mark.parametrize(
+    ("judgment_header", "raw_mark", "expected_mark"),
+    [
+        ("総合判定", "○", "◯"),
+        ("総合判定(◯/✗)", "✗", "✗"),
+        ("総合判定(○/×)", "×", "✗"),
+    ],
+)
+def test_customer_run_handles_judgment_header_variants(
+    tmp_path, monkeypatch, judgment_header, raw_mark, expected_mark
+):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
+    monkeypatch.setattr(app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success)
+
+    def fake_merge_vector_raster_csv(vector_csv_path, raster_csv_path, out_csv_path):
+        fieldnames = [
+            "機器番号",
+            "名称",
+            "vector_消費電力(kW)_per_unit",
+            "vector_台数_numeric",
+            "raster_台数_calc",
+            "容量差分(kW)",
+            "不一致理由",
+            judgment_header,
+        ]
+        with out_csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "機器番号": "A-1",
+                    "名称": "排風機",
+                    "vector_消費電力(kW)_per_unit": "1.5",
+                    "vector_台数_numeric": "1",
+                    "raster_台数_calc": "1",
+                    "容量差分(kW)": "0",
+                    "不一致理由": "",
+                    judgment_header: raw_mark,
+                }
+            )
+        return {"rows": 1, "columns": fieldnames}
+
+    monkeypatch.setattr(app_main, "merge_vector_raster_csv", fake_merge_vector_raster_csv)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+
+    mark_cell = re.search(rf"<td[^>]*>\s*{re.escape(expected_mark)}\s*</td>", resp.text)
+    assert mark_cell
+
+
+def test_customer_run_returns_stage_for_panel_to_raster_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+
+    def fake_raster_failure(**kwargs):
+        raise RuntimeError("panel raster failed")
+
+    monkeypatch.setattr(app_main, "extract_raster_pdf", fake_raster_failure)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert 'data-stage="panel-&gt;raster"' in resp.text
+    assert "message: panel raster failed" in resp.text
+
+
+def test_customer_run_returns_stage_for_equipment_to_vector_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
+
+    def fake_vector_failure(pdf_path, out_csv_path):
+        raise RuntimeError("equipment vector failed")
+
+    monkeypatch.setattr(app_main, "extract_vector_pdf_four_columns", fake_vector_failure)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert 'data-stage="equipment-&gt;vector"' in resp.text
+    assert "message: equipment vector failed" in resp.text
+
+
+def test_customer_run_returns_stage_for_unified_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
+    monkeypatch.setattr(app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success)
+
+    def fake_unified_failure(vector_csv_path, raster_csv_path, out_csv_path):
+        raise RuntimeError("unified failed\ndetail")
+
+    monkeypatch.setattr(app_main, "merge_vector_raster_csv", fake_unified_failure)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert 'data-stage="unified"' in resp.text
+    assert "message: unified failed detail" in resp.text
 
 
 def test_unified_merge_and_download(tmp_path, monkeypatch):

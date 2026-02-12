@@ -2,11 +2,13 @@ import os
 import csv
 import json
 import html
+import unicodedata
 from pathlib import Path
 from uuid import UUID
 from google import genai
 from google.genai import types
 from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Form
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
@@ -21,6 +23,7 @@ from extractors.job_store import create_job, resolve_job_csv_path, save_metadata
 from extractors.unified_csv import merge_vector_raster_csv
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # Initialize Vertex AI (new google-genai client)
@@ -473,9 +476,252 @@ def _is_pdf_upload(file: UploadFile) -> bool:
     return name.endswith(".pdf")
 
 
+CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
+    "総合判定",
+    "総合判定(◯/✗)",
+    "総合判定(○/×)",
+]
+
+CUSTOMER_TABLE_COLUMNS = [
+    ("判定(◯/✗)", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
+    ("機器番号", ["機器番号"]),
+    ("機器名", ["名称"]),
+    ("機器kW", ["vector_消費電力(kW)_per_unit"]),
+    ("機器台数", ["vector_台数_numeric"]),
+    ("盤台数", ["raster_台数_calc"]),
+    ("合計差(kW)", ["容量差分(kW)"]),
+    ("理由", ["不一致理由"]),
+]
+
+
+def _normalize_header_token(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or ""))
+    return normalized.replace(" ", "").replace("　", "")
+
+
+def _pick_first_column_value(row: dict[str, str], candidates: list[str]) -> str:
+    for key in candidates:
+        value = row.get(key)
+        if value is not None:
+            return str(value)
+    normalized_map = {_normalize_header_token(k): v for k, v in row.items()}
+    for key in candidates:
+        value = normalized_map.get(_normalize_header_token(key))
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _normalize_mark(value: str) -> str:
+    text = str(value or "").strip()
+    return text.replace("○", "◯").replace("×", "✗")
+
+
+def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        return [dict(row) for row in reader]
+
+
+def _build_customer_table_html(unified_csv_path: Path) -> str:
+    rows = _read_csv_dict_rows(unified_csv_path)
+    header_cells = "".join(
+        f"<th class=\"border border-stone-300 bg-stone-50 px-3 py-2 text-left text-sm font-semibold\">{html.escape(label)}</th>"
+        for label, _ in CUSTOMER_TABLE_COLUMNS
+    )
+
+    if not rows:
+        return (
+            "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
+            f"<thead><tr>{header_cells}</tr></thead>"
+            "<tbody><tr><td class=\"border border-stone-300 px-3 py-6 text-center text-stone-500\""
+            f" colspan=\"{len(CUSTOMER_TABLE_COLUMNS)}\">データがありません</td></tr></tbody></table>"
+        )
+
+    body_rows = []
+    for row in rows:
+        mapped_cells = []
+        for label, candidates in CUSTOMER_TABLE_COLUMNS:
+            value = _pick_first_column_value(row, candidates)
+            if label == "判定(◯/✗)":
+                value = _normalize_mark(value)
+            mapped_cells.append(
+                f"<td class=\"border border-stone-300 px-3 py-2 text-sm\">{html.escape(value)}</td>"
+            )
+        body_rows.append("<tr>" + "".join(mapped_cells) + "</tr>")
+
+    return (
+        "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
+        f"<thead><tr>{header_cells}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody></table>"
+    )
+
+
+def _single_line_message(message: object) -> str:
+    return " ".join(str(message or "").split())
+
+
+def _exception_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return _single_line_message(exc.detail)
+    text = _single_line_message(str(exc))
+    if text:
+        return text
+    return exc.__class__.__name__
+
+
+def _render_customer_success_html(unified_job_id: str, table_html: str) -> str:
+    safe_job_id = html.escape(unified_job_id, quote=True)
+    download_url = f"/jobs/{unified_job_id}/unified.csv"
+    safe_download_url = html.escape(download_url, quote=True)
+    return f"""
+    <section class="relative rounded-lg border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
+      data-status="success"
+      data-unified-job-id="{safe_job_id}"
+      data-download-url="{safe_download_url}">
+      <a
+        href="{safe_download_url}"
+        title="CSVをダウンロード"
+        aria-label="CSVをダウンロード"
+        class="group absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
+          <path d="M12 3v11"></path>
+          <path d="m8 10 4 4 4-4"></path>
+          <path d="M4 20h16"></path>
+        </svg>
+        <span class="pointer-events-none absolute right-10 top-1/2 hidden -translate-y-1/2 whitespace-nowrap rounded bg-stone-900 px-2 py-1 text-xs text-white group-hover:block">
+          CSVをダウンロード
+        </span>
+      </a>
+      <div class="text-sm font-semibold text-emerald-800">処理が完了しました</div>
+      <div class="mt-4 overflow-x-auto">{table_html}</div>
+    </section>
+    """
+
+
+def _render_customer_error_html(stage: str, message: str) -> str:
+    safe_stage = html.escape(stage, quote=True)
+    safe_message = html.escape(_single_line_message(message), quote=True)
+    return f"""
+    <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm"
+      data-status="error"
+      data-stage="{safe_stage}">
+      <div class="text-sm font-semibold text-red-800">処理に失敗しました</div>
+      <div class="mt-1 text-sm">stage: <code class="font-mono">{safe_stage}</code></div>
+      <div class="mt-1 text-sm">message: {safe_message}</div>
+    </section>
+    """
+
+
+def _run_raster_job(file_bytes: bytes, source_filename: str):
+    if not vision_service_account_json:
+        raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+
+    job = create_job(kind="raster", source_filename=source_filename)
+    input_pdf_path = job.job_dir / "input.pdf"
+    input_pdf_path.write_bytes(file_bytes)
+    csv_path = job.job_dir / "raster.csv"
+    debug_dir = job.job_dir / "debug"
+
+    extract_result = extract_raster_pdf(
+        pdf_path=input_pdf_path,
+        out_csv=csv_path,
+        debug_dir=debug_dir,
+        vision_service_account_json=vision_service_account_json,
+        page=1,
+        dpi=300,
+        y_cluster=20.0,
+    )
+    profile = _csv_profile(csv_path)
+    save_metadata(
+        job,
+        {
+            "csv_files": ["raster.csv"],
+            "row_count": profile["rows"],
+            "columns": profile["columns"],
+            "extractor_version": "raster-v1",
+            "extract_result": extract_result,
+        },
+    )
+    return job, profile
+
+
+def _run_vector_job(file_bytes: bytes, source_filename: str):
+    job = create_job(kind="vector", source_filename=source_filename)
+    input_pdf_path = job.job_dir / "input.pdf"
+    input_pdf_path.write_bytes(file_bytes)
+    csv_path = job.job_dir / "vector.csv"
+
+    extract_result = extract_vector_pdf_four_columns(
+        pdf_path=input_pdf_path,
+        out_csv_path=csv_path,
+    )
+    profile = _csv_profile(csv_path)
+    save_metadata(
+        job,
+        {
+            "csv_files": ["vector.csv"],
+            "row_count": profile["rows"],
+            "columns": profile["columns"],
+            "extractor_version": "vector-v1",
+            "extract_result": extract_result,
+        },
+    )
+    return job, profile
+
+
+def _resolve_existing_csv_or_404(job_id: str, kind: str) -> Path:
+    try:
+        csv_path = resolve_job_csv_path(job_id=job_id, kind=kind)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not csv_path.parent.exists():
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="CSV not found")
+    return csv_path
+
+
+def _run_unified_job(raster_job_id: str, vector_job_id: str):
+    raster_csv_path = _resolve_existing_csv_or_404(job_id=raster_job_id, kind="raster")
+    vector_csv_path = _resolve_existing_csv_or_404(job_id=vector_job_id, kind="vector")
+
+    source_name = f"merge:{raster_job_id}+{vector_job_id}"
+    job = create_job(kind="unified", source_filename=source_name)
+    out_csv_path = job.job_dir / "unified.csv"
+
+    merge_result = merge_vector_raster_csv(
+        vector_csv_path=vector_csv_path,
+        raster_csv_path=raster_csv_path,
+        out_csv_path=out_csv_path,
+    )
+    profile = _csv_profile(out_csv_path)
+    save_metadata(
+        job,
+        {
+            "csv_files": ["unified.csv"],
+            "row_count": profile["rows"],
+            "columns": profile["columns"],
+            "extractor_version": "unified-v1",
+            "source_job_ids": {
+                "raster_job_id": raster_job_id,
+                "vector_job_id": vector_job_id,
+            },
+            "extract_result": merge_result,
+        },
+    )
+    return job, profile
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/develop", response_class=HTMLResponse)
+async def read_develop(request: Request):
+    return templates.TemplateResponse("develop.html", {"request": request})
 
 
 @app.get("/area", response_class=HTMLResponse)
@@ -608,6 +854,67 @@ async def handle_upload_compat(file: UploadFile = File(...)):
     return await handle_area_upload(file)
 
 
+@app.post("/customer/run", response_class=HTMLResponse)
+async def handle_customer_run(
+    panel_file: UploadFile = File(...),
+    equipment_file: UploadFile = File(...),
+):
+    if not _is_pdf_upload(panel_file):
+        return _render_customer_error_html(
+            stage="panel->raster",
+            message="Please upload a valid PDF file for panel_file.",
+        )
+    if not _is_pdf_upload(equipment_file):
+        return _render_customer_error_html(
+            stage="equipment->vector",
+            message="Please upload a valid PDF file for equipment_file.",
+        )
+
+    try:
+        panel_file_bytes = await panel_file.read()
+        raster_job, _ = _run_raster_job(
+            file_bytes=panel_file_bytes,
+            source_filename=panel_file.filename or "panel.pdf",
+        )
+    except Exception as exc:
+        print(f"Customer flow failed at panel->raster: {exc}")
+        return _render_customer_error_html(
+            stage="panel->raster",
+            message=_exception_message(exc),
+        )
+
+    try:
+        equipment_file_bytes = await equipment_file.read()
+        vector_job, _ = _run_vector_job(
+            file_bytes=equipment_file_bytes,
+            source_filename=equipment_file.filename or "equipment.pdf",
+        )
+    except Exception as exc:
+        print(f"Customer flow failed at equipment->vector: {exc}")
+        return _render_customer_error_html(
+            stage="equipment->vector",
+            message=_exception_message(exc),
+        )
+
+    try:
+        unified_job, _ = _run_unified_job(
+            raster_job_id=raster_job.job_id,
+            vector_job_id=vector_job.job_id,
+        )
+        unified_csv_path = unified_job.job_dir / "unified.csv"
+        table_html = _build_customer_table_html(unified_csv_path)
+        return _render_customer_success_html(
+            unified_job_id=unified_job.job_id,
+            table_html=table_html,
+        )
+    except Exception as exc:
+        print(f"Customer flow failed at unified: {exc}")
+        return _render_customer_error_html(
+            stage="unified",
+            message=_exception_message(exc),
+        )
+
+
 @app.post("/raster/upload", response_class=HTMLResponse)
 async def handle_raster_upload(file: UploadFile = File(...)):
     if not _is_pdf_upload(file):
@@ -625,31 +932,9 @@ async def handle_raster_upload(file: UploadFile = File(...)):
 
     try:
         file_bytes = await file.read()
-        job = create_job(kind="raster", source_filename=file.filename or "upload.pdf")
-        input_pdf_path = job.job_dir / "input.pdf"
-        input_pdf_path.write_bytes(file_bytes)
-        csv_path = job.job_dir / "raster.csv"
-        debug_dir = job.job_dir / "debug"
-
-        extract_result = extract_raster_pdf(
-            pdf_path=input_pdf_path,
-            out_csv=csv_path,
-            debug_dir=debug_dir,
-            vision_service_account_json=vision_service_account_json,
-            page=1,
-            dpi=300,
-            y_cluster=20.0,
-        )
-        profile = _csv_profile(csv_path)
-        save_metadata(
-            job,
-            {
-                "csv_files": ["raster.csv"],
-                "row_count": profile["rows"],
-                "columns": profile["columns"],
-                "extractor_version": "raster-v1",
-                "extract_result": extract_result,
-            },
+        job, profile = _run_raster_job(
+            file_bytes=file_bytes,
+            source_filename=file.filename or "upload.pdf",
         )
         return _render_job_result_html(
             kind="raster",
@@ -679,25 +964,9 @@ async def handle_vector_upload(file: UploadFile = File(...)):
 
     try:
         file_bytes = await file.read()
-        job = create_job(kind="vector", source_filename=file.filename or "upload.pdf")
-        input_pdf_path = job.job_dir / "input.pdf"
-        input_pdf_path.write_bytes(file_bytes)
-        csv_path = job.job_dir / "vector.csv"
-
-        extract_result = extract_vector_pdf_four_columns(
-            pdf_path=input_pdf_path,
-            out_csv_path=csv_path,
-        )
-        profile = _csv_profile(csv_path)
-        save_metadata(
-            job,
-            {
-                "csv_files": ["vector.csv"],
-                "row_count": profile["rows"],
-                "columns": profile["columns"],
-                "extractor_version": "vector-v1",
-                "extract_result": extract_result,
-            },
+        job, profile = _run_vector_job(
+            file_bytes=file_bytes,
+            source_filename=file.filename or "upload.pdf",
         )
         return _render_job_result_html(
             kind="vector",
@@ -725,40 +994,9 @@ async def handle_unified_merge(
     vector_job_id_str = str(vector_job_id)
 
     try:
-        raster_csv_path = resolve_job_csv_path(job_id=raster_job_id_str, kind="raster")
-        vector_csv_path = resolve_job_csv_path(job_id=vector_job_id_str, kind="vector")
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    if not raster_csv_path.parent.exists() or not vector_csv_path.parent.exists():
-        raise HTTPException(status_code=404, detail="Job not found")
-    if not raster_csv_path.exists() or not vector_csv_path.exists():
-        raise HTTPException(status_code=404, detail="CSV not found")
-
-    try:
-        source_name = f"merge:{raster_job_id_str}+{vector_job_id_str}"
-        job = create_job(kind="unified", source_filename=source_name)
-        out_csv_path = job.job_dir / "unified.csv"
-
-        merge_result = merge_vector_raster_csv(
-            vector_csv_path=vector_csv_path,
-            raster_csv_path=raster_csv_path,
-            out_csv_path=out_csv_path,
-        )
-        profile = _csv_profile(out_csv_path)
-        save_metadata(
-            job,
-            {
-                "csv_files": ["unified.csv"],
-                "row_count": profile["rows"],
-                "columns": profile["columns"],
-                "extractor_version": "unified-v1",
-                "source_job_ids": {
-                    "raster_job_id": raster_job_id_str,
-                    "vector_job_id": vector_job_id_str,
-                },
-                "extract_result": merge_result,
-            },
+        job, profile = _run_unified_job(
+            raster_job_id=raster_job_id_str,
+            vector_job_id=vector_job_id_str,
         )
         return _render_job_result_html(
             kind="unified",

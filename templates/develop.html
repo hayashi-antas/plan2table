@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plan2Table Tools</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="min-h-screen bg-stone-100 text-stone-900">
+  <main class="mx-auto max-w-6xl px-4 py-10">
+    <header class="mb-8 rounded-lg border border-stone-300 bg-white p-6 shadow-sm">
+      <h1 class="text-3xl font-semibold tracking-tight">Plan2Table Unified Extractor</h1>
+      <p class="mt-2 text-sm text-stone-600">
+        ラスターPDF/ベクターPDFを別々にアップロードしてCSVを生成できます。
+      </p>
+      <a href="/area" class="mt-4 inline-block rounded border border-stone-400 px-3 py-2 text-sm font-semibold hover:bg-stone-50">
+        既存のLLM解析ページへ移動
+      </a>
+    </header>
+
+    <section class="grid gap-6 md:grid-cols-3">
+      <article class="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+        <h2 class="text-xl font-semibold">Raster PDF → raster.csv</h2>
+        <p class="mt-1 text-sm text-stone-600">Vision OCRで4列を抽出します。</p>
+        <form id="raster-form" class="mt-4 space-y-3" hx-encoding="multipart/form-data" hx-post="/raster/upload" hx-target="#raster-result" hx-indicator="#raster-loading">
+          <input type="file" name="file" accept=".pdf" required class="block w-full rounded border border-stone-300 p-2 text-sm">
+          <button type="submit" class="rounded bg-stone-900 px-4 py-2 text-sm font-semibold text-white hover:bg-stone-700">Raster抽出を実行</button>
+          <div id="raster-loading" class="htmx-indicator text-sm text-stone-500">処理中...</div>
+        </form>
+        <div id="raster-result" class="mt-4"></div>
+      </article>
+
+      <article class="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+        <h2 class="text-xl font-semibold">Vector PDF → vector.csv</h2>
+        <p class="mt-1 text-sm text-stone-600">表抽出後、4列CSVを出力します。</p>
+        <form id="vector-form" class="mt-4 space-y-3" hx-encoding="multipart/form-data" hx-post="/vector/upload" hx-target="#vector-result" hx-indicator="#vector-loading">
+          <input type="file" name="file" accept=".pdf" required class="block w-full rounded border border-stone-300 p-2 text-sm">
+          <button type="submit" class="rounded bg-stone-900 px-4 py-2 text-sm font-semibold text-white hover:bg-stone-700">Vector抽出を実行</button>
+          <div id="vector-loading" class="htmx-indicator text-sm text-stone-500">処理中...</div>
+        </form>
+        <div id="vector-result" class="mt-4"></div>
+      </article>
+
+      <article class="rounded-lg border border-stone-300 bg-white p-5 shadow-sm">
+        <h2 class="text-xl font-semibold">Merge → unified.csv</h2>
+        <p class="mt-1 text-sm text-stone-600">Raster/VectorのJob IDから統合CSVを生成します。</p>
+        <form id="unified-form" class="mt-4 space-y-3" hx-post="/unified/merge" hx-target="#unified-result" hx-indicator="#unified-loading">
+          <input id="unified-raster-job-id" type="text" name="raster_job_id" required placeholder="Raster Job ID (UUID)" class="block w-full rounded border border-stone-300 p-2 text-sm font-mono">
+          <input id="unified-vector-job-id" type="text" name="vector_job_id" required placeholder="Vector Job ID (UUID)" class="block w-full rounded border border-stone-300 p-2 text-sm font-mono">
+          <button type="submit" class="rounded bg-stone-900 px-4 py-2 text-sm font-semibold text-white hover:bg-stone-700">統合CSVを生成</button>
+          <div id="unified-loading" class="htmx-indicator text-sm text-stone-500">処理中...</div>
+        </form>
+        <div id="unified-result" class="mt-4"></div>
+      </article>
+    </section>
+  </main>
+  <script>
+    (function () {
+      function updateUnifiedJobId(kind, jobId) {
+        if (!jobId) return;
+        if (kind === "raster") {
+          var rasterInput = document.getElementById("unified-raster-job-id");
+          if (rasterInput) rasterInput.value = jobId;
+          return;
+        }
+        if (kind === "vector") {
+          var vectorInput = document.getElementById("unified-vector-job-id");
+          if (vectorInput) vectorInput.value = jobId;
+        }
+      }
+
+      document.body.addEventListener("htmx:afterSwap", function (event) {
+        var target = event && event.detail ? event.detail.target : null;
+        if (!target || (target.id !== "raster-result" && target.id !== "vector-result")) {
+          return;
+        }
+        var card = target.querySelector("section[data-kind][data-job-id]");
+        if (!card) return;
+
+        var kind = card.getAttribute("data-kind");
+        var jobId = card.getAttribute("data-job-id");
+        updateUnifiedJobId(kind, jobId);
+      });
+    })();
+  </script>
+</body>
+</html>

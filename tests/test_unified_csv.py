@@ -76,7 +76,7 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert b1["台数判定(○/×)"] == "×"
     assert b1["容量判定(○/×)"] == "×"
     assert b1["総合判定(○/×)"] == "×"
-    assert b1["不一致理由"] == "rasterなし"
+    assert b1["不一致理由"] == "盤表に記載なし"
 
 
 def test_merge_sets_kw_missing_reason_when_capacity_diff_is_empty(tmp_path):

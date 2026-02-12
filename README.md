@@ -141,7 +141,9 @@ plan2table/
 │   ├── __init__.py             # プロンプト読み込みユーティリティ
 │   └── area_extract.md         # AIへのプロンプト
 ├── templates/
-│   └── index.html              # フロントエンドUI
+│   ├── index.html              # お客さん向けUI
+│   ├── develop.html            # 開発者向けUI
+│   └── area.html               # LLM解析UI
 ├── tests/
 │   ├── test_area_regex.py      # 正規表現抽出のテスト
 │   └── test_prompt_load.py     # プロンプト読み込みのテスト
@@ -360,11 +362,15 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-3-flash-preview
 
 ### 画面とエンドポイント
 
-- `GET /` : 統合ページ（Raster/Vector抽出）
+- `GET /` : お客さん向けページ（機器表PDF + 盤表PDFを1回で統合実行）
+- `POST /customer/run` : お客さん向け統合実行（raster→vector→unified を順次実行）
+- `GET /develop` : 開発者向けページ（Raster/Vector/Unifiedの個別実行）
 - `POST /raster/upload` : Raster PDF抽出、`raster.csv` を生成
 - `POST /vector/upload` : Vector PDF抽出（4列CSVのみ）、`vector.csv` を生成
+- `POST /unified/merge` : Raster/VectorのJob IDから`unified.csv`を生成
 - `GET /jobs/{job_id}/raster.csv` : Raster結果CSVをダウンロード
 - `GET /jobs/{job_id}/vector.csv` : Vector結果CSVをダウンロード
+- `GET /jobs/{job_id}/unified.csv` : Unified結果CSVをダウンロード
 - `GET /area` : 既存LLM解析ページ
 - `POST /area/upload` : 既存LLM解析API
 - `POST /upload` : 互換エンドポイント（`/area/upload`へ委譲）
@@ -382,6 +388,4 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-3-flash-preview
 
 
 [^1]: ここでいう Function Calling は、視覚・言語・構造理解を統合した基盤モデル（Foundation Model）が、推論の一部をアプリケーション側の関数に委譲するための仕組みです。Plan2Table では、基盤モデルに判断を任せつつ、数値計算や検証といった決定的処理はコード側で実行することで、**再現性と信頼性を優先したシステム設計**を採用しています。
-
-
 

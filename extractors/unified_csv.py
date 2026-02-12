@@ -200,7 +200,7 @@ def merge_vector_raster_csv(
         mismatch_reason = ""
         if not overall_ok:
             if not exists_ok:
-                mismatch_reason = "rasterなし"
+                mismatch_reason = "盤表に記載なし"
             elif not qty_ok:
                 if count_diff is None:
                     mismatch_reason = "台数差分=欠損"
