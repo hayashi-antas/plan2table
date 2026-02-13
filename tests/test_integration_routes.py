@@ -116,7 +116,7 @@ def test_root_and_develop_routes_are_split():
     assert 'name="panel_file"' in me_check.text
     assert 'name="equipment_file"' in me_check.text
 
-    develop = client.get("/develop")
+    develop = client.get("/me-check/deveop")
     assert develop.status_code == 200
     assert 'hx-post="/raster/upload"' in develop.text
     assert 'hx-post="/vector/upload"' in develop.text

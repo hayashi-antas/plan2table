@@ -73,8 +73,8 @@
             background: linear-gradient(135deg, #fdfcfa 0%, #f5efe5 100%);
         }
 
-        /* File input styling */
-        input[type="file"] {
+        /* Hide file inputs only when they are used with custom dropzones */
+        .dropzone input[type="file"] {
             display: none;
         }
 
