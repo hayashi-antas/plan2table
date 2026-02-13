@@ -3,6 +3,7 @@ import csv
 import json
 import html
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 from google import genai
@@ -1039,10 +1040,14 @@ def _download_job_csv(job_id: UUID, kind: str):
         raise HTTPException(status_code=404, detail="Job not found")
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="CSV not found")
+    download_filename = f"{kind}.csv"
+    if kind == "unified":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        download_filename = f"me-check_照合結果_{timestamp}.csv"
     return FileResponse(
         path=csv_path,
         media_type="text/csv; charset=utf-8",
-        filename=f"{kind}.csv",
+        filename=download_filename,
     )
 
 

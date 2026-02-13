@@ -1,6 +1,7 @@
 import csv
 import io
 import re
+from urllib.parse import unquote
 from uuid import uuid4
 
 import pytest
@@ -332,6 +333,12 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
 
     dl = client.get(path)
     assert dl.status_code == 200
+    content_disposition = dl.headers.get("content-disposition", "")
+    decoded_disposition = unquote(content_disposition)
+    assert re.search(
+        r"me-check_照合結果_\d{8}_\d{4}\.csv",
+        decoded_disposition,
+    )
 
     rows = list(csv.DictReader(io.StringIO(dl.text)))
     assert len(rows) == 1
