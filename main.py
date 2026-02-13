@@ -492,8 +492,8 @@ CUSTOMER_TABLE_COLUMNS = [
     ("機器表 台数", ["機器表 台数", "台数", "vector_台数_numeric"]),
     ("盤表 台数", ["盤表 台数", "raster_match_count", "raster_台数_calc"]),
     ("台数差（盤表-機器表）", ["台数差（盤表-機器表）", "台数差分"]),
-    ("機器表 容量合計(kW)", ["機器表 容量合計(kW)", "vector_容量(kW)_calc"]),
-    ("盤表 容量合計(kW)", ["盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
+    ("機器表 消費電力(kW)", ["機器表 消費電力(kW)", "機器表 容量合計(kW)", "vector_容量(kW)_calc"]),
+    ("盤表 容量(kW)", ["盤表 容量(kW)", "盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
     ("容量差(kW)", ["容量差(kW)", "容量差分(kW)"]),
 ]
 
@@ -732,8 +732,7 @@ async def read_me_check(request: Request):
     return templates.TemplateResponse("me-check.html", {"request": request})
 
 
-@app.get("/me-check/deveop", response_class=HTMLResponse)
-@app.get("/develop", response_class=HTMLResponse)
+@app.get("/me-check/develop", response_class=HTMLResponse)
 async def read_develop(request: Request):
     return templates.TemplateResponse("develop.html", {"request": request})
 

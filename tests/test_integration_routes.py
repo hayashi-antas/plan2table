@@ -116,7 +116,7 @@ def test_root_and_develop_routes_are_split():
     assert 'name="panel_file"' in me_check.text
     assert 'name="equipment_file"' in me_check.text
 
-    develop = client.get("/me-check/deveop")
+    develop = client.get("/me-check/develop")
     assert develop.status_code == 200
     assert 'hx-post="/raster/upload"' in develop.text
     assert 'hx-post="/vector/upload"' in develop.text
@@ -153,8 +153,8 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "機器表 台数" in resp.text
     assert "盤表 台数" in resp.text
     assert "台数差（盤表-機器表）" in resp.text
-    assert "機器表 容量合計(kW)" in resp.text
-    assert "盤表 容量合計(kW)" in resp.text
+    assert "機器表 消費電力(kW)" in resp.text
+    assert "盤表 容量(kW)" in resp.text
     assert "容量差(kW)" in resp.text
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
@@ -188,8 +188,8 @@ def test_customer_run_handles_judgment_header_variants(
             "機器表 台数",
             "盤表 台数",
             "台数差（盤表-機器表）",
-            "機器表 容量合計(kW)",
-            "盤表 容量合計(kW)",
+            "機器表 消費電力(kW)",
+            "盤表 容量(kW)",
             "容量差(kW)",
             "不一致内容",
             judgment_header,
@@ -204,8 +204,8 @@ def test_customer_run_handles_judgment_header_variants(
                     "機器表 台数": "1",
                     "盤表 台数": "1",
                     "台数差（盤表-機器表）": "0",
-                    "機器表 容量合計(kW)": "1.5",
-                    "盤表 容量合計(kW)": "1.5",
+                    "機器表 消費電力(kW)": "1.5",
+                    "盤表 容量(kW)": "1.5",
                     "容量差(kW)": "0",
                     "不一致内容": "",
                     judgment_header: raw_mark,
@@ -341,18 +341,28 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     )
 
     rows = list(csv.DictReader(io.StringIO(dl.text)))
-    assert len(rows) == 1
+    assert len(rows) == 2
     row = rows[0]
     assert row["機器ID"] == "A-1"
     assert row["機器名"] == "排風機"
     assert float(row["機器表 台数"]) == 2.0
     assert row["盤表 台数"] == "3"
     assert float(row["台数差（盤表-機器表）"]) == 1.0
-    assert float(row["機器表 容量合計(kW)"]) == 3.0
-    assert float(row["盤表 容量合計(kW)"]) == 5.0
-    assert float(row["容量差(kW)"]) == 2.0
+    assert float(row["機器表 消費電力(kW)"]) == 1.5
+    assert float(row["盤表 容量(kW)"]) == 1.5
+    assert float(row["容量差(kW)"]) == 0.0
     assert row["照合結果"] == "不一致"
     assert row["不一致内容"] == "台数差分=1"
+
+    row_extra = rows[1]
+    assert row_extra["機器ID"] == "A-1"
+    assert row_extra["照合結果"] == ""
+    assert row_extra["不一致内容"] == ""
+    assert row_extra["機器表 台数"] == ""
+    assert row_extra["盤表 台数"] == ""
+    assert float(row_extra["機器表 消費電力(kW)"]) == 1.5
+    assert float(row_extra["盤表 容量(kW)"]) == 2.0
+    assert float(row_extra["容量差(kW)"]) == 0.5
 
     m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
     assert m

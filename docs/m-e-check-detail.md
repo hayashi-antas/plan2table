@@ -353,7 +353,7 @@ unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUM
 <a id="develop"></a>
 ## 8. 開発者向け: Develop ページ
 
-`GET /me-check/deveop` で開く **M-E-Check Develop** ページ（`templates/develop.html`）では、M-E-Check の処理を **段階的に** 試せる。
+`GET /me-check/develop` で開く **M-E-Check Develop** ページ（`templates/develop.html`）では、M-E-Check の処理を **段階的に** 試せる。
 
 - **Raster**: 盤表PDFを1本だけアップロードし、`POST /raster/upload` で raster.csv を生成。Job ID と CSV ダウンロードリンクが返る。
 - **Vector**: 機器表PDFを1本だけアップロードし、`POST /vector/upload` で vector.csv を生成。同様に Job ID とダウンロードリンク。
