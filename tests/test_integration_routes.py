@@ -145,28 +145,31 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert f'data-download-url="/jobs/{unified_job_id}/unified.csv"' in resp.text
     assert f'/jobs/{unified_job_id}/unified.csv' in resp.text
 
-    assert "判定(◯/✗)" in resp.text
-    assert "機器番号" in resp.text
+    assert "照合結果" in resp.text
+    assert "不一致内容" in resp.text
+    assert "機器ID" in resp.text
     assert "機器名" in resp.text
-    assert "機器kW" in resp.text
-    assert "機器台数" in resp.text
-    assert "盤台数" in resp.text
-    assert "合計差(kW)" in resp.text
-    assert "理由" in resp.text
+    assert "機器表 台数" in resp.text
+    assert "盤表 台数" in resp.text
+    assert "台数差（盤表-機器表）" in resp.text
+    assert "機器表 容量合計(kW)" in resp.text
+    assert "盤表 容量合計(kW)" in resp.text
+    assert "容量差(kW)" in resp.text
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
 
     dl = client.get(f"/jobs/{unified_job_id}/unified.csv")
     assert dl.status_code == 200
-    assert "総合判定(○/×)" in dl.text
+    assert "照合結果" in dl.text
 
 
 @pytest.mark.parametrize(
     ("judgment_header", "raw_mark", "expected_mark"),
     [
-        ("総合判定", "○", "◯"),
-        ("総合判定(◯/✗)", "✗", "✗"),
-        ("総合判定(○/×)", "×", "✗"),
+        ("照合結果", "一致", "一致"),
+        ("総合判定", "○", "一致"),
+        ("総合判定(◯/✗)", "✗", "不一致"),
+        ("総合判定(○/×)", "×", "不一致"),
     ],
 )
 def test_customer_run_handles_judgment_header_variants(
@@ -181,11 +184,13 @@ def test_customer_run_handles_judgment_header_variants(
         fieldnames = [
             "機器番号",
             "名称",
-            "vector_消費電力(kW)_per_unit",
-            "vector_台数_numeric",
-            "raster_台数_calc",
-            "容量差分(kW)",
-            "不一致理由",
+            "機器表 台数",
+            "盤表 台数",
+            "台数差（盤表-機器表）",
+            "機器表 容量合計(kW)",
+            "盤表 容量合計(kW)",
+            "容量差(kW)",
+            "不一致内容",
             judgment_header,
         ]
         with out_csv_path.open("w", encoding="utf-8", newline="") as f:
@@ -195,11 +200,13 @@ def test_customer_run_handles_judgment_header_variants(
                 {
                     "機器番号": "A-1",
                     "名称": "排風機",
-                    "vector_消費電力(kW)_per_unit": "1.5",
-                    "vector_台数_numeric": "1",
-                    "raster_台数_calc": "1",
-                    "容量差分(kW)": "0",
-                    "不一致理由": "",
+                    "機器表 台数": "1",
+                    "盤表 台数": "1",
+                    "台数差（盤表-機器表）": "0",
+                    "機器表 容量合計(kW)": "1.5",
+                    "盤表 容量合計(kW)": "1.5",
+                    "容量差(kW)": "0",
+                    "不一致内容": "",
                     judgment_header: raw_mark,
                 }
             )
@@ -329,20 +336,16 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     rows = list(csv.DictReader(io.StringIO(dl.text)))
     assert len(rows) == 1
     row = rows[0]
-    assert row["機器番号"] == "A-1"
-    assert row["raster_容量(kW)_values"] == "1.5 / 2.0"
-    assert row["raster_機器名称"] == "送風機 / 予備"
-    assert row["raster_電圧(V)"] == "200 / 100"
-    assert float(row["raster_容量(kW)_sum"]) == 5.0
-    assert row["raster_match_count"] == "3"
-    assert row["raster_台数_calc"] == "3"
-    assert float(row["台数差分"]) == 1.0
-    assert float(row["容量差分(kW)"]) == 2.0
-    assert row["存在判定(○/×)"] == "○"
-    assert row["台数判定(○/×)"] == "×"
-    assert row["容量判定(○/×)"] == "×"
-    assert row["総合判定(○/×)"] == "×"
-    assert row["不一致理由"] == "台数差分=1"
+    assert row["機器ID"] == "A-1"
+    assert row["機器名"] == "排風機"
+    assert float(row["機器表 台数"]) == 2.0
+    assert row["盤表 台数"] == "3"
+    assert float(row["台数差（盤表-機器表）"]) == 1.0
+    assert float(row["機器表 容量合計(kW)"]) == 3.0
+    assert float(row["盤表 容量合計(kW)"]) == 5.0
+    assert float(row["容量差(kW)"]) == 2.0
+    assert row["照合結果"] == "不一致"
+    assert row["不一致内容"] == "台数差分=1"
 
     m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
     assert m

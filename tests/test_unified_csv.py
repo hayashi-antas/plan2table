@@ -51,32 +51,23 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert len(rows) == 2
 
     a1 = rows[0]
-    assert a1["機械番号"] == "A-1"
-    assert a1["raster_容量(kW)_values"] == "1.5 / 2.0"
-    assert a1["raster_機器名称"] == "送風機 / 予備"
-    assert a1["raster_電圧(V)"] == "200 / 100"
-    assert float(a1["raster_容量(kW)_sum"]) == 5.0
-    assert a1["raster_match_count"] == "3"
-    assert a1["raster_台数_calc"] == "3"
-    assert float(a1["vector_容量(kW)_calc"]) == 3.0
-    assert float(a1["容量差分(kW)"]) == 2.0
-    assert float(a1["台数差分"]) == 1.0
-    assert a1["存在判定(○/×)"] == "○"
-    assert a1["台数判定(○/×)"] == "×"
-    assert a1["容量判定(○/×)"] == "×"
-    assert a1["総合判定(○/×)"] == "×"
-    assert a1["不一致理由"] == "台数差分=1"
+    assert a1["機器ID"] == "A-1"
+    assert a1["機器名"] == "排風機"
+    assert float(a1["機器表 台数"]) == 2.0
+    assert a1["盤表 台数"] == "3"
+    assert float(a1["台数差（盤表-機器表）"]) == 1.0
+    assert float(a1["機器表 容量合計(kW)"]) == 3.0
+    assert float(a1["盤表 容量合計(kW)"]) == 5.0
+    assert float(a1["容量差(kW)"]) == 2.0
+    assert a1["照合結果"] == "不一致"
+    assert a1["不一致内容"] == "台数差分=1"
 
     b1 = rows[1]
-    assert b1["機械番号"] == "B-1"
-    assert b1["raster_match_count"] == "0"
-    assert b1["raster_台数_calc"] == "0"
-    assert b1["raster_機器名称"] == ""
-    assert b1["存在判定(○/×)"] == "×"
-    assert b1["台数判定(○/×)"] == "×"
-    assert b1["容量判定(○/×)"] == "×"
-    assert b1["総合判定(○/×)"] == "×"
-    assert b1["不一致理由"] == "盤表に記載なし"
+    assert b1["機器ID"] == "B-1"
+    assert b1["盤表 台数"] == "0"
+    assert b1["盤表 容量合計(kW)"] == ""
+    assert b1["照合結果"] == "不一致"
+    assert b1["不一致内容"] == "盤表に記載なし"
 
 
 def test_merge_sets_kw_missing_reason_when_capacity_diff_is_empty(tmp_path):
@@ -102,8 +93,5 @@ def test_merge_sets_kw_missing_reason_when_capacity_diff_is_empty(tmp_path):
     rows = _read_rows(out_csv)
     assert len(rows) == 1
     row = rows[0]
-    assert row["存在判定(○/×)"] == "○"
-    assert row["台数判定(○/×)"] == "○"
-    assert row["容量判定(○/×)"] == "×"
-    assert row["総合判定(○/×)"] == "×"
-    assert row["不一致理由"] == "容量欠損"
+    assert row["照合結果"] == "不一致"
+    assert row["不一致内容"] == "容量欠損"
