@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import unicodedata
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 COLUMN_ALIASES: Dict[str, List[str]] = {
     "equipment_id": ["機器番号", "機械番号"],
@@ -28,8 +28,8 @@ OUTPUT_COLUMNS = [
     "機器表 台数",
     "盤表 台数",
     "台数差（盤表-機器表）",
-    "機器表 容量合計(kW)",
-    "盤表 容量合計(kW)",
+    "機器表 消費電力(kW)",
+    "盤表 容量(kW)",
     "容量差(kW)",
 ]
 
@@ -76,20 +76,32 @@ def _format_number(value: Optional[float]) -> str:
     return f"{value:.12g}"
 
 
-def _unique_in_order(values: Iterable[str]) -> List[str]:
+def _collect_capacity_variants(values: Iterable[str]) -> List[Tuple[str, Optional[float]]]:
     seen = set()
-    ordered: List[str] = []
+    variants: List[Tuple[str, Optional[float]]] = []
     for raw in values:
         text = unicodedata.normalize("NFKC", str(raw or "")).strip()
-        if not text or text in seen:
+        if text in {"", "-", "－", "—"}:
             continue
-        seen.add(text)
-        ordered.append(text)
-    return ordered
+        parsed = _parse_number(text)
+        display = _format_number(parsed) if parsed is not None else text
+        if not display or display in seen:
+            continue
+        seen.add(display)
+        variants.append((display, parsed))
+    return variants
 
 
-def _join_unique(values: Iterable[str]) -> str:
-    return " / ".join(_unique_in_order(values))
+def _pick_capacity_variant(
+    variants: List[Tuple[str, Optional[float]]], index: int
+) -> Tuple[str, Optional[float]]:
+    if not variants:
+        return "", None
+    if len(variants) == 1:
+        return variants[0]
+    if index < len(variants):
+        return variants[index]
+    return "", None
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -140,8 +152,6 @@ def merge_vector_raster_csv(
                 "names": [],
                 "voltages": [],
                 "capacity_values": [],
-                "capacity_sum": 0.0,
-                "has_capacity_sum": False,
                 "match_count": 0,
             }
             raster_agg[key] = agg
@@ -152,34 +162,23 @@ def merge_vector_raster_csv(
         capacity_raw = row.get(raster_capacity_header, "")
         agg["capacity_values"].append(capacity_raw)  # type: ignore[index]
 
-        parsed = _parse_number(capacity_raw)
-        if parsed is not None:
-            agg["capacity_sum"] = float(agg["capacity_sum"]) + parsed
-            agg["has_capacity_sum"] = True
-
     out_rows: List[Dict[str, str]] = []
     for vector_row in vector_rows:
         equipment_id = vector_row.get(vector_id_header, "")
         key = _normalize_key(equipment_id)
         agg = raster_agg.get(key)
 
-        power_per_unit = _parse_number(vector_row.get(vector_power_header, ""))
+        power_per_unit_raw = vector_row.get(vector_power_header, "")
         vector_count = _parse_number(vector_row.get(vector_count_header, ""))
         vector_name = vector_row.get(vector_name_header, "") if vector_name_header else ""
-        vector_capacity_calc: Optional[float] = None
-        if power_per_unit is not None and vector_count is not None:
-            vector_capacity_calc = power_per_unit * vector_count
 
-        raster_capacity_sum: Optional[float] = None
         raster_match_count = 0
+        raster_capacity_variants: List[Tuple[str, Optional[float]]] = []
         if agg:
             raster_match_count = int(agg["match_count"])
-            if bool(agg["has_capacity_sum"]):
-                raster_capacity_sum = float(agg["capacity_sum"])
+            raster_capacity_variants = _collect_capacity_variants(agg["capacity_values"])  # type: ignore[arg-type]
 
-        capacity_diff: Optional[float] = None
-        if raster_capacity_sum is not None and vector_capacity_calc is not None:
-            capacity_diff = raster_capacity_sum - vector_capacity_calc
+        vector_capacity_variants = _collect_capacity_variants([power_per_unit_raw])
 
         count_diff: Optional[float] = None
         if vector_count is not None:
@@ -187,36 +186,56 @@ def merge_vector_raster_csv(
 
         exists_ok = raster_match_count > 0
         qty_ok = count_diff is not None and count_diff == 0.0
-        kw_ok = capacity_diff is not None and abs(capacity_diff) <= EPS_KW
-        overall_ok = exists_ok and qty_ok and kw_ok
 
-        mismatch_reason = ""
-        if not overall_ok:
-            if not exists_ok:
-                mismatch_reason = "盤表に記載なし"
-            elif not qty_ok:
-                if count_diff is None:
-                    mismatch_reason = "台数差分=欠損"
+        line_count = max(1, len(vector_capacity_variants), len(raster_capacity_variants))
+        for line_index in range(line_count):
+            vector_power_display, vector_power_value = _pick_capacity_variant(
+                vector_capacity_variants, line_index
+            )
+            raster_capacity_display, raster_capacity_value = _pick_capacity_variant(
+                raster_capacity_variants, line_index
+            )
+
+            capacity_diff: Optional[float] = None
+            if raster_capacity_value is not None and vector_power_value is not None:
+                capacity_diff = raster_capacity_value - vector_power_value
+
+            kw_ok = capacity_diff is not None and abs(capacity_diff) <= EPS_KW
+            overall_ok = exists_ok and qty_ok and kw_ok
+
+            mismatch_reason = ""
+            if not overall_ok:
+                if not exists_ok:
+                    mismatch_reason = "盤表に記載なし"
+                elif not qty_ok:
+                    if count_diff is None:
+                        mismatch_reason = "台数差分=欠損"
+                    else:
+                        mismatch_reason = f"台数差分={_format_number(count_diff)}"
+                elif capacity_diff is None:
+                    mismatch_reason = "容量欠損"
                 else:
-                    mismatch_reason = f"台数差分={_format_number(count_diff)}"
-            elif capacity_diff is None:
-                mismatch_reason = "容量欠損"
-            else:
-                mismatch_reason = f"容量差分={capacity_diff:.3f}"
+                    mismatch_reason = f"容量差分={capacity_diff:.3f}"
 
-        out_row = {
-            "照合結果": "一致" if overall_ok else "不一致",
-            "不一致内容": mismatch_reason,
-            "機器ID": equipment_id,
-            "機器名": vector_name,
-            "機器表 台数": _format_number(vector_count),
-            "盤表 台数": str(raster_match_count),
-            "台数差（盤表-機器表）": _format_number(count_diff),
-            "機器表 容量合計(kW)": _format_number(vector_capacity_calc),
-            "盤表 容量合計(kW)": _format_number(raster_capacity_sum),
-            "容量差(kW)": _format_number(capacity_diff),
-        }
-        out_rows.append(out_row)
+            out_row = {
+                "照合結果": "一致" if overall_ok else "不一致",
+                "不一致内容": mismatch_reason,
+                "機器ID": equipment_id,
+                "機器名": vector_name,
+                "機器表 台数": _format_number(vector_count),
+                "盤表 台数": str(raster_match_count),
+                "台数差（盤表-機器表）": _format_number(count_diff),
+                "機器表 消費電力(kW)": vector_power_display,
+                "盤表 容量(kW)": raster_capacity_display,
+                "容量差(kW)": _format_number(capacity_diff),
+            }
+            if line_index > 0:
+                out_row["照合結果"] = ""
+                out_row["不一致内容"] = ""
+                out_row["機器表 台数"] = ""
+                out_row["盤表 台数"] = ""
+                out_row["台数差（盤表-機器表）"] = ""
+            out_rows.append(out_row)
 
     out_csv_path.parent.mkdir(parents=True, exist_ok=True)
     out_columns = OUTPUT_COLUMNS

@@ -43,12 +43,12 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
         raster_csv_path=raster_csv,
         out_csv_path=out_csv,
     )
-    assert result["rows"] == 2
+    assert result["rows"] == 3
     assert out_csv.exists()
     assert not out_csv.read_bytes().startswith(b"\xef\xbb\xbf")
 
     rows = _read_rows(out_csv)
-    assert len(rows) == 2
+    assert len(rows) == 3
 
     a1 = rows[0]
     assert a1["機器ID"] == "A-1"
@@ -56,16 +56,26 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert float(a1["機器表 台数"]) == 2.0
     assert a1["盤表 台数"] == "3"
     assert float(a1["台数差（盤表-機器表）"]) == 1.0
-    assert float(a1["機器表 容量合計(kW)"]) == 3.0
-    assert float(a1["盤表 容量合計(kW)"]) == 5.0
-    assert float(a1["容量差(kW)"]) == 2.0
+    assert float(a1["機器表 消費電力(kW)"]) == 1.5
+    assert float(a1["盤表 容量(kW)"]) == 1.5
+    assert float(a1["容量差(kW)"]) == 0.0
     assert a1["照合結果"] == "不一致"
     assert a1["不一致内容"] == "台数差分=1"
 
-    b1 = rows[1]
+    a1_extra = rows[1]
+    assert a1_extra["機器ID"] == "A-1"
+    assert a1_extra["照合結果"] == ""
+    assert a1_extra["不一致内容"] == ""
+    assert a1_extra["機器表 台数"] == ""
+    assert a1_extra["盤表 台数"] == ""
+    assert float(a1_extra["機器表 消費電力(kW)"]) == 1.5
+    assert float(a1_extra["盤表 容量(kW)"]) == 2.0
+    assert float(a1_extra["容量差(kW)"]) == 0.5
+
+    b1 = rows[2]
     assert b1["機器ID"] == "B-1"
     assert b1["盤表 台数"] == "0"
-    assert b1["盤表 容量合計(kW)"] == ""
+    assert b1["盤表 容量(kW)"] == ""
     assert b1["照合結果"] == "不一致"
     assert b1["不一致内容"] == "盤表に記載なし"
 
