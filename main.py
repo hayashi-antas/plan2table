@@ -3,6 +3,7 @@ import csv
 import json
 import html
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 from google import genai
@@ -477,20 +478,23 @@ def _is_pdf_upload(file: UploadFile) -> bool:
 
 
 CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
+    "照合結果",
     "総合判定",
     "総合判定(◯/✗)",
     "総合判定(○/×)",
 ]
 
 CUSTOMER_TABLE_COLUMNS = [
-    ("判定(◯/✗)", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
-    ("機器番号", ["機器番号"]),
-    ("機器名", ["名称"]),
-    ("機器kW", ["vector_消費電力(kW)_per_unit"]),
-    ("機器台数", ["vector_台数_numeric"]),
-    ("盤台数", ["raster_台数_calc"]),
-    ("合計差(kW)", ["容量差分(kW)"]),
-    ("理由", ["不一致理由"]),
+    ("照合結果", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
+    ("不一致内容", ["不一致内容", "不一致理由"]),
+    ("機器ID", ["機器ID", "機器番号", "機械番号"]),
+    ("機器名", ["機器名", "名称", "機器名称"]),
+    ("機器表 台数", ["機器表 台数", "台数", "vector_台数_numeric"]),
+    ("盤表 台数", ["盤表 台数", "raster_match_count", "raster_台数_calc"]),
+    ("台数差（盤表-機器表）", ["台数差（盤表-機器表）", "台数差分"]),
+    ("機器表 容量合計(kW)", ["機器表 容量合計(kW)", "vector_容量(kW)_calc"]),
+    ("盤表 容量合計(kW)", ["盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
+    ("容量差(kW)", ["容量差(kW)", "容量差分(kW)"]),
 ]
 
 
@@ -512,9 +516,13 @@ def _pick_first_column_value(row: dict[str, str], candidates: list[str]) -> str:
     return ""
 
 
-def _normalize_mark(value: str) -> str:
+def _normalize_judgment(value: str) -> str:
     text = str(value or "").strip()
-    return text.replace("○", "◯").replace("×", "✗")
+    if text in {"一致", "○", "◯"}:
+        return "一致"
+    if text in {"不一致", "×", "✗"}:
+        return "不一致"
+    return text
 
 
 def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
@@ -543,8 +551,8 @@ def _build_customer_table_html(unified_csv_path: Path) -> str:
         mapped_cells = []
         for label, candidates in CUSTOMER_TABLE_COLUMNS:
             value = _pick_first_column_value(row, candidates)
-            if label == "判定(◯/✗)":
-                value = _normalize_mark(value)
+            if label == "照合結果":
+                value = _normalize_judgment(value)
             mapped_cells.append(
                 f"<td class=\"border border-stone-300 px-3 py-2 text-sm\">{html.escape(value)}</td>"
             )
@@ -1032,10 +1040,14 @@ def _download_job_csv(job_id: UUID, kind: str):
         raise HTTPException(status_code=404, detail="Job not found")
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="CSV not found")
+    download_filename = f"{kind}.csv"
+    if kind == "unified":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        download_filename = f"me-check_照合結果_{timestamp}.csv"
     return FileResponse(
         path=csv_path,
         media_type="text/csv; charset=utf-8",
-        filename=f"{kind}.csv",
+        filename=download_filename,
     )
 
 
