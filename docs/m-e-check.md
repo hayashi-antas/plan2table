@@ -63,7 +63,7 @@
 
 [![Image from Gyazo](https://i.gyazo.com/a50257df6615efee6be846cd8a93a522.png)](https://gyazo.com/a50257df6615efee6be846cd8a93a522)
 
-[![Image from Gyazo](https://i.gyazo.com/7a8d2b0afd068648d1cfaf1d6ee57846.png)](https://gyazo.com/7a8d2b0afd068648d1cfaf1d6ee57846)
+[![Image from Gyazo](https://i.gyazo.com/c5cd46494476a9628fa6cc1da20ae952.png)](https://gyazo.com/c5cd46494476a9628fa6cc1da20ae952)
 
 ---
 
