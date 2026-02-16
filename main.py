@@ -495,6 +495,7 @@ CUSTOMER_TABLE_COLUMNS = [
     ("機器表 消費電力(kW)", ["機器表 消費電力(kW)", "機器表 容量合計(kW)", "vector_容量(kW)_calc"]),
     ("盤表 容量(kW)", ["盤表 容量(kW)", "盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
     ("容量差(kW)", ["容量差(kW)", "容量差分(kW)"]),
+    ("図面番号", ["図面番号", "図番"]),
 ]
 
 
@@ -637,7 +638,7 @@ def _run_raster_job(file_bytes: bytes, source_filename: str):
         out_csv=csv_path,
         debug_dir=debug_dir,
         vision_service_account_json=vision_service_account_json,
-        page=1,
+        page=0,
         dpi=300,
         y_cluster=20.0,
     )
@@ -648,7 +649,7 @@ def _run_raster_job(file_bytes: bytes, source_filename: str):
             "csv_files": ["raster.csv"],
             "row_count": profile["rows"],
             "columns": profile["columns"],
-            "extractor_version": "raster-v1",
+            "extractor_version": "raster-v2",
             "extract_result": extract_result,
         },
     )
@@ -711,7 +712,7 @@ def _run_unified_job(raster_job_id: str, vector_job_id: str):
             "csv_files": ["unified.csv"],
             "row_count": profile["rows"],
             "columns": profile["columns"],
-            "extractor_version": "unified-v1",
+            "extractor_version": "unified-v2",
             "source_job_ids": {
                 "raster_job_id": raster_job_id,
                 "vector_job_id": vector_job_id,

@@ -28,10 +28,10 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     raster_csv.write_text(
         "\n".join(
             [
-                "機器番号,機器名称,電圧（V）,容量(KW)",
-                "A-1,送風機,200,1.5",
-                "A-1,送風機,200,2.0",
-                "A-1,予備,100,1.5",
+                "機器番号,機器名称,電圧（V）,容量(KW),図面番号",
+                "A-1,送風機,200,1.5,E-024",
+                "A-1,送風機,200,2.0,E-024",
+                "A-1,予備,100,1.5,E-024",
             ]
         )
         + "\n",
@@ -59,6 +59,7 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert float(a1["機器表 消費電力(kW)"]) == 1.5
     assert float(a1["盤表 容量(kW)"]) == 1.5
     assert float(a1["容量差(kW)"]) == 0.0
+    assert a1["図面番号"] == "E-024"
     assert a1["照合結果"] == "不一致"
     assert a1["不一致内容"] == "台数差分=1"
 
@@ -68,6 +69,7 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert a1_extra["不一致内容"] == ""
     assert a1_extra["機器表 台数"] == ""
     assert a1_extra["盤表 台数"] == ""
+    assert a1_extra["図面番号"] == "E-024"
     assert float(a1_extra["機器表 消費電力(kW)"]) == 1.5
     assert float(a1_extra["盤表 容量(kW)"]) == 2.0
     assert float(a1_extra["容量差(kW)"]) == 0.5
@@ -76,6 +78,7 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert b1["機器ID"] == "B-1"
     assert b1["盤表 台数"] == "0"
     assert b1["盤表 容量(kW)"] == ""
+    assert b1["図面番号"] == ""
     assert b1["照合結果"] == "不一致"
     assert b1["不一致内容"] == "盤表に記載なし"
 
@@ -105,3 +108,4 @@ def test_merge_sets_kw_missing_reason_when_capacity_diff_is_empty(tmp_path):
     row = rows[0]
     assert row["照合結果"] == "不一致"
     assert row["不一致内容"] == "容量欠損"
+    assert row["図面番号"] == ""
