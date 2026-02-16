@@ -48,7 +48,7 @@
 | **機器表** | 換気機器表など、機器番号・名称・消費電力・台数などを記載した表。**現状の想定**ではPDFはベクトル（テキスト/表線）で構成される。 |
 | **盤表** | 電力制御盤の機器一覧。機器番号・機器名称・電圧・容量(kW)などを記載。**現状の想定**ではPDFはラスター（スキャン画像）として扱う。 |
 | **Vector** | 機器表PDFから **pdfplumber**[^1] で表構造を検出し抽出したCSV。内部では「vector」ジョブとして扱う。 |
-| **Raster** | 盤表PDFを **pdftoppm**[^3] と **Pillow**[^4] で画像化し、**Google Cloud Vision API**[^2] でOCRして、4列表として抽出したCSV。内部では「raster」ジョブとして扱う。 |
+| **Raster** | 盤表PDFを **pdftoppm**[^3] と **Pillow**[^4] で画像化し、**Google Cloud Vision API**[^2] でOCRして、4列表＋図面番号として抽出したCSV。内部では「raster」ジョブとして扱う。 |
 | **Unified** | Vector CSV と Raster CSV を **機器番号で結合** し、存在・台数・容量の一致判定を付与した統合CSV。 |
 
 ---
@@ -61,7 +61,7 @@
   - **盤表PDF**（[panel_file](../main.py#L871)）: 電力制御盤表。1ページ目を画像化してOCRする想定。
 - **出力**
   - **HTML**: 照合結果の主要列（照合結果・不一致内容・機器ID・機器名・機器表 台数・盤表 台数・台数差・容量差など）を簡易表示。
-  - **CSV**（`unified.csv`）: 統合結果の10列（[OUTPUT_COLUMNS](../extractors/unified_csv.py#L23)）。ダウンロード用エンドポイント `GET /jobs/{job_id}/unified.csv` で取得。
+  - **CSV**（`unified.csv`）: 統合結果の11列（[OUTPUT_COLUMNS](../extractors/unified_csv.py#L23)）。ダウンロード用エンドポイント `GET /jobs/{job_id}/unified.csv` で取得。
 
 ---
 
@@ -163,7 +163,7 @@ CSV の実体ファイル名は kind に応じて `raster.csv` / `vector.csv` / 
 7. **セル正規化**  
    機器番号と名称の混入補正、単位表記の統一（例: 1/200 → 1φ200）、名称の表記ゆれ（湧水ポンプ→清水ポンプ）などを [normalize_row_cells](../extractors/raster_extractor.py#L404) で行う。
 8. **CSV出力**  
-   列は [OUTPUT_COLUMNS](../extractors/raster_extractor.py#L29) = `["機器番号", "機器名称", "電圧(V)", "容量(kW)"]` の4列。左右両サイドの行をまとめて `raster.csv` に書き出す。デバッグ用に `debug_dir` へ列境界や単語ボックスを描画した画像を保存する。
+   列は [OUTPUT_COLUMNS](../extractors/raster_extractor.py#L29) = `["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]` の5列。左右両サイドの行をまとめて `raster.csv` に書き出し、図面番号を各行へ付与する。デバッグ用に `debug_dir` へ列境界や単語ボックスを描画した画像を保存する。
 
 <a id="raster-deps"></a>
 #### 5.1.2 依存関係
@@ -177,13 +177,13 @@ Raster 抽出が有効に動くには、アプリ起動時に `VISION_SERVICE_AC
 <a id="raster-vision"></a>
 #### 5.1.3 Vision API の結果の整理（表にするまで）
 
-Vision API は「この画像にどんな文字が、どこにあったか」を **単語ごと** に返すだけである。**行・列の区切りは返してくれない**。そのため、「どの単語が何行目の何列目か」を **アプリ側で決めて**、4列の表（raster.csv）に組み立てている。
+Vision API は「この画像にどんな文字が、どこにあったか」を **単語ごと** に返すだけである。**行・列の区切りは返してくれない**。そのため、「どの単語が何行目の何列目か」を **アプリ側で決めて**、4列の表を組み立て、さらに図面番号を付与して raster.csv にしている。
 
 **Vision API が返すもの と 最終的に欲しいもの**
 
 | Vision API が返すもの | 最終的に欲しいもの（raster.csv） |
 |----------------------|----------------------------------|
-| 単語のテキスト ＋ その単語の矩形座標（bounding_box）の羅列 | 行ごとに「機器番号」「機器名称」「電圧(V)」「容量(kW)」の4列が並んだ表 |
+| 単語のテキスト ＋ その単語の矩形座標（bounding_box）の羅列 | 行ごとに「機器番号」「機器名称」「電圧(V)」「容量(kW)」「図面番号」の5列が並んだ表 |
 
 **整理の流れ（何をしているか）**
 
@@ -298,7 +298,7 @@ Raster CSV では、**同じ機器番号** が複数行にまたがることが�
 
 - マッチした行数: `raster_match_count`（＝盤表にその機器番号が何行あるか）
 - 容量(kW): **数値として解釈できる値のみ合計**（`raster_容量(kW)_sum`）。数値化できない値は合計に含めない。
-- 機器名称・電圧・容量の生値も内部で収集するが、**現行の unified.csv（10列）には出力しない**。
+- 機器名称・電圧・容量の生値も内部で収集するが、**現行の unified.csv（11列）には出力しない**。
 
 <a id="unified-merge"></a>
 ### 6.3 結合と判定
@@ -319,7 +319,7 @@ Raster CSV では、**同じ機器番号** が複数行にまたがることが�
 <a id="unified-output"></a>
 ### 6.4 出力列（unified CSV）
 
-unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUMNS](../extractors/unified_csv.py#L23) の10列だけを出力する。
+unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUMNS](../extractors/unified_csv.py#L23) の11列だけを出力する。
 
 | 列名 |
 |------|
