@@ -23,8 +23,11 @@ def _extract_download_path(html: str, kind: str) -> str:
 
 def _fake_raster_extract_success(**kwargs):
     out_csv = kwargs["out_csv"]
-    out_csv.write_text("機器番号,機器名称,電圧(V),容量(kW)\nA-1,送風機,200,1.5\n", encoding="utf-8")
-    return {"rows": 1, "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]}
+    out_csv.write_text(
+        "機器番号,機器名称,電圧(V),容量(kW),図面番号\nA-1,送風機,200,1.5,E-024\n",
+        encoding="utf-8",
+    )
+    return {"rows": 1, "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]}
 
 
 def _fake_vector_extract_success(pdf_path, out_csv_path):
@@ -38,8 +41,11 @@ def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
 
     def fake_extract_raster_pdf(**kwargs):
         out_csv = kwargs["out_csv"]
-        out_csv.write_text("機器番号,機器名称,電圧(V),容量(kW)\nA-1,送風機,200,1.5\n", encoding="utf-8")
-        return {"rows": 1, "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]}
+        out_csv.write_text(
+            "機器番号,機器名称,電圧(V),容量(kW),図面番号\nA-1,送風機,200,1.5,E-024\n",
+            encoding="utf-8",
+        )
+        return {"rows": 1, "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]}
 
     monkeypatch.setattr(app_main, "extract_raster_pdf", fake_extract_raster_pdf)
 
@@ -156,12 +162,16 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "機器表 消費電力(kW)" in resp.text
     assert "盤表 容量(kW)" in resp.text
     assert "容量差(kW)" in resp.text
+    assert "図面番号" in resp.text
+    assert "E-024" in resp.text
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
 
     dl = client.get(f"/jobs/{unified_job_id}/unified.csv")
     assert dl.status_code == 200
     assert "照合結果" in dl.text
+    assert "図面番号" in dl.text
+    assert "E-024" in dl.text
 
 
 @pytest.mark.parametrize(
@@ -351,6 +361,7 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert float(row["機器表 消費電力(kW)"]) == 1.5
     assert float(row["盤表 容量(kW)"]) == 1.5
     assert float(row["容量差(kW)"]) == 0.0
+    assert row["図面番号"] == ""
     assert row["照合結果"] == "不一致"
     assert row["不一致内容"] == "台数差分=1"
 
@@ -363,6 +374,7 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert float(row_extra["機器表 消費電力(kW)"]) == 1.5
     assert float(row_extra["盤表 容量(kW)"]) == 2.0
     assert float(row_extra["容量差(kW)"]) == 0.5
+    assert row_extra["図面番号"] == ""
 
     m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
     assert m

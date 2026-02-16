@@ -18,6 +18,7 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
     "raster_name": ["機器名称", "名称"],
     "raster_voltage": ["電圧(V)", "電圧（V）"],
     "raster_capacity_kw": ["容量(kW)", "容量(KW)", "容量(Kw)", "容量（kW）"],
+    "raster_drawing_number": ["図面番号"],
 }
 
 OUTPUT_COLUMNS = [
@@ -31,6 +32,7 @@ OUTPUT_COLUMNS = [
     "機器表 消費電力(kW)",
     "盤表 容量(kW)",
     "容量差(kW)",
+    "図面番号",
 ]
 
 EPS_KW = 0.1
@@ -104,6 +106,14 @@ def _pick_capacity_variant(
     return "", None
 
 
+def _pick_first_non_blank(values: Iterable[str]) -> str:
+    for value in values:
+        text = unicodedata.normalize("NFKC", str(value or "")).strip()
+        if text:
+            return text
+    return ""
+
+
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
@@ -132,6 +142,7 @@ def merge_vector_raster_csv(
     raster_name_header = _resolve_header(raster_headers, "raster_name")
     raster_voltage_header = _resolve_header(raster_headers, "raster_voltage")
     raster_capacity_header = _resolve_header(raster_headers, "raster_capacity_kw")
+    raster_drawing_number_header = _resolve_header(raster_headers, "raster_drawing_number")
     if (
         not raster_id_header
         or not raster_name_header
@@ -152,6 +163,7 @@ def merge_vector_raster_csv(
                 "names": [],
                 "voltages": [],
                 "capacity_values": [],
+                "drawing_numbers": [],
                 "match_count": 0,
             }
             raster_agg[key] = agg
@@ -161,6 +173,8 @@ def merge_vector_raster_csv(
         agg["voltages"].append(row.get(raster_voltage_header, ""))  # type: ignore[index]
         capacity_raw = row.get(raster_capacity_header, "")
         agg["capacity_values"].append(capacity_raw)  # type: ignore[index]
+        if raster_drawing_number_header:
+            agg["drawing_numbers"].append(row.get(raster_drawing_number_header, ""))  # type: ignore[index]
 
     out_rows: List[Dict[str, str]] = []
     for vector_row in vector_rows:
@@ -174,9 +188,11 @@ def merge_vector_raster_csv(
 
         raster_match_count = 0
         raster_capacity_variants: List[Tuple[str, Optional[float]]] = []
+        drawing_number = ""
         if agg:
             raster_match_count = int(agg["match_count"])
             raster_capacity_variants = _collect_capacity_variants(agg["capacity_values"])  # type: ignore[arg-type]
+            drawing_number = _pick_first_non_blank(agg["drawing_numbers"])  # type: ignore[arg-type]
 
         vector_capacity_variants = _collect_capacity_variants([power_per_unit_raw])
 
@@ -228,6 +244,7 @@ def merge_vector_raster_csv(
                 "機器表 消費電力(kW)": vector_power_display,
                 "盤表 容量(kW)": raster_capacity_display,
                 "容量差(kW)": _format_number(capacity_diff),
+                "図面番号": drawing_number,
             }
             if line_index > 0:
                 out_row["照合結果"] = ""

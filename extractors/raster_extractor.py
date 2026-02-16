@@ -24,9 +24,12 @@ except Exception as exc:  # pragma: no cover - depends on local env
     service_account = None
     _VISION_IMPORT_ERROR = exc
 from PIL import Image, ImageDraw
+import pdfplumber
 
 
-OUTPUT_COLUMNS = ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]
+CORE_COLUMNS = ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]
+DRAWING_NUMBER_COLUMN = "図面番号"
+OUTPUT_COLUMNS = CORE_COLUMNS + [DRAWING_NUMBER_COLUMN]
 
 SIDE_SPLITS = {
     "L": (0.0, 0.0, 0.5, 1.0),
@@ -36,6 +39,13 @@ SIDE_SPLITS = {
 DEFAULT_CENTER_RATIOS = [0.24, 0.35, 0.40, 0.44]
 HEADER_Y_CLUSTER = 22.0
 DATA_START_OFFSET = 140.0
+DRAWING_NO_Y_CLUSTER = 22.0
+DRAWING_NO_LABEL_TO_VALUE_MAX_OFFSET = 180.0
+DRAWING_NO_BOTTOM_REGION_Y_RATIO = 0.70
+DRAWING_NO_BOTTOM_REGION_X_RATIO = 0.70
+DRAWING_NO_PATTERN = re.compile(
+    r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$"
+)
 
 ROW_FILTER_NAME_KEYWORDS = [
     "ポンプ",
@@ -107,7 +117,7 @@ class ColumnBounds:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Google Cloud Vision APIでPDF表から4列を抽出する"
+        description="Google Cloud Vision APIでPDF表と図面番号を抽出する"
     )
     parser.add_argument("--pdf", default="/data/電気図1.pdf", help="入力PDFパス")
     parser.add_argument("--page", type=int, default=1, help="1始まりのページ番号")
@@ -125,6 +135,135 @@ def parse_args() -> argparse.Namespace:
 
 def normalize_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text or "")
+
+
+def normalize_drawing_number_candidate(text: str) -> Optional[str]:
+    normalized = normalize_text(text).upper()
+    normalized = normalized.replace(" ", "").replace("　", "")
+    normalized = re.sub(r"[‐‑‒–—―ー−－]", "-", normalized)
+    normalized = normalized.strip("|,:;[](){}<>「」『』")
+    if DRAWING_NO_PATTERN.fullmatch(normalized):
+        return normalized
+    return None
+
+
+def is_drawing_number_label(text: str) -> bool:
+    normalized = normalize_text(text).replace(" ", "").replace("　", "")
+    return "図面番号" in normalized or ("図面" in normalized and "番号" in normalized)
+
+
+def extract_drawing_number_from_word_boxes(
+    words: List[WordBox], frame_width: int, frame_height: int
+) -> str:
+    if not words:
+        return ""
+
+    clusters = cluster_by_y(words, DRAWING_NO_Y_CLUSTER)
+    label_cluster: Optional[RowCluster] = None
+    for cluster in clusters:
+        if is_drawing_number_label(row_text(cluster)):
+            if label_cluster is None or cluster.row_y > label_cluster.row_y:
+                label_cluster = cluster
+
+    if label_cluster is not None:
+        label_words = sorted(label_cluster.words, key=lambda w: w.cx)
+        label_y = label_cluster.row_y
+        label_x_min = min(w.bbox[0] for w in label_words)
+        label_x_max = max(w.bbox[2] for w in label_words)
+        below_words = []
+        for w in words:
+            if w.cy <= label_y + 1.0:
+                continue
+            if w.cy > label_y + DRAWING_NO_LABEL_TO_VALUE_MAX_OFFSET:
+                continue
+            if w.bbox[2] < label_x_min - 120.0:
+                continue
+            if w.bbox[0] > label_x_max + 320.0:
+                continue
+            below_words.append(w)
+
+        for cluster in sorted(cluster_by_y(below_words, 12.0), key=lambda c: c.row_y):
+            joined = "".join(w.text for w in sorted(cluster.words, key=lambda x: x.cx))
+            candidate = normalize_drawing_number_candidate(joined)
+            if candidate:
+                return candidate
+            for w in sorted(cluster.words, key=lambda x: x.cx):
+                candidate = normalize_drawing_number_candidate(w.text)
+                if candidate:
+                    return candidate
+
+    for w in sorted(words, key=lambda word: (word.cy, word.cx)):
+        if w.cy < frame_height * DRAWING_NO_BOTTOM_REGION_Y_RATIO:
+            continue
+        if w.cx < frame_width * DRAWING_NO_BOTTOM_REGION_X_RATIO:
+            continue
+        candidate = normalize_drawing_number_candidate(w.text)
+        if candidate:
+            return candidate
+
+    return ""
+
+
+def extract_drawing_number_from_text_layer(pdf_path: Path, page: int) -> str:
+    if page < 1:
+        return ""
+    try:
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            page_index = page - 1
+            if page_index >= len(pdf.pages):
+                return ""
+            target_page = pdf.pages[page_index]
+            words_raw = target_page.extract_words(
+                use_text_flow=True,
+                keep_blank_chars=False,
+            )
+            if not words_raw:
+                return ""
+            words: List[WordBox] = []
+            for item in words_raw:
+                text = str(item.get("text", "")).strip()
+                if not text:
+                    continue
+                x0 = float(item.get("x0", 0.0))
+                x1 = float(item.get("x1", 0.0))
+                top = float(item.get("top", 0.0))
+                bottom = float(item.get("bottom", 0.0))
+                words.append(
+                    WordBox(
+                        text=text,
+                        cx=(x0 + x1) / 2.0,
+                        cy=(top + bottom) / 2.0,
+                        bbox=(x0, top, x1, bottom),
+                    )
+                )
+            return extract_drawing_number_from_word_boxes(
+                words,
+                frame_width=int(target_page.width),
+                frame_height=int(target_page.height),
+            )
+    except Exception:
+        return ""
+
+
+def resolve_drawing_number(
+    *,
+    pdf_path: Path,
+    page: int,
+    right_side_words: List[WordBox],
+    right_side_size: Tuple[int, int],
+) -> Tuple[str, str]:
+    drawing_number = extract_drawing_number_from_word_boxes(
+        right_side_words,
+        frame_width=right_side_size[0],
+        frame_height=right_side_size[1],
+    )
+    if drawing_number:
+        return drawing_number, "vision"
+
+    drawing_number = extract_drawing_number_from_text_layer(pdf_path=pdf_path, page=page)
+    if drawing_number:
+        return drawing_number, "text_layer"
+    return "", "none"
 
 
 def run_pdftoppm(pdf_path: Path, page: int, dpi: int, work_dir: Path) -> Path:
@@ -383,12 +522,12 @@ def assign_column(x: float, bounds: ColumnBounds) -> Optional[str]:
     if x < bounds.x_min or x > bounds.x_max:
         return None
     if x < bounds.b12:
-        return OUTPUT_COLUMNS[0]
+        return CORE_COLUMNS[0]
     if x < bounds.b23:
-        return OUTPUT_COLUMNS[1]
+        return CORE_COLUMNS[1]
     if x < bounds.b34:
-        return OUTPUT_COLUMNS[2]
-    return OUTPUT_COLUMNS[3]
+        return CORE_COLUMNS[2]
+    return CORE_COLUMNS[3]
 
 
 def clean_cell(text: str) -> str:
@@ -510,13 +649,13 @@ def rows_from_words(
     rows: List[Dict[str, object]] = []
     row_idx = 1
     for cluster in clusters:
-        cols: Dict[str, List[WordBox]] = {c: [] for c in OUTPUT_COLUMNS}
+        cols: Dict[str, List[WordBox]] = {c: [] for c in CORE_COLUMNS}
         for w in cluster.words:
             col = assign_column(w.cx, bounds)
             if col is not None:
                 cols[col].append(w)
 
-        if all(not cols[c] for c in OUTPUT_COLUMNS):
+        if all(not cols[c] for c in CORE_COLUMNS):
             continue
 
         row = {
@@ -609,6 +748,8 @@ def extract_raster_pdf(
 
     client = build_vision_client(vision_service_account_json)
     all_rows: List[Dict[str, object]] = []
+    right_side_words: List[WordBox] = []
+    right_side_size = (0, 0)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -621,6 +762,9 @@ def extract_raster_pdf(
             words = extract_words(client, side_image)
             if not words:
                 continue
+            if side == "R":
+                right_side_words = words
+                right_side_size = side_image.size
             bounds = infer_column_bounds(words, side_image.width)
             rows = rows_from_words(words, bounds, y_cluster)
             for row in rows:
@@ -633,13 +777,23 @@ def extract_raster_pdf(
                 debug_dir / f"bbox_{side}.png",
             )
 
+    drawing_number, drawing_number_source = resolve_drawing_number(
+        pdf_path=pdf_path,
+        page=page,
+        right_side_words=right_side_words,
+        right_side_size=right_side_size,
+    )
     all_rows.sort(key=lambda r: (str(r["side"]), int(r["row_index"])))
+    for row in all_rows:
+        row[DRAWING_NUMBER_COLUMN] = drawing_number
     write_csv(all_rows, out_csv)
     return {
         "rows": len(all_rows),
         "columns": OUTPUT_COLUMNS,
         "output_csv": str(out_csv),
         "debug_dir": str(debug_dir),
+        "drawing_number": drawing_number,
+        "drawing_number_source": drawing_number_source,
     }
 
 
@@ -656,6 +810,8 @@ def main() -> int:
     # CLI互換: 環境変数GOOGLE_APPLICATION_CREDENTIALSで認証
     client = vision.ImageAnnotatorClient()
     all_rows: List[Dict[str, object]] = []
+    right_side_words: List[WordBox] = []
+    right_side_size = (0, 0)
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         png_path = run_pdftoppm(pdf_path, args.page, args.dpi, tmp_dir)
@@ -666,13 +822,24 @@ def main() -> int:
             words = extract_words(client, side_image)
             if not words:
                 continue
+            if side == "R":
+                right_side_words = words
+                right_side_size = side_image.size
             bounds = infer_column_bounds(words, side_image.width)
             rows = rows_from_words(words, bounds, y_cluster)
             for row in rows:
                 row["side"] = side
                 all_rows.append(row)
             save_debug_image(side_image, words, bounds, debug_dir / f"bbox_{side}.png")
+    drawing_number, _ = resolve_drawing_number(
+        pdf_path=pdf_path,
+        page=args.page,
+        right_side_words=right_side_words,
+        right_side_size=right_side_size,
+    )
     all_rows.sort(key=lambda r: (str(r["side"]), int(r["row_index"])))
+    for row in all_rows:
+        row[DRAWING_NUMBER_COLUMN] = drawing_number
     write_csv(all_rows, out_csv)
     return 0
 
