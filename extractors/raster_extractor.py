@@ -43,6 +43,9 @@ HEADER_Y_CLUSTER = 22.0
 DATA_START_OFFSET = 140.0
 DRAWING_NO_Y_CLUSTER = 22.0
 DRAWING_NO_LABEL_TO_VALUE_MAX_OFFSET = 180.0
+DRAWING_NO_LABEL_X_TOLERANCE_LEFT = 120.0
+DRAWING_NO_LABEL_X_TOLERANCE_RIGHT = 320.0
+DRAWING_NO_VALUE_Y_CLUSTER = 12.0
 DRAWING_NO_BOTTOM_REGION_Y_RATIO = 0.70
 DRAWING_NO_BOTTOM_REGION_X_RATIO = 0.70
 DRAWING_NO_PATTERN = re.compile(
@@ -178,13 +181,15 @@ def extract_drawing_number_from_word_boxes(
                 continue
             if w.cy > label_y + DRAWING_NO_LABEL_TO_VALUE_MAX_OFFSET:
                 continue
-            if w.bbox[2] < label_x_min - 120.0:
+            if w.bbox[2] < label_x_min - DRAWING_NO_LABEL_X_TOLERANCE_LEFT:
                 continue
-            if w.bbox[0] > label_x_max + 320.0:
+            if w.bbox[0] > label_x_max + DRAWING_NO_LABEL_X_TOLERANCE_RIGHT:
                 continue
             below_words.append(w)
 
-        for cluster in sorted(cluster_by_y(below_words, 12.0), key=lambda c: c.row_y):
+        for cluster in sorted(
+            cluster_by_y(below_words, DRAWING_NO_VALUE_Y_CLUSTER), key=lambda c: c.row_y
+        ):
             joined = "".join(w.text for w in sorted(cluster.words, key=lambda x: x.cx))
             candidate = normalize_drawing_number_candidate(joined)
             if candidate:
