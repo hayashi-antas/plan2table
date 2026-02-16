@@ -235,8 +235,8 @@ pandas を使うと「行のリストができたあと」のフィルタや CSV
 #### 5.2.1 処理の流れ
 
 1. **表の検出**  
-   `pdfplumber` で1ページ目を開き、`page.find_tables()` で表を検出する。  
-   **条件**: 幅がページ幅の 40% 以上、かつページ下端 85% より上にある表のみを対象とする。この条件を満たす表が **ちょうど2つ** あることを期待し、左からソートして「左側の表」「右側の表」として扱う（[pick_target_tables](../extractors/vector_extractor.py#L67)）。2つでない場合は `ValueError` を上げる。
+   `pdfplumber` で **全ページを順に走査** し、各ページで `page.find_tables()` から表を検出する。  
+   **条件**: 幅がページ幅の 40% 以上、かつページ下端 85% より上にある表のみを対象とする。対象表があるページでは **ちょうど2つ** あることを期待し、左からソートして「左側の表」「右側の表」として扱う（[pick_target_tables](../extractors/vector_extractor.py#L67)）。対象表が 0 件のページはスキップし、1 件または 3 件以上のページは `ValueError` を上げる。
 2. **グリッド線の取得**  
    各表の bbox 内で、PDF の線オブジェクトから縦線・横線を収集し、クラスタリングして **セル境界** として使う（[collect_grid_lines](../extractors/vector_extractor.py#L87)）。縦線は 19+1 本（[CELL_COUNT](../extractors/vector_extractor.py#L22) = 19 列）、横線は 4 本以上あることを要求する。
 3. **表のセル抽出**  
