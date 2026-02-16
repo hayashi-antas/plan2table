@@ -52,7 +52,9 @@ def looks_like_equipment_code(text: str) -> bool:
 
 def has_note_marker(row: Sequence[str]) -> bool:
     joined = "".join(row)
-    return "記 事" in joined or "注記事項" in joined or "特記事項" in joined
+    if "記 事" in joined or "注記事項" in joined or "特記事項" in joined:
+        return True
+    return any(normalize_cell(cell).startswith("■") for cell in row)
 
 
 def dedupe_join(base: str, extra: str, sep: str = " / ") -> str:
@@ -386,6 +388,16 @@ def _extract_rows_via_table_cells(
         projected[1] = row[name_col] if name_col < len(row) else ""
         projected[9] = row[power_col] if power_col < len(row) else ""
         projected[15] = row[count_col] if count_col < len(row) else ""
+
+        note_marker_text = ""
+        for cell in row:
+            normalized = normalize_cell(cell)
+            if normalized.startswith("■"):
+                note_marker_text = normalized
+                break
+        if note_marker_text:
+            # Keep note marker in a projected column so extract_records can stop.
+            projected[3] = note_marker_text
 
         if (
             projected[9]

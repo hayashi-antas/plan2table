@@ -161,6 +161,22 @@ def test_extract_records_merges_repeated_same_equipment_id_block():
     assert records[0][15] == "1"
 
 
+def test_extract_records_stops_on_black_square_note_marker():
+    rows = [
+        _row("PAC-15-1", "空 調 機", "", ""),
+        _row("", "", "", ""),
+        _row("", "■集中リモコン", "", "1組"),
+        _row("PAC-16-1", "空 調 機", "0.11", "1"),
+    ]
+
+    records, note_rows = ve.extract_records(rows)
+
+    assert note_rows == 1
+    assert len(records) == 1
+    assert records[0][0] == "PAC-15-1"
+    assert records[0][15] == ""
+
+
 def test_extract_rows_via_table_cells_supports_kigou_and_quantity_headers():
     rows = [
         ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
@@ -233,6 +249,37 @@ def test_extract_pdf_to_rows_uses_cell_fallback_when_grid_detection_fails(tmp_pa
     assert [r[0] for r in rows[2:]] == ["PAC-1", "PAC-1"]
     assert all(r[9] == "0.575" for r in rows[2:])
     assert all(r[15] == "1" for r in rows[2:])
+
+
+def test_extract_pdf_to_rows_fallback_stops_on_black_square_note_marker(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "equipment.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    fallback_rows = [
+        ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+        ["記 号", "名 称", "系 統", "仕 様", "", "動 力", "", "", "", "", "", "", "数量", "設置場所", "", "備考", ""],
+        ["", "", "", "", "", "", "相", "消費電力 (KW)", "", "", "", "", "", "階", "室名", "", ""],
+        ["PAC-15-1", "空 調 機", "11F", "室内機", "", "", "1-200", "", "", "", "", "", "", "11F", "パーティールーム", "", ""],
+        ["", "", "", "■集中リモコン", "", "", "", "", "", "", "", "", "1組", "1F", "中央管理室", "", ""],
+    ]
+
+    page = _FakePage("page-1")
+    pages = [page]
+    table = _FakeCellTable((0, 0, 10, 10), fallback_rows)
+    monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF(pages))
+    monkeypatch.setattr(ve, "pick_target_tables", lambda page: [table])
+    monkeypatch.setattr(
+        ve,
+        "collect_grid_lines",
+        lambda page, bbox: (_ for _ in ()).throw(ValueError("grid fail")),
+    )
+
+    rows, note_rows, _ = ve.extract_pdf_to_rows(pdf_path)
+
+    assert note_rows == 1
+    assert len(rows) == 3
+    assert rows[2][0] == "PAC-15-1"
+    assert rows[2][15] == ""
 
 
 def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(tmp_path, monkeypatch):
