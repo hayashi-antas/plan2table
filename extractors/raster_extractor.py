@@ -5,6 +5,7 @@ import argparse
 import csv
 import io
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -242,7 +243,10 @@ def extract_drawing_number_from_text_layer(pdf_path: Path, page: int) -> str:
                 frame_width=int(target_page.width),
                 frame_height=int(target_page.height),
             )
-    except Exception:
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "text-layer drawing number extraction failed: %s", exc
+        )
         return ""
 
 
@@ -270,7 +274,7 @@ def resolve_drawing_number(
 def run_pdftoppm(pdf_path: Path, page: int, dpi: int, work_dir: Path) -> Path:
     if page < 1:
         raise ValueError("--page は1以上を指定してください。")
-    png_base = work_dir / "page"
+    png_base = work_dir / f"page_{page}"
     cmd = [
         "pdftoppm",
         "-f",
