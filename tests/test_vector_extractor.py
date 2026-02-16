@@ -31,12 +31,25 @@ class _FakeCrop:
 
 
 class _FakePage:
-    def __init__(self, name="page", crop_text=""):
+    def __init__(
+        self,
+        name="page",
+        crop_text="",
+        width=1000.0,
+        height=1000.0,
+        tables=None,
+    ):
         self.name = name
         self._crop_text = crop_text
+        self.width = width
+        self.height = height
+        self._tables = tables or []
 
     def crop(self, bbox):
         return _FakeCrop(self._crop_text)
+
+    def find_tables(self):
+        return self._tables
 
 
 class _FakeTableRow:
@@ -177,6 +190,25 @@ def test_extract_records_stops_on_black_square_note_marker():
     assert records[0][15] == ""
 
 
+def test_extract_records_summary_continuation_keeps_single_count_and_joins_name_without_slash():
+    rows = [
+        _row("RC-8", "ルームエアコン", "", "22"),
+        _row("", "室外機2段積架台", "", "5"),
+    ]
+
+    records, note_rows = ve.extract_records(rows)
+
+    assert note_rows == 0
+    assert len(records) == 1
+    assert records[0][0] == "RC-8"
+    assert records[0][1] == "ルームエアコン 室外機2段積架台"
+    assert records[0][15] == "22"
+
+
+def test_normalize_summary_name_fixes_known_room_aircon_artifact():
+    assert ve._normalize_summary_name("ルームエアコ マルチタイプン") == "ルームエアコン マルチタイプ"
+
+
 def test_extract_rows_via_table_cells_supports_kigou_and_quantity_headers():
     rows = [
         ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
@@ -211,6 +243,71 @@ def test_extract_rows_via_table_cells_supports_kigou_and_quantity_headers():
     assert projected[3][1] == "空 調 機"
     assert projected[3][9] == "0.19"
     assert projected[3][15] == "1"
+
+
+def test_extract_rows_from_summary_left_table_supports_id_name_total_mapping():
+    rows = [
+        ["空調・換気機器表", "", "", "", "", "", ""],
+        ["機器番号", "", "名 称", "", "仕様", "", "合 計 86 戸"],
+        ["", "", "", "", "", "", ""],
+        ["HEX－", "1", "全熱交換", "機", "", "", "9"],
+        ["ORC-", "4", "ルームエアコ", "ン", "", "", "12"],
+        ["RC-1～3", "", "欠 番", "", "", "", "16"],
+    ]
+    table = _FakeCellTable((40, 30, 650, 760), rows)
+    page = _FakePage("summary-page", width=1200.0, height=840.0)
+
+    projected = ve._extract_rows_from_summary_left_table(page, table)
+    records, _ = ve.extract_records(projected)
+
+    ids = [r[0] for r in records]
+    assert "HEX-1" in ids
+    assert "ORC-4" in ids
+    assert "RC-1～3" in ids
+    record_map = {r[0]: r for r in records}
+    assert record_map["HEX-1"][1] == "全熱交換機"
+    assert record_map["HEX-1"][15] == "9"
+    assert record_map["ORC-4"][1] == "ルームエアコン"
+    assert record_map["ORC-4"][15] == "12"
+
+
+def test_extract_rows_from_summary_left_table_normalizes_garbled_name_fragment():
+    rows = [
+        ["空調・換気機器表", "", "", "", "", "", ""],
+        ["機器番号", "", "名 称", "", "仕様", "", "合 計 86 戸"],
+        ["", "", "", "", "", "", ""],
+        ["ORC-2", "", "ルームエアコ マルチタイプ", "ン", "", "", "6"],
+    ]
+    table = _FakeCellTable((40, 30, 650, 760), rows)
+    page = _FakePage("summary-page", width=1200.0, height=840.0)
+
+    projected = ve._extract_rows_from_summary_left_table(page, table)
+    records, _ = ve.extract_records(projected)
+
+    assert records[0][0] == "ORC-2"
+    assert records[0][1] == "ルームエアコン マルチタイプ"
+
+
+def test_pick_summary_left_tables_selects_left_main_table():
+    main_rows = [
+        ["空調・換気機器表", "", "", "", ""],
+        ["機器番号", "", "名 称", "", "合計"],
+    ]
+    note_rows = [
+        ["記 事", "主管部署", "", ""],
+        ["", "", "", ""],
+    ]
+    main = _FakeCellTable((40, 30, 650, 760), main_rows)
+    note = _FakeCellTable((500, 780, 1130, 820), note_rows)
+    page = _FakePage(
+        "summary-page",
+        width=1200.0,
+        height=840.0,
+        tables=[main, note],
+    )
+
+    picked = ve._pick_summary_left_tables(page)
+    assert picked == [main]
 
 
 def test_select_power_value_candidate_prefers_precise_value_from_candidates():
@@ -322,6 +419,38 @@ def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(tmp_path, m
     assert note_rows == 3
     assert headers == [["H1"], ["H2"]]
     assert header_call_count["count"] == 1
+
+
+def test_extract_pdf_to_rows_uses_summary_left_route_when_target_tables_are_missing(
+    tmp_path, monkeypatch
+):
+    pdf_path = tmp_path / "equipment.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    page = _FakePage("page-1")
+    pages = [page]
+    monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF(pages))
+    monkeypatch.setattr(ve, "pick_target_tables", lambda page: [])
+
+    summary_rows = [
+        ["空調・換気機器表", "", "", "", "", "", ""],
+        ["機器番号", "", "名 称", "", "仕様", "", "合計"],
+        ["", "", "", "", "", "", ""],
+        ["ORC-", "4", "ルームエアコ", "ン", "", "", "12"],
+    ]
+    summary_table = _FakeCellTable((40, 30, 650, 760), summary_rows)
+    monkeypatch.setattr(ve, "_pick_summary_left_tables", lambda page: [summary_table])
+
+    rows, note_rows, headers = ve.extract_pdf_to_rows(pdf_path)
+
+    assert note_rows == 0
+    assert headers[0][0] == "機器番号"
+    assert headers[0][15] == "台数"
+    assert len(rows) == 3
+    assert rows[2][0] == "ORC-4"
+    assert rows[2][1] == "ルームエアコン"
+    assert rows[2][9] == ""
+    assert rows[2][15] == "12"
 
 
 def test_extract_pdf_to_rows_raises_when_no_target_tables_in_any_page(tmp_path, monkeypatch):

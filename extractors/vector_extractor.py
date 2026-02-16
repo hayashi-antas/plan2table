@@ -68,6 +68,51 @@ def dedupe_join(base: str, extra: str, sep: str = " / ") -> str:
     return f"{base}{sep}{extra}"
 
 
+def _normalize_summary_name(text: str) -> str:
+    """Normalize known OCR/join artifacts in summary-left table names."""
+    normalized = normalize_cell(text)
+    if not normalized:
+        return ""
+    normalized = re.sub(
+        r"ルームエアコ\s*マルチタイプン",
+        "ルームエアコン マルチタイプ",
+        normalized,
+    )
+    normalized = re.sub(r"ルームエアコ\s*ン", "ルームエアコン", normalized)
+    return normalize_cell(normalized)
+
+
+def _join_summary_name(base: str, extra: str) -> str:
+    base_normalized = _normalize_summary_name(base)
+    extra_normalized = _normalize_summary_name(extra)
+    if not extra_normalized:
+        return base_normalized
+    if not base_normalized:
+        return extra_normalized
+    if extra_normalized in base_normalized:
+        return base_normalized
+    if base_normalized in extra_normalized:
+        return extra_normalized
+    return f"{base_normalized} {extra_normalized}".strip()
+
+
+def _merge_record_value(
+    current_value: str,
+    incoming_value: str,
+    *,
+    col_index: int,
+    summary_like: bool,
+) -> str:
+    if not incoming_value:
+        return current_value
+    if col_index == 15:
+        # 台数/合計は単一値として扱う。継続行で複数値を連結しない。
+        return current_value or incoming_value
+    if summary_like and col_index == 1:
+        return _join_summary_name(current_value, incoming_value)
+    return dedupe_join(current_value, incoming_value)
+
+
 def cluster_values(values: Iterable[float], tolerance: float) -> List[float]:
     sorted_values = sorted(values)
     clusters: List[List[float]] = []
@@ -237,6 +282,142 @@ def _normalize_header_for_match(text: str) -> str:
     return normalized.replace(" ", "").replace("　", "").replace("\n", "").strip()
 
 
+def _build_header_by_col(rows: Sequence[Sequence[str]], header_depth: int) -> Dict[int, str]:
+    max_cols = max((len(r) for r in rows), default=0)
+    out: Dict[int, str] = {}
+    for col_index in range(max_cols):
+        blob = "".join(
+            _normalize_header_for_match(rows[row_index][col_index] if col_index < len(rows[row_index]) else "")
+            for row_index in range(min(header_depth, len(rows)))
+        )
+        out[col_index] = blob
+    return out
+
+
+def _is_summary_data_row(row: Sequence[str], id_col: int) -> bool:
+    equipment_id = normalize_equipment_code(row[id_col] if id_col < len(row) else "")
+    if looks_like_equipment_code(equipment_id):
+        return True
+    if equipment_id.endswith("-") and id_col + 1 < len(row):
+        suffix = normalize_equipment_code(row[id_col + 1])
+        if re.fullmatch(r"\d+", suffix):
+            return True
+    return False
+
+
+def _detect_summary_header_depth(rows: Sequence[Sequence[str]], id_col: int, max_depth: int = 8) -> int:
+    limit = min(max_depth, len(rows))
+    for idx in range(limit):
+        if _is_summary_data_row(rows[idx], id_col):
+            return max(1, idx)
+    return max(1, limit)
+
+
+def _pick_col_from_headers(
+    header_by_col: Dict[int, str], keywords: Sequence[str], *, exclude_keywords: Sequence[str] = ()
+) -> int | None:
+    normalized_keywords = [_normalize_header_for_match(k) for k in keywords]
+    normalized_excludes = [_normalize_header_for_match(k) for k in exclude_keywords]
+    for col_index, header_blob in header_by_col.items():
+        if any(keyword and keyword in header_blob for keyword in normalized_keywords):
+            if any(ex and ex in header_blob for ex in normalized_excludes):
+                continue
+            return col_index
+    return None
+
+
+def _pick_summary_left_tables(page: pdfplumber.page.Page) -> List[pdfplumber.table.Table]:
+    if not hasattr(page, "find_tables"):
+        return []
+
+    candidates: List[pdfplumber.table.Table] = []
+    for table in page.find_tables():
+        x0, top, x1, bottom = table.bbox
+        width_ratio = (x1 - x0) / page.width
+        if width_ratio < 0.45:
+            continue
+        if top > page.height * 0.25:
+            continue
+        if bottom > page.height * 0.95:
+            continue
+
+        raw_rows = table.extract() or []
+        normalized_rows = [[normalize_cell(c) for c in row] for row in raw_rows]
+        id_col = _pick_col_from_headers(_build_header_by_col(normalized_rows, header_depth=4), ["機器番号", "記号"])
+        if id_col is None:
+            continue
+        header_depth = _detect_summary_header_depth(normalized_rows, id_col=id_col)
+        header_by_col = _build_header_by_col(normalized_rows, header_depth=header_depth)
+        name_col = _pick_col_from_headers(header_by_col, ["名称"])
+        total_col = _pick_col_from_headers(header_by_col, ["合計"])
+        if name_col is None or total_col is None:
+            continue
+        candidates.append(table)
+
+    candidates.sort(key=lambda t: t.bbox[0])
+    return candidates[:1]
+
+
+def _extract_rows_from_summary_left_table(
+    page: pdfplumber.page.Page, table: pdfplumber.table.Table
+) -> List[List[str]]:
+    raw_rows = table.extract()
+    if not raw_rows:
+        raise ValueError("Summary-left table extraction produced no rows.")
+
+    max_cols = max(len(r) for r in raw_rows)
+    normalized_rows: List[List[str]] = []
+    for row in raw_rows:
+        cells = [normalize_cell(c) for c in row]
+        if len(cells) < max_cols:
+            cells.extend([""] * (max_cols - len(cells)))
+        normalized_rows.append(cells)
+
+    id_col = _pick_col_from_headers(_build_header_by_col(normalized_rows, header_depth=4), ["機器番号", "記号"])
+    if id_col is None:
+        raise ValueError("Could not resolve summary-left required id column.")
+    header_depth = _detect_summary_header_depth(normalized_rows, id_col=id_col)
+    header_by_col = _build_header_by_col(normalized_rows, header_depth=header_depth)
+    name_col = _pick_col_from_headers(header_by_col, ["名称"])
+    total_col = _pick_col_from_headers(header_by_col, ["合計"])
+    spec_col = _pick_col_from_headers(header_by_col, ["仕様"])
+    if name_col is None or total_col is None:
+        raise ValueError(
+            "Could not resolve summary-left required columns: "
+            f"id={id_col}, name={name_col}, total={total_col}"
+        )
+
+    name_cols = [name_col]
+    for col in range(name_col + 1, max_cols):
+        if spec_col is not None and col >= spec_col:
+            break
+        if header_by_col.get(col, "") == "":
+            name_cols.append(col)
+        else:
+            break
+
+    projected_rows: List[List[str]] = []
+    for row in normalized_rows:
+        projected = [""] * CELL_COUNT
+
+        equipment_id = normalize_equipment_code(row[id_col])
+        if equipment_id.endswith("-") and id_col + 1 < len(row):
+            suffix = normalize_equipment_code(row[id_col + 1])
+            if re.fullmatch(r"\d+", suffix):
+                equipment_id = f"{equipment_id}{suffix}"
+
+        name = "".join(normalize_cell(row[col]) for col in name_cols if col < len(row)).strip()
+        name = _normalize_summary_name(name)
+        total = normalize_cell(row[total_col]) if total_col < len(row) else ""
+
+        projected[0] = equipment_id
+        projected[1] = name
+        projected[9] = ""
+        projected[15] = total
+        projected_rows.append(projected)
+    return projected_rows
+
+
 def _pick_power_col(header_by_col: Dict[int, str]) -> int | None:
     exact_candidates: List[Tuple[int, str]] = []
     broad_candidates: List[Tuple[int, str]] = []
@@ -340,26 +521,11 @@ def _extract_rows_via_table_cells(
             cells.extend([""] * (max_cols - len(cells)))
         normalized_rows.append(cells)
 
-    header_depth = min(8, len(normalized_rows))
-    header_by_col: Dict[int, str] = {}
-    for col_index in range(max_cols):
-        blob = "".join(
-            _normalize_header_for_match(normalized_rows[row_index][col_index])
-            for row_index in range(header_depth)
-        )
-        header_by_col[col_index] = blob
-
-    def pick_col(keywords: Sequence[str]) -> int | None:
-        normalized_keywords = [_normalize_header_for_match(k) for k in keywords]
-        for col_index, header_blob in header_by_col.items():
-            if any(keyword and keyword in header_blob for keyword in normalized_keywords):
-                return col_index
-        return None
-
-    id_col = pick_col(["機器番号", "記号"])
-    name_col = pick_col(["名称"])
+    header_by_col = _build_header_by_col(normalized_rows, header_depth=8)
+    id_col = _pick_col_from_headers(header_by_col, ["機器番号", "記号"])
+    name_col = _pick_col_from_headers(header_by_col, ["名称"])
     power_col = _pick_power_col(header_by_col)
-    count_col = pick_col(["台数", "数量"])
+    count_col = _pick_col_from_headers(header_by_col, ["台数", "数量"])
     if id_col is None or name_col is None or power_col is None or count_col is None:
         raise ValueError(
             "Could not resolve required columns from fallback table headers: "
@@ -571,11 +737,16 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
             if current is not None and key == current[0]:
                 # Some formats repeat the same equipment id across multi-line blocks.
                 # Treat it as continuation instead of starting a new record.
+                summary_like = (not normalize_cell(current[9])) and (not normalize_cell(row[9]))
                 for i, value in enumerate(row):
                     if i == 0:
                         continue
-                    if value:
-                        current[i] = dedupe_join(current[i], value)
+                    current[i] = _merge_record_value(
+                        current[i],
+                        value,
+                        col_index=i,
+                        summary_like=summary_like,
+                    )
                 continue
             if current is not None:
                 records.append(current)
@@ -589,13 +760,18 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
             note_row_count += 1
             break
 
+        summary_like = (not normalize_cell(current[9])) and (not normalize_cell(row[9]))
         for i, value in enumerate(row):
             if i == 0:
                 # Continuation rows can carry truncated ids like "PAC-1-".
                 # Never merge them into the canonical equipment id.
                 continue
-            if value:
-                current[i] = dedupe_join(current[i], value)
+            current[i] = _merge_record_value(
+                current[i],
+                value,
+                col_index=i,
+                summary_like=summary_like,
+            )
 
     if current is not None:
         records.append(current)
@@ -850,20 +1026,30 @@ def extract_pdf_to_rows(pdf_path: Path) -> Tuple[List[List[str]], int, List[List
 
         for page in pdf.pages:
             target_tables = pick_target_tables(page)
-            if not target_tables:
+            if target_tables:
+                tables_to_process = target_tables
+                use_summary_left = False
+            else:
+                tables_to_process = _pick_summary_left_tables(page)
+                use_summary_left = True
+
+            if not tables_to_process:
                 continue
 
-            for table in target_tables:
+            for table in tables_to_process:
                 bbox = table.bbox
                 used_fallback = False
-                try:
-                    vertical, horizontal = collect_grid_lines(page, bbox)
-                    rows = extract_grid_rows(page, vertical, horizontal)
-                except ValueError:
-                    rows = _extract_rows_via_table_cells(page, table)
-                    used_fallback = True
+                if use_summary_left:
+                    rows = _extract_rows_from_summary_left_table(page, table)
+                else:
+                    try:
+                        vertical, horizontal = collect_grid_lines(page, bbox)
+                        rows = extract_grid_rows(page, vertical, horizontal)
+                    except ValueError:
+                        rows = _extract_rows_via_table_cells(page, table)
+                        used_fallback = True
                 if header_rows is None:
-                    if used_fallback:
+                    if use_summary_left or used_fallback:
                         header_rows = _default_header_rows()
                     else:
                         h1, h2 = reconstruct_headers_from_pdf(page, bbox, vertical)
