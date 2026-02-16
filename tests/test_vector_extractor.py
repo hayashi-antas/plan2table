@@ -19,6 +19,60 @@ class _FakeTable:
         self.bbox = bbox
 
 
+class _FakeCrop:
+    def __init__(self, text=""):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+    def extract_words(self, **kwargs):
+        return []
+
+
+class _FakePage:
+    def __init__(self, name="page", crop_text=""):
+        self.name = name
+        self._crop_text = crop_text
+
+    def crop(self, bbox):
+        return _FakeCrop(self._crop_text)
+
+
+class _FakeTableRow:
+    def __init__(self, cells):
+        self.cells = cells
+        non_empty = [c for c in cells if c is not None]
+        if non_empty:
+            self.bbox = (
+                min(c[0] for c in non_empty),
+                min(c[1] for c in non_empty),
+                max(c[2] for c in non_empty),
+                max(c[3] for c in non_empty),
+            )
+        else:
+            self.bbox = (0.0, 0.0, 0.0, 0.0)
+
+
+class _FakeCellTable:
+    def __init__(self, bbox, rows):
+        self.bbox = bbox
+        self._rows = rows
+        self.rows = []
+        for row_index, row in enumerate(rows):
+            cells = []
+            for col_index, _ in enumerate(row):
+                x0 = float(col_index * 10)
+                y0 = float(row_index * 5)
+                x1 = float(x0 + 10)
+                y1 = float(y0 + 5)
+                cells.append((x0, y0, x1, y1))
+            self.rows.append(_FakeTableRow(cells))
+
+    def extract(self):
+        return self._rows
+
+
 def _row(key="", name="", power="", count=""):
     row = [""] * ve.CELL_COUNT
     row[0] = key
@@ -76,11 +130,116 @@ def test_extract_records_keeps_cav_os_ah_rows_and_stops_only_on_note_markers():
     assert records[4][1] == ""
 
 
+def test_extract_records_does_not_merge_continuation_text_into_equipment_id():
+    rows = [
+        _row("PAC-1-1", "空 調 機", "0.04", "2"),
+        _row("PAC-1-", "", "", ""),
+        _row("", "", "", ""),
+    ]
+
+    records, note_rows = ve.extract_records(rows)
+
+    assert note_rows == 0
+    assert len(records) == 1
+    assert records[0][0] == "PAC-1-1"
+
+
+def test_extract_records_merges_repeated_same_equipment_id_block():
+    rows = [
+        _row("PAC-3", "空 調 機", "(冷)0.575", "1"),
+        _row("PAC-3", "", "(冷)0.575", ""),
+        _row("", "店舗用", "(暖)0.721", ""),
+    ]
+
+    records, note_rows = ve.extract_records(rows)
+
+    assert note_rows == 0
+    assert len(records) == 1
+    assert records[0][0] == "PAC-3"
+    assert records[0][1] == "空 調 機 / 店舗用"
+    assert records[0][9] == "(冷)0.575 / (暖)0.721"
+    assert records[0][15] == "1"
+
+
+def test_extract_rows_via_table_cells_supports_kigou_and_quantity_headers():
+    rows = [
+        ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+        [
+            "記 号",
+            "名 称",
+            "系 統",
+            "仕 様",
+            "",
+            "動 力 FAN･圧縮機 相 消費電力 始動 操作 監視 種別 出力(KW) P-V(KW) 方式",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "数量",
+            "設置場所",
+            "",
+            "備考",
+            "",
+        ],
+        ["", "", "", "", "", "", "相 P-V", "消費電力 (KW)", "始動", "操作", "監視", "種別", "", "階", "室名", "", ""],
+        ["PAC-1", "空 調 機", "B2F", "室内機", "", "(FAN)0.16", "1-200", "0.19", "", "", "", "", "1", "2F", "機械室", "型番", ""],
+    ]
+    table = _FakeCellTable((0, 0, 10, 10), rows)
+    page = _FakePage("fallback-page")
+
+    projected = ve._extract_rows_via_table_cells(page, table)
+
+    assert projected[3][0] == "PAC-1"
+    assert projected[3][1] == "空 調 機"
+    assert projected[3][9] == "0.19"
+    assert projected[3][15] == "1"
+
+
+def test_select_power_value_candidate_prefers_precise_value_from_candidates():
+    current = "(低温)9.4"
+    candidates = ["(低温)9.43", "( )7.18", "(冷)9.45"]
+    assert ve._select_power_value_candidate(current, candidates) == "(低温)9.43"
+
+
+def test_extract_pdf_to_rows_uses_cell_fallback_when_grid_detection_fails(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "equipment.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    fallback_rows = [
+        ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+        ["記 号", "名 称", "系 統", "仕 様", "", "動 力", "", "", "", "", "", "", "数量", "設置場所", "", "備考", ""],
+        ["", "", "", "", "", "", "相", "消費電力 (KW)", "", "", "", "", "", "階", "室名", "", ""],
+        ["PAC-1", "空 調 機", "B2F", "室外機", "", "", "3-200", "0.575", "", "", "", "", "1", "2F", "バルコニー", "型番", ""],
+    ]
+
+    page = _FakePage("page-1")
+    pages = [page]
+    table = _FakeCellTable((0, 0, 10, 10), fallback_rows)
+    monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF(pages))
+    monkeypatch.setattr(ve, "pick_target_tables", lambda page: [table, table])
+    monkeypatch.setattr(
+        ve,
+        "collect_grid_lines",
+        lambda page, bbox: (_ for _ in ()).throw(ValueError("grid fail")),
+    )
+
+    rows, note_rows, headers = ve.extract_pdf_to_rows(pdf_path)
+
+    assert note_rows == 0
+    assert headers[0][0] == "機器番号"
+    assert headers[0][15] == "台数"
+    assert [r[0] for r in rows[2:]] == ["PAC-1", "PAC-1"]
+    assert all(r[9] == "0.575" for r in rows[2:])
+    assert all(r[15] == "1" for r in rows[2:])
+
+
 def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(tmp_path, monkeypatch):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
-    pages = ["page-1", "page-2", "page-3"]
+    pages = [_FakePage("page-1"), _FakePage("page-2"), _FakePage("page-3")]
     monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF(pages))
 
     table_map = {
@@ -88,7 +247,7 @@ def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(tmp_path, m
         "page-2": [_FakeTable((0, 0, 1, 1)), _FakeTable((1, 0, 2, 1))],
         "page-3": [],
     }
-    monkeypatch.setattr(ve, "pick_target_tables", lambda page: table_map[page])
+    monkeypatch.setattr(ve, "pick_target_tables", lambda page: table_map[page.name])
     monkeypatch.setattr(ve, "collect_grid_lines", lambda page, bbox: ([0.0], [0.0]))
     monkeypatch.setattr(ve, "extract_grid_rows", lambda page, vertical, horizontal: [["raw"]])
 
@@ -122,7 +281,7 @@ def test_extract_pdf_to_rows_raises_when_no_target_tables_in_any_page(tmp_path, 
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
-    pages = ["page-1", "page-2"]
+    pages = [_FakePage("page-1"), _FakePage("page-2")]
     monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF(pages))
     monkeypatch.setattr(ve, "pick_target_tables", lambda page: [])
 

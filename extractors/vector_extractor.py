@@ -199,6 +199,209 @@ def normalize_header_text(text: str) -> str:
     text = text.replace("＃", "#")
     return text
 
+
+def _default_header_rows() -> List[List[str]]:
+    header1 = [""] * CELL_COUNT
+    header2 = [""] * CELL_COUNT
+
+    header1[0] = "機器番号"
+    header1[1] = "名称"
+    header1[2] = "系統"
+    header1[3] = "仕様"
+    header1[8] = "動力 (50Hz)"
+    header1[14] = "付属品・その他"
+    header1[15] = "台数"
+    header1[16] = "設置場所"
+    header1[18] = "備考"
+
+    header2[4] = "番手 #(φ)"
+    header2[5] = "機器風量 m3/h"
+    header2[6] = "静圧 Pa"
+    header2[7] = "騒音値 (dB)"
+    header2[8] = "相 P-V"
+    header2[9] = "消費電力 (KW)"
+    header2[10] = "始動方式"
+    header2[11] = "操作"
+    header2[12] = "監視"
+    header2[13] = "種別"
+    header2[16] = "階"
+    header2[17] = "部屋名"
+    header2[18] = "(参考型番)"
+    return [header1, header2]
+
+
+def _normalize_header_for_match(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    return normalized.replace(" ", "").replace("　", "").replace("\n", "").strip()
+
+
+def _pick_power_col(header_by_col: Dict[int, str]) -> int | None:
+    exact_candidates: List[Tuple[int, str]] = []
+    broad_candidates: List[Tuple[int, str]] = []
+
+    for col_index, header_blob in header_by_col.items():
+        if "消費電力" not in header_blob:
+            continue
+        broad_candidates.append((col_index, header_blob))
+        if "出力" not in header_blob:
+            exact_candidates.append((col_index, header_blob))
+
+    target = exact_candidates or broad_candidates
+    if not target:
+        return None
+
+    # Prefer the most specific header text (usually "消費電力(KW)") over merged blocks.
+    target.sort(key=lambda t: len(t[1]))
+    return target[0][0]
+
+
+def _score_power_candidate(current_value: str, candidate: str) -> int:
+    current_norm = _normalize_header_for_match(current_value)
+    candidate_norm = _normalize_header_for_match(candidate)
+    if not candidate_norm or not re.search(r"\d", candidate_norm):
+        return -1
+    if not current_norm:
+        return -1
+
+    score = 0
+    if candidate_norm == current_norm:
+        score += 100
+    elif candidate_norm.startswith(current_norm):
+        score += 80 + len(candidate_norm)
+    elif current_norm.startswith(candidate_norm):
+        score += 40 + len(candidate_norm)
+
+    current_prefix = re.split(r"\d", current_norm, maxsplit=1)[0]
+    candidate_prefix = re.split(r"\d", candidate_norm, maxsplit=1)[0]
+    if current_prefix and current_prefix == candidate_prefix:
+        score += 20
+    if "." in candidate_norm:
+        score += 1
+    return score
+
+
+def _select_power_value_candidate(current_value: str, candidates: Sequence[str]) -> str:
+    best_value = current_value
+    best_score = 0
+    for candidate in candidates:
+        score = _score_power_candidate(current_value, candidate)
+        if score > best_score:
+            best_value = candidate
+            best_score = score
+    return best_value
+
+
+def _extract_power_candidates_from_bbox(
+    page: pdfplumber.page.Page, bbox: Tuple[float, float, float, float]
+) -> List[str]:
+    crop = page.crop(bbox)
+    lines: List[str] = []
+
+    text = crop.extract_text() or ""
+    if text:
+        for line in text.splitlines():
+            normalized = normalize_cell(line)
+            if normalized:
+                lines.append(normalized)
+
+    if not lines:
+        words = crop.extract_words(
+            x_tolerance=1,
+            y_tolerance=1,
+            keep_blank_chars=False,
+            use_text_flow=True,
+        )
+        for word in words:
+            normalized = normalize_cell(str(word.get("text", "")))
+            if normalized:
+                lines.append(normalized)
+
+    deduped: List[str] = []
+    for line in lines:
+        if line not in deduped:
+            deduped.append(line)
+    return deduped
+
+
+def _extract_rows_via_table_cells(
+    page: pdfplumber.page.Page, table: pdfplumber.table.Table
+) -> List[List[str]]:
+    raw_rows = table.extract()
+    if not raw_rows:
+        raise ValueError("Table extraction fallback produced no rows.")
+
+    max_cols = max(len(r) for r in raw_rows)
+    normalized_rows: List[List[str]] = []
+    for row in raw_rows:
+        cells = [normalize_cell(c) for c in row]
+        if len(cells) < max_cols:
+            cells.extend([""] * (max_cols - len(cells)))
+        normalized_rows.append(cells)
+
+    header_depth = min(8, len(normalized_rows))
+    header_by_col: Dict[int, str] = {}
+    for col_index in range(max_cols):
+        blob = "".join(
+            _normalize_header_for_match(normalized_rows[row_index][col_index])
+            for row_index in range(header_depth)
+        )
+        header_by_col[col_index] = blob
+
+    def pick_col(keywords: Sequence[str]) -> int | None:
+        normalized_keywords = [_normalize_header_for_match(k) for k in keywords]
+        for col_index, header_blob in header_by_col.items():
+            if any(keyword and keyword in header_blob for keyword in normalized_keywords):
+                return col_index
+        return None
+
+    id_col = pick_col(["機器番号", "記号"])
+    name_col = pick_col(["名称"])
+    power_col = _pick_power_col(header_by_col)
+    count_col = pick_col(["台数", "数量"])
+    if id_col is None or name_col is None or power_col is None or count_col is None:
+        raise ValueError(
+            "Could not resolve required columns from fallback table headers: "
+            f"id={id_col}, name={name_col}, power={power_col}, count={count_col}"
+        )
+
+    col_bounds: Dict[int, Tuple[float, float]] = {}
+    for col_index in range(max_cols):
+        x0_list: List[float] = []
+        x1_list: List[float] = []
+        for table_row in table.rows:
+            if col_index >= len(table_row.cells):
+                continue
+            cell = table_row.cells[col_index]
+            if cell is None:
+                continue
+            x0_list.append(float(cell[0]))
+            x1_list.append(float(cell[2]))
+        if x0_list and x1_list:
+            col_bounds[col_index] = (min(x0_list), max(x1_list))
+
+    projected_rows: List[List[str]] = []
+    for row_index, row in enumerate(normalized_rows):
+        projected = [""] * CELL_COUNT
+        projected[0] = row[id_col] if id_col < len(row) else ""
+        projected[1] = row[name_col] if name_col < len(row) else ""
+        projected[9] = row[power_col] if power_col < len(row) else ""
+        projected[15] = row[count_col] if count_col < len(row) else ""
+
+        if (
+            projected[9]
+            and power_col in col_bounds
+            and row_index < len(table.rows)
+            and table.rows[row_index].bbox is not None
+        ):
+            row_bbox = table.rows[row_index].bbox
+            px0, px1 = col_bounds[power_col]
+            bbox = (px0, float(row_bbox[1]), px1, float(row_bbox[3]))
+            candidates = _extract_power_candidates_from_bbox(page, bbox)
+            projected[9] = _select_power_value_candidate(projected[9], candidates)
+
+        projected_rows.append(projected)
+    return projected_rows
+
 def reconstruct_headers_from_pdf(
     page: pdfplumber.page.Page,
     bbox: Tuple[float, float, float, float],
@@ -353,6 +556,15 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
                 key = f"{key}{row[1]}"
                 row[1] = ""
             row[0] = key
+            if current is not None and key == current[0]:
+                # Some formats repeat the same equipment id across multi-line blocks.
+                # Treat it as continuation instead of starting a new record.
+                for i, value in enumerate(row):
+                    if i == 0:
+                        continue
+                    if value:
+                        current[i] = dedupe_join(current[i], value)
+                continue
             if current is not None:
                 records.append(current)
             current = row.copy()
@@ -366,6 +578,10 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
             break
 
         for i, value in enumerate(row):
+            if i == 0:
+                # Continuation rows can carry truncated ids like "PAC-1-".
+                # Never merge them into the canonical equipment id.
+                continue
             if value:
                 current[i] = dedupe_join(current[i], value)
 
@@ -627,11 +843,19 @@ def extract_pdf_to_rows(pdf_path: Path) -> Tuple[List[List[str]], int, List[List
 
             for table in target_tables:
                 bbox = table.bbox
-                vertical, horizontal = collect_grid_lines(page, bbox)
-                rows = extract_grid_rows(page, vertical, horizontal)
+                used_fallback = False
+                try:
+                    vertical, horizontal = collect_grid_lines(page, bbox)
+                    rows = extract_grid_rows(page, vertical, horizontal)
+                except ValueError:
+                    rows = _extract_rows_via_table_cells(page, table)
+                    used_fallback = True
                 if header_rows is None:
-                    h1, h2 = reconstruct_headers_from_pdf(page, bbox, vertical)
-                    header_rows = [h1, h2]
+                    if used_fallback:
+                        header_rows = _default_header_rows()
+                    else:
+                        h1, h2 = reconstruct_headers_from_pdf(page, bbox, vertical)
+                        header_rows = [h1, h2]
                 records, note_rows = extract_records(rows)
                 note_rows_total += note_rows
                 merged_records.extend(records)
