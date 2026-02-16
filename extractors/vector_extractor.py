@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import unicodedata
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -20,6 +21,7 @@ import pdfplumber
 
 
 CELL_COUNT = 19
+SPLIT_SUFFIX_PATTERN = re.compile(r"^-\d+$")
 
 
 def normalize_cell(value: str | None) -> str:
@@ -32,9 +34,20 @@ def normalize_cell(value: str | None) -> str:
     return value.strip()
 
 
+def normalize_equipment_code(value: str | None) -> str:
+    text = unicodedata.normalize("NFKC", normalize_cell(value or ""))
+    text = text.replace(" ", "").replace("　", "")
+    text = text.replace("~", "～")
+    text = text.replace("〜", "～")
+    return text
+
+
 def looks_like_equipment_code(text: str) -> bool:
-    # Examples: SF-P-1, EF-B2-3, F-1-2
-    return bool(re.match(r"^[A-Z]+[A-Z0-9\-]*\d$", text))
+    # Examples: SF-P-1, EF-B2-3, F-1-2, CAV-3～6-1, OS-AH-1
+    normalized = normalize_equipment_code(text)
+    if not normalized:
+        return False
+    return bool(re.match(r"^(?=.*\d)[A-Z0-9～~]+(?:-[A-Z0-9～~]+)*$", normalized))
 
 
 def has_note_marker(row: Sequence[str]) -> bool:
@@ -75,6 +88,8 @@ def pick_target_tables(page: pdfplumber.page.Page) -> List[pdfplumber.table.Tabl
             continue
         candidates.append(table)
     candidates.sort(key=lambda t: t.bbox[0])
+    if not candidates:
+        return []
     if len(candidates) != 2:
         info = [f"bbox={t.bbox}" for t in page.find_tables()]
         raise ValueError(
@@ -330,8 +345,14 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
         if not any(row):
             continue
 
-        key = row[0]
+        key = normalize_equipment_code(row[0])
         if looks_like_equipment_code(key):
+            # Some PDFs split the trailing sequence number into the "名称" cell.
+            # Rebuild equipment id like "CAV-11～15" + "-1" -> "CAV-11～15-1".
+            if SPLIT_SUFFIX_PATTERN.match(row[1]):
+                key = f"{key}{row[1]}"
+                row[1] = ""
+            row[0] = key
             if current is not None:
                 records.append(current)
             current = row.copy()
@@ -339,11 +360,6 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
 
         if current is None:
             continue
-
-        if key and not looks_like_equipment_code(key):
-            if has_note_marker(row):
-                note_row_count += 1
-            break
 
         if has_note_marker(row):
             note_row_count += 1
@@ -599,26 +615,29 @@ def extract_pdf_to_rows(pdf_path: Path) -> Tuple[List[List[str]], int, List[List
     with pdfplumber.open(str(pdf_path)) as pdf:
         if not pdf.pages:
             raise ValueError("PDF has no pages.")
-        page = pdf.pages[0]
-        target_tables = pick_target_tables(page)
 
         merged_records: List[List[str]] = []
         note_rows_total = 0
         header_rows: List[List[str]] | None = None
 
-        for table in target_tables:
-            bbox = table.bbox
-            vertical, horizontal = collect_grid_lines(page, bbox)
-            rows = extract_grid_rows(page, vertical, horizontal)
-            if header_rows is None:
-                h1, h2 = reconstruct_headers_from_pdf(page, bbox, vertical)
-                header_rows = [h1, h2]
-            records, note_rows = extract_records(rows)
-            note_rows_total += note_rows
-            merged_records.extend(records)
+        for page in pdf.pages:
+            target_tables = pick_target_tables(page)
+            if not target_tables:
+                continue
+
+            for table in target_tables:
+                bbox = table.bbox
+                vertical, horizontal = collect_grid_lines(page, bbox)
+                rows = extract_grid_rows(page, vertical, horizontal)
+                if header_rows is None:
+                    h1, h2 = reconstruct_headers_from_pdf(page, bbox, vertical)
+                    header_rows = [h1, h2]
+                records, note_rows = extract_records(rows)
+                note_rows_total += note_rows
+                merged_records.extend(records)
 
         if header_rows is None:
-            raise ValueError("Failed to reconstruct headers.")
+            raise ValueError("No target tables found in any PDF page.")
         final_rows = header_rows + merged_records
         return final_rows, note_rows_total, header_rows
 
