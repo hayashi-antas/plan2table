@@ -22,6 +22,7 @@ def _extract_download_path(html: str, kind: str) -> str:
 
 
 def _fake_raster_extract_success(**kwargs):
+    assert kwargs["page"] == 0
     out_csv = kwargs["out_csv"]
     out_csv.write_text(
         "機器番号,機器名称,電圧(V),容量(kW),図面番号\nA-1,送風機,200,1.5,E-024\n",
@@ -40,6 +41,7 @@ def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
 
     def fake_extract_raster_pdf(**kwargs):
+        assert kwargs["page"] == 0
         out_csv = kwargs["out_csv"]
         out_csv.write_text(
             "機器番号,機器名称,電圧(V),容量(kW),図面番号\nA-1,送風機,200,1.5,E-024\n",

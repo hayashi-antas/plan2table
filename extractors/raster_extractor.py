@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
@@ -120,7 +121,7 @@ def parse_args() -> argparse.Namespace:
         description="Google Cloud Vision APIでPDF表と図面番号を抽出する"
     )
     parser.add_argument("--pdf", default="/data/電気図1.pdf", help="入力PDFパス")
-    parser.add_argument("--page", type=int, default=1, help="1始まりのページ番号")
+    parser.add_argument("--page", type=int, default=1, help="1始まりのページ番号（0以下で全ページ）")
     parser.add_argument("--dpi", type=int, default=300, help="pdftoppmのDPI")
     parser.add_argument("--out", default="/data/vision_output.csv", help="出力CSVパス")
     parser.add_argument("--debug-dir", default="/debug", help="デバッグ画像保存先")
@@ -293,6 +294,21 @@ def run_pdftoppm(pdf_path: Path, page: int, dpi: int, work_dir: Path) -> Path:
     if not png_path.exists():
         raise FileNotFoundError(f"PNGが生成されませんでした: {png_path}")
     return png_path
+
+
+def count_pdf_pages(pdf_path: Path) -> int:
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        return len(pdf.pages)
+
+
+def resolve_target_pages(total_pages: int, page: int) -> List[int]:
+    if total_pages < 1:
+        raise ValueError("PDFにページがありません。")
+    if page <= 0:
+        return list(range(1, total_pages + 1))
+    if page > total_pages:
+        raise ValueError(f"指定ページがPDF範囲外です: page={page}, total_pages={total_pages}")
+    return [page]
 
 
 def split_sides(image: Image.Image) -> Dict[str, Image.Image]:
@@ -540,6 +556,30 @@ def contains_japanese(text: str) -> bool:
     return bool(re.search(r"[ぁ-んァ-ン一-龥]", text))
 
 
+def normalize_power_text(power: str) -> str:
+    power_norm = normalize_text(power).replace(" ", "").replace("　", "")
+    power_norm = power_norm.replace(",", "")
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", power_norm):
+        return power_norm
+    if "." not in power_norm:
+        return power_norm
+
+    fractional = power_norm.split(".", 1)[1]
+    # Keep normal precision values (e.g. 9.0, 0.75, 0.535) as-is.
+    if len(fractional) <= 3:
+        return power_norm
+
+    # OCR occasionally appends noise digits (e.g. 0.75255). Round only these over-precision values.
+    try:
+        rounded = Decimal(power_norm).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return power_norm
+    rounded_text = format(rounded, "f")
+    if "." in rounded_text:
+        rounded_text = rounded_text.rstrip("0").rstrip(".")
+    return rounded_text
+
+
 def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
     code = row["機器番号"]
     name = row["機器名称"]
@@ -589,9 +629,7 @@ def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
     if volt_norm == "1/200":
         volt = "1φ200"
 
-    power_norm = normalize_text(power)
-    if re.fullmatch(r"\d+\.0+", power_norm):
-        power = str(int(float(power_norm)))
+    power = normalize_power_text(power)
 
     return {
         "機器番号": clean_cell(code),
@@ -748,52 +786,76 @@ def extract_raster_pdf(
 
     client = build_vision_client(vision_service_account_json)
     all_rows: List[Dict[str, object]] = []
-    right_side_words: List[WordBox] = []
-    right_side_size = (0, 0)
+    total_pages = count_pdf_pages(pdf_path)
+    target_pages = resolve_target_pages(total_pages=total_pages, page=page)
+    drawing_number_by_page: Dict[int, str] = {}
+    drawing_number_source_by_page: Dict[int, str] = {}
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        png_path = run_pdftoppm(pdf_path, page, dpi, tmp_dir)
-        page_image = Image.open(png_path).convert("RGB")
-        sides = split_sides(page_image)
+        for target_page in target_pages:
+            right_side_words: List[WordBox] = []
+            right_side_size = (0, 0)
+            page_rows: List[Dict[str, object]] = []
 
-        for side in ["L", "R"]:
-            side_image = sides[side]
-            words = extract_words(client, side_image)
-            if not words:
-                continue
-            if side == "R":
-                right_side_words = words
-                right_side_size = side_image.size
-            bounds = infer_column_bounds(words, side_image.width)
-            rows = rows_from_words(words, bounds, y_cluster)
-            for row in rows:
-                row["side"] = side
-                all_rows.append(row)
-            save_debug_image(
-                side_image,
-                words,
-                bounds,
-                debug_dir / f"bbox_{side}.png",
+            png_path = run_pdftoppm(pdf_path, target_page, dpi, tmp_dir)
+            page_image = Image.open(png_path).convert("RGB")
+            sides = split_sides(page_image)
+
+            for side in ["L", "R"]:
+                side_image = sides[side]
+                words = extract_words(client, side_image)
+                if not words:
+                    continue
+                if side == "R":
+                    right_side_words = words
+                    right_side_size = side_image.size
+                bounds = infer_column_bounds(words, side_image.width)
+                rows = rows_from_words(words, bounds, y_cluster)
+                for row in rows:
+                    row["side"] = side
+                    row["page"] = target_page
+                    page_rows.append(row)
+                save_debug_image(
+                    side_image,
+                    words,
+                    bounds,
+                    debug_dir / f"bbox_p{target_page}_{side}.png",
+                )
+
+            drawing_number, drawing_number_source = resolve_drawing_number(
+                pdf_path=pdf_path,
+                page=target_page,
+                right_side_words=right_side_words,
+                right_side_size=right_side_size,
             )
+            drawing_number_by_page[target_page] = drawing_number
+            drawing_number_source_by_page[target_page] = drawing_number_source
+            for row in page_rows:
+                row[DRAWING_NUMBER_COLUMN] = drawing_number
+                all_rows.append(row)
 
-    drawing_number, drawing_number_source = resolve_drawing_number(
-        pdf_path=pdf_path,
-        page=page,
-        right_side_words=right_side_words,
-        right_side_size=right_side_size,
-    )
-    all_rows.sort(key=lambda r: (str(r["side"]), int(r["row_index"])))
-    for row in all_rows:
-        row[DRAWING_NUMBER_COLUMN] = drawing_number
+    summary_drawing_number = ""
+    summary_drawing_source = "none"
+    for target_page in target_pages:
+        candidate = drawing_number_by_page.get(target_page, "")
+        if candidate:
+            summary_drawing_number = candidate
+            summary_drawing_source = drawing_number_source_by_page.get(target_page, "none")
+            break
+    all_rows.sort(key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"])))
     write_csv(all_rows, out_csv)
     return {
         "rows": len(all_rows),
         "columns": OUTPUT_COLUMNS,
         "output_csv": str(out_csv),
         "debug_dir": str(debug_dir),
-        "drawing_number": drawing_number,
-        "drawing_number_source": drawing_number_source,
+        "drawing_number": summary_drawing_number,
+        "drawing_number_source": summary_drawing_source,
+        "pages_processed": len(target_pages),
+        "target_pages": target_pages,
+        "drawing_numbers_by_page": drawing_number_by_page,
+        "drawing_number_sources_by_page": drawing_number_source_by_page,
     }
 
 
@@ -810,36 +872,44 @@ def main() -> int:
     # CLI互換: 環境変数GOOGLE_APPLICATION_CREDENTIALSで認証
     client = vision.ImageAnnotatorClient()
     all_rows: List[Dict[str, object]] = []
-    right_side_words: List[WordBox] = []
-    right_side_size = (0, 0)
+    total_pages = count_pdf_pages(pdf_path)
+    target_pages = resolve_target_pages(total_pages=total_pages, page=args.page)
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        png_path = run_pdftoppm(pdf_path, args.page, args.dpi, tmp_dir)
-        page_image = Image.open(png_path).convert("RGB")
-        sides = split_sides(page_image)
-        for side in ["L", "R"]:
-            side_image = sides[side]
-            words = extract_words(client, side_image)
-            if not words:
-                continue
-            if side == "R":
-                right_side_words = words
-                right_side_size = side_image.size
-            bounds = infer_column_bounds(words, side_image.width)
-            rows = rows_from_words(words, bounds, y_cluster)
-            for row in rows:
-                row["side"] = side
+        for target_page in target_pages:
+            right_side_words: List[WordBox] = []
+            right_side_size = (0, 0)
+            page_rows: List[Dict[str, object]] = []
+
+            png_path = run_pdftoppm(pdf_path, target_page, args.dpi, tmp_dir)
+            page_image = Image.open(png_path).convert("RGB")
+            sides = split_sides(page_image)
+            for side in ["L", "R"]:
+                side_image = sides[side]
+                words = extract_words(client, side_image)
+                if not words:
+                    continue
+                if side == "R":
+                    right_side_words = words
+                    right_side_size = side_image.size
+                bounds = infer_column_bounds(words, side_image.width)
+                rows = rows_from_words(words, bounds, y_cluster)
+                for row in rows:
+                    row["side"] = side
+                    row["page"] = target_page
+                    page_rows.append(row)
+                save_debug_image(side_image, words, bounds, debug_dir / f"bbox_p{target_page}_{side}.png")
+
+            drawing_number, _ = resolve_drawing_number(
+                pdf_path=pdf_path,
+                page=target_page,
+                right_side_words=right_side_words,
+                right_side_size=right_side_size,
+            )
+            for row in page_rows:
+                row[DRAWING_NUMBER_COLUMN] = drawing_number
                 all_rows.append(row)
-            save_debug_image(side_image, words, bounds, debug_dir / f"bbox_{side}.png")
-    drawing_number, _ = resolve_drawing_number(
-        pdf_path=pdf_path,
-        page=args.page,
-        right_side_words=right_side_words,
-        right_side_size=right_side_size,
-    )
-    all_rows.sort(key=lambda r: (str(r["side"]), int(r["row_index"])))
-    for row in all_rows:
-        row[DRAWING_NUMBER_COLUMN] = drawing_number
+    all_rows.sort(key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"])))
     write_csv(all_rows, out_csv)
     return 0
 

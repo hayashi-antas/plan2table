@@ -638,7 +638,7 @@ def _run_raster_job(file_bytes: bytes, source_filename: str):
         out_csv=csv_path,
         debug_dir=debug_dir,
         vision_service_account_json=vision_service_account_json,
-        page=1,
+        page=0,
         dpi=300,
         y_cluster=20.0,
     )

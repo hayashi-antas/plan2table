@@ -1,8 +1,15 @@
+import csv
 from pathlib import Path
 
+from PIL import Image
+
 from extractors.raster_extractor import (
+    ColumnBounds,
     WordBox,
+    extract_raster_pdf,
     extract_drawing_number_from_word_boxes,
+    normalize_row_cells,
+    resolve_target_pages,
     resolve_drawing_number,
 )
 
@@ -89,3 +96,91 @@ def test_resolve_drawing_number_uses_text_layer_fallback(monkeypatch):
     )
     assert drawing_number == "M-12A"
     assert source == "text_layer"
+
+
+def test_resolve_target_pages_handles_all_pages_mode():
+    assert resolve_target_pages(total_pages=2, page=0) == [1, 2]
+    assert resolve_target_pages(total_pages=2, page=-1) == [1, 2]
+    assert resolve_target_pages(total_pages=2, page=1) == [1]
+
+
+def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
+    input_pdf = tmp_path / "input.pdf"
+    input_pdf.write_bytes(b"%PDF-1.4\n")
+    out_csv = tmp_path / "raster.csv"
+    debug_dir = tmp_path / "debug"
+    png_path = tmp_path / "dummy.png"
+    Image.new("RGB", (20, 20), color=(255, 255, 255)).save(png_path)
+
+    monkeypatch.setattr("extractors.raster_extractor.build_vision_client", lambda _: object())
+    monkeypatch.setattr("extractors.raster_extractor.count_pdf_pages", lambda _: 2)
+    monkeypatch.setattr("extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path)
+    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+
+    def fake_extract_words(client, side_image):
+        return [_wb("dummy", 10, 10, w=8, h=8)]
+
+    monkeypatch.setattr("extractors.raster_extractor.extract_words", fake_extract_words)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_column_bounds",
+        lambda words, side_width: ColumnBounds(
+            x_min=0.0, b12=5.0, b23=10.0, b34=15.0, x_max=20.0, header_y=0.0
+        ),
+    )
+
+    call_index = {"n": 0}
+
+    def fake_rows_from_words(words, bounds, y_cluster):
+        call_index["n"] += 1
+        idx = call_index["n"]
+        return [
+            {
+                "row_index": 1,
+                "row_y": 100.0,
+                "機器番号": f"A-{idx}",
+                "機器名称": "送風機",
+                "電圧(V)": "200",
+                "容量(kW)": "1.5",
+            }
+        ]
+
+    monkeypatch.setattr("extractors.raster_extractor.rows_from_words", fake_rows_from_words)
+
+    def fake_resolve_drawing_number(**kwargs):
+        page = kwargs["page"]
+        return (f"E-02{page}", "vision")
+
+    monkeypatch.setattr("extractors.raster_extractor.resolve_drawing_number", fake_resolve_drawing_number)
+
+    result = extract_raster_pdf(
+        pdf_path=input_pdf,
+        out_csv=out_csv,
+        debug_dir=debug_dir,
+        vision_service_account_json='{"type":"service_account"}',
+        page=0,
+        dpi=300,
+        y_cluster=20.0,
+    )
+
+    with out_csv.open("r", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    assert result["pages_processed"] == 2
+    assert result["target_pages"] == [1, 2]
+    assert len(rows) == 4
+    assert rows[0]["図面番号"] == "E-021"
+    assert rows[1]["図面番号"] == "E-021"
+    assert rows[2]["図面番号"] == "E-022"
+    assert rows[3]["図面番号"] == "E-022"
+
+
+def test_normalize_row_cells_keeps_point_zero_and_fixes_over_precision_power():
+    pac_row = normalize_row_cells(
+        {"機器番号": "PAC-15", "機器名称": "空調室外機", "電圧(V)": "200", "容量(kW)": "9.0"}
+    )
+    ef_row = normalize_row_cells(
+        {"機器番号": "EF-R-2", "機器名称": "排風機", "電圧(V)": "200", "容量(kW)": "0.75255"}
+    )
+
+    assert pac_row["容量(kW)"] == "9.0"
+    assert ef_row["容量(kW)"] == "0.75"
