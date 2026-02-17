@@ -149,22 +149,24 @@ CSV の実体ファイル名は kind に応じて `raster.csv` / `vector.csv` / 
 #### 5.1.1 処理の流れ
 
 1. **PDF → 画像**  
-   `pdftoppm` で指定ページ（デフォルト1ページ目）を PNG に変換する（DPI はデフォルト 300）。[run_pdftoppm](../extractors/raster_extractor.py#L130) がこれを実行する。
-2. **左右分割**  
-   画像を縦の中央で **左(L) と 右(R)** に分割する（[SIDE_SPLITS](../extractors/raster_extractor.py#L31)）。盤表が2段や2列に分かれているレイアウトに対応する。
-3. **OCR**  
-   各サイド画像を **Google Cloud Vision API** の `document_text_detection` に送り、単語単位のテキストとバウンディングボックスを取得する（[extract_words](../extractors/raster_extractor.py#L171)）。
-4. **行クラスタリング**  
-   Y座標に基づき単語を **行** にグループ化する（[cluster_by_y](../extractors/raster_extractor.py#L211)）。しきい値は [y_cluster](../extractors/raster_extractor.py#L504)（デフォルト 20.0 px）。
-5. **列境界の推定**  
-   ヘッダー行らしき行から「機器番号」「機器名称」「電圧(V)」「容量(kW)」の4列の境界（[ColumnBounds](../extractors/raster_extractor.py#L99)）を推定する（[infer_column_bounds](../extractors/raster_extractor.py#L253)）。ヘッダーキーワード（機器・記号・名称・電圧・容量など）のスコアでヘッダー行を選び、その単語のX座標から列の区切りを決める。
-6. **データ行の抽出**  
-   ヘッダーより下の領域（[DATA_START_OFFSET](../extractors/raster_extractor.py#L38) 以降）の単語を、列境界に従って4列に割り当て、行ごとにまとめる（[rows_from_words](../extractors/raster_extractor.py#L503)）。  
-   ヘッダー行・フッター行はキーワードで除外し、**データ行** のみを残す（[is_data_row](../extractors/raster_extractor.py#L475)）。機器番号のパターン（例: `[A-Z]{1,4}-[A-Z0-9]{1,6}`）や、名称に含まれるキーワード（ポンプ・排風・送風など）でデータ行を判定する。
-7. **セル正規化**  
-   機器番号と名称の混入補正、単位表記の統一（例: 1/200 → 1φ200）、名称の表記ゆれ（湧水ポンプ→清水ポンプ）などを [normalize_row_cells](../extractors/raster_extractor.py#L404) で行う。
-8. **CSV出力**  
-   列は [OUTPUT_COLUMNS](../extractors/raster_extractor.py#L29) = `["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]` の5列。左右両サイドの行をまとめて `raster.csv` に書き出し、図面番号を各行へ付与する。デバッグ用に `debug_dir` へ列境界や単語ボックスを描画した画像を保存する。
+   `pdftoppm` で対象ページを PNG に変換する（DPI はデフォルト 300）。
+2. **1パス目 OCR（全ページ画像）**  
+   ページ全体を Vision `document_text_detection` に送り、単語（WordBox）を取得する。
+3. **ヘッダー行検出（複数表対応）**  
+   単語を Yクラスタで行にまとめ、ヘッダー語群（機器番号/名称/電圧/容量）を満たす行を複数検出する。4カテゴリ中3カテゴリ以上で表候補として採用する。
+4. **表候補 bbox の生成と重複マージ**  
+   ヘッダー位置から表領域を推定し、近接候補や重複候補は IoU/近傍判定で統合する。これにより、四隅や上辺の小表を複数拾える。
+5. **2パス目 OCR（候補ごと）**  
+   各候補領域を `crop + margin` で切り出して再OCRし、表ごとに列境界を再推定する（小表・1行表の精度を上げる）。
+6. **データ行抽出（可変開始Y）**  
+   固定オフセットではなく、ヘッダー高さベースで開始Yを算出して4列へ割り当てる。  
+   ヘッダー/フッター行を除外し、**機器番号パターン** または **名称+数値（電圧/容量）** を満たす行を採用する。
+7. **Hybrid fallback**  
+   1〜2ページ目は旧「左右分割」ロジックを優先し、3ページ目以降は新ロジックを優先する。優先ロジックで0行だったページのみ、もう一方へフォールバックする。
+8. **CSV出力・図面番号付与**  
+   列は `["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]` の5列を維持。図面番号はページごとに1つ解決して全行へ付与する。重複機器番号行は保持する。
+9. **デバッグ出力**  
+   `debug_dir` に `p{n}_headers.png`, `p{n}_tables.png`, `p{n}_table{k}.png` を保存する。
 
 <a id="raster-deps"></a>
 #### 5.1.2 依存関係
@@ -191,10 +193,11 @@ Vision API は「この画像にどんな文字が、どこにあったか」を
 | 段階 | やっていること | コード上の主なもの |
 |------|----------------|---------------------|
 | 1. 単語をまとめる | 返ってきた単語に、中心座標（cx, cy）と矩形（bbox）を付けて **WordBox** として保持 | [extract_words](../extractors/raster_extractor.py#L171) → [WordBox](../extractors/raster_extractor.py#L85)（dataclass） |
-| 2. 行に分ける | Y座標が近い単語を「同じ行」として **RowCluster** にまとめる | [cluster_by_y](../extractors/raster_extractor.py#L211) → [RowCluster](../extractors/raster_extractor.py#L93)（dataclass） |
-| 3. 列を決める | ヘッダー行の単語のX座標から、4列の境界 **ColumnBounds** を推定 | [infer_column_bounds](../extractors/raster_extractor.py#L253) → [ColumnBounds](../extractors/raster_extractor.py#L99)（dataclass） |
-| 4. セルに割り当て | 各行の単語を、X座標で列境界と照らして「機器番号列」「名称列」… に振り分け | [assign_column](../extractors/raster_extractor.py#L382), [rows_from_words](../extractors/raster_extractor.py#L503) |
-| 5. 表として出力 | データ行だけ残し、表記ゆれを補正してから **csv** で書き出し | [normalize_row_cells](../extractors/raster_extractor.py#L404), `write_csv`（標準ライブラリ） |
+| 2. 行に分ける | Y座標が近い単語を「同じ行」として **RowCluster** にまとめる | `cluster_by_y` → `RowCluster` |
+| 3. 表候補を決める | ヘッダー語群を満たす行を **HeaderAnchor** として検出し、候補 bbox を作る | `detect_header_anchors` / `detect_table_candidates_from_page_words` |
+| 4. 候補ごと再OCR | 候補領域を再OCRして列境界 **ColumnBounds** を推定 | `ocr_table_crop` / `infer_column_bounds` |
+| 5. セルに割り当て | 各行の単語を、X座標で列境界と照らして4列へ振り分け | `assign_column`, `rows_from_words` |
+| 6. 表として出力 | データ行だけ残し、表記ゆれを補正してから **csv** で書き出し | `normalize_row_cells`, `write_csv` |
 
 **使っている型（すべて raster_extractor 内の dataclass）**
 
@@ -202,14 +205,17 @@ Vision API は「この画像にどんな文字が、どこにあったか」を
 |------|------|
 | **[WordBox](../extractors/raster_extractor.py#L85)** | 単語1つ分。テキスト・中心(cx,cy)・矩形(bbox) を持つ。Vision の返り値を入れる入れ物。 |
 | **[RowCluster](../extractors/raster_extractor.py#L93)** | 「同じ行」とみなした単語の集まり。行のY座標(row_y) と、その行に属する WordBox のリスト(words)。 |
-| **[ColumnBounds](../extractors/raster_extractor.py#L99)** | 4列の境界のX座標。ヘッダーから推定した「ここより左が1列目、ここから2列目…」の区切り。 |
+| **ColumnBounds** | 4列の境界のX座標。ヘッダーから推定した「ここより左が1列目、ここから2列目…」の区切り。 |
+| **HeaderAnchor** | ヘッダー語群（機器番号/名称/電圧/容量）を満たした行。複数表検出の起点。 |
+| **TableCandidate** | 1つの表候補の bbox とヘッダー情報。2パス目OCRの対象単位。 |
+| **TableParseResult** | 候補表ごとの抽出結果（行リスト）。 |
 
 **使っているライブラリ（表の「構造」には表用ライブラリは使っていない）**
 
 | 種類 | ライブラリ | 役割 |
 |------|------------|------|
 | Vision | `google.cloud.vision` | 画像を送って、単語テキスト＋座標の一覧をもらう。 |
-| 画像 | Pillow（`PIL.Image`, `ImageDraw`） | 画像の読み込み・左右分割・デバッグ用の枠描画。 |
+| 画像 | Pillow（`PIL.Image`, `ImageDraw`） | 画像の読み込み・切り出し・デバッグ用の枠描画。 |
 | 表の組み立て | **なし**（自前ロジック） | 行・列の割り当てやヘッダー／データ行の判定は、すべて raster_extractor 内のコード。pandas や表解析ライブラリは使っていない。 |
 | その他 | 標準ライブラリのみ | `csv`（CSV書き出し）、`re`、`unicodedata`、`dataclasses`、`statistics.median` など。 |
 
