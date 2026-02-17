@@ -338,6 +338,103 @@ def test_parse_table_candidate_expands_bottom_when_tail_near_edge(tmp_path, monk
     assert parsed.final_crop_bottom > 100.0
 
 
+def test_parse_table_candidate_keeps_expanding_when_near_edge_without_growth(tmp_path, monkeypatch):
+    page_image = Image.new("RGB", (420, 500), color=(255, 255, 255))
+    candidate = TableCandidate(
+        bbox=(20.0, 20.0, 390.0, 280.0),
+        header_y=24.0,
+        header_text="機器番号 名称 電圧 容量",
+        categories=("code", "name", "power", "voltage"),
+    )
+
+    def build_row_words(code: str, name: str, cy: float):
+        return [
+            _wb(code, 70, cy, w=44),
+            _wb(name, 160, cy, w=84),
+            _wb("200", 250, cy, w=24),
+            _wb("3.7", 330, cy, w=24),
+        ]
+
+    def fake_ocr_table_crop(client, crop_image):
+        h = float(crop_image.height)
+        words = build_row_words("DP-11", "雨水排水ポンプ", h - 16.0)
+        # Tail row appears only after the 3rd expansion-sized crop.
+        if h >= 368.0:
+            words.extend(build_row_words("DP-14", "雑排水ポンプ", h - 52.0))
+        return words
+
+    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_column_bounds",
+        lambda words, side_width: ColumnBounds(
+            x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+        ),
+    )
+    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
+    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+
+    parsed = parse_table_candidate(
+        client=object(),
+        page_image=page_image,
+        candidate=candidate,
+        table_index=1,
+        y_cluster=8.0,
+        debug_dir=tmp_path,
+        page_number=1,
+    )
+    assert "DP-14" in [row["機器番号"] for row in parsed.rows]
+    assert parsed.expand_attempts >= 3
+
+
+def test_parse_table_candidate_expands_with_y_cluster_scaled_edge_threshold(tmp_path, monkeypatch):
+    page_image = Image.new("RGB", (420, 500), color=(255, 255, 255))
+    candidate = TableCandidate(
+        bbox=(20.0, 20.0, 390.0, 280.0),
+        header_y=24.0,
+        header_text="機器番号 名称 電圧 容量",
+        categories=("code", "name", "power", "voltage"),
+    )
+
+    def build_row_words(code: str, name: str, cy: float):
+        return [
+            _wb(code, 70, cy, w=44),
+            _wb(name, 160, cy, w=84),
+            _wb("200", 250, cy, w=24),
+            _wb("3.7", 330, cy, w=24),
+        ]
+
+    def fake_ocr_table_crop(client, crop_image):
+        h = float(crop_image.height)
+        # Last data row sits ~52px above the crop bottom:
+        # fixed 28px threshold would not expand, y_cluster-scaled threshold should.
+        words = build_row_words("DP-11", "雨水排水ポンプ", h - 52.0)
+        if h >= 332.0:
+            words.extend(build_row_words("DP-14", "雑排水ポンプ", h - 88.0))
+        return words
+
+    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_column_bounds",
+        lambda words, side_width: ColumnBounds(
+            x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+        ),
+    )
+    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
+    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+
+    parsed = parse_table_candidate(
+        client=object(),
+        page_image=page_image,
+        candidate=candidate,
+        table_index=1,
+        y_cluster=20.0,
+        debug_dir=tmp_path,
+        page_number=1,
+    )
+    assert "DP-14" in [row["機器番号"] for row in parsed.rows]
+    assert parsed.expand_attempts >= 1
+
+
 def test_parse_table_candidate_does_not_expand_after_footer_stop(tmp_path, monkeypatch):
     page_image = Image.new("RGB", (420, 300), color=(255, 255, 255))
     candidate = TableCandidate(

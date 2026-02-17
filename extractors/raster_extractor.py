@@ -59,7 +59,7 @@ TABLE_DEFAULT_START_OFFSET = 24.0
 TABLE_TRAILING_NON_DATA_GAP = 1
 TABLE_BOTTOM_NEAR_EDGE_PX = 28.0
 TABLE_BOTTOM_EXPAND_STEP_PX = 36.0
-TABLE_BOTTOM_EXPAND_MAX_TRIES = 4
+TABLE_BOTTOM_EXPAND_MAX_TRIES = 6
 TABLE_BOTTOM_EXPAND_MAX_RATIO = 0.45
 TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK = 2
 TABLE_HEADER_CLUSTER_X_GAP = 180.0
@@ -1324,10 +1324,11 @@ def parse_table_candidate(
         if float(crop_bbox[3]) >= page_h:
             break
 
-        near_bottom_edge = (
-            rows_result.last_data_cluster_bottom is not None
-            and (float(crop_bbox[3]) - rows_result.last_data_cluster_bottom) <= TABLE_BOTTOM_NEAR_EDGE_PX
-        )
+        near_bottom_edge = False
+        near_edge_threshold = max(TABLE_BOTTOM_NEAR_EDGE_PX, float(y_cluster) * 3.0)
+        if rows_result.last_data_cluster_bottom is not None:
+            last_data_bottom_on_page = float(crop_bbox[1]) + rows_result.last_data_cluster_bottom
+            near_bottom_edge = (float(crop_bbox[3]) - last_data_bottom_on_page) <= near_edge_threshold
         unstable_tail = rows_result.trailing_non_data_count == TABLE_TRAILING_NON_DATA_GAP
         should_expand = rows_result.saw_data and (near_bottom_edge or unstable_tail)
         if not should_expand:
@@ -1339,7 +1340,9 @@ def parse_table_candidate(
         else:
             no_growth_streak = 0
         prev_row_count = row_count
-        if no_growth_streak >= TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK:
+        # When the last data row is still touching the crop bottom, keep extending
+        # even if row count has not increased yet; tails may appear after extra steps.
+        if no_growth_streak >= TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK and not near_bottom_edge:
             break
 
         next_bottom = min(max_bottom, float(crop_bbox[3]) + TABLE_BOTTOM_EXPAND_STEP_PX)
