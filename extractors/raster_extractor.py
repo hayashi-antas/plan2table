@@ -62,6 +62,7 @@ TABLE_BOTTOM_EXPAND_STEP_PX = 36.0
 TABLE_BOTTOM_EXPAND_MAX_TRIES = 6
 TABLE_BOTTOM_EXPAND_MAX_RATIO = 0.45
 TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK = 2
+LEGACY_TRAILING_NON_DATA_GAP = 2
 TABLE_HEADER_CLUSTER_X_GAP = 180.0
 LEGACY_FIRST_PAGES = {1, 2}
 DRAWING_NO_Y_CLUSTER = 22.0
@@ -1042,8 +1043,15 @@ def rows_from_words(
     bounds: ColumnBounds,
     y_cluster: float,
     start_y: Optional[float] = None,
+    trailing_non_data_gap: int = TABLE_TRAILING_NON_DATA_GAP,
 ) -> List[Dict[str, object]]:
-    return _rows_from_words_with_meta(words, bounds, y_cluster, start_y=start_y).rows
+    return _rows_from_words_with_meta(
+        words,
+        bounds,
+        y_cluster,
+        start_y=start_y,
+        trailing_non_data_gap=trailing_non_data_gap,
+    ).rows
 
 
 def _rows_from_words_with_meta(
@@ -1051,6 +1059,7 @@ def _rows_from_words_with_meta(
     bounds: ColumnBounds,
     y_cluster: float,
     start_y: Optional[float] = None,
+    trailing_non_data_gap: int = TABLE_TRAILING_NON_DATA_GAP,
 ) -> RowsFromWordsResult:
     if start_y is None:
         start_y = bounds.header_y + DATA_START_OFFSET
@@ -1113,13 +1122,13 @@ def _rows_from_words_with_meta(
         if is_header_row(normalized):
             if saw_data:
                 trailing_non_data_count += 1
-                if trailing_non_data_count > TABLE_TRAILING_NON_DATA_GAP:
+                if trailing_non_data_count > trailing_non_data_gap:
                     break
             continue
         if not is_data_row(row):
             if saw_data:
                 trailing_non_data_count += 1
-                if trailing_non_data_count > TABLE_TRAILING_NON_DATA_GAP:
+                if trailing_non_data_count > trailing_non_data_gap:
                     break
             continue
 
@@ -1445,7 +1454,12 @@ def legacy_side_split_extract_page(
             right_side_words = words
             right_side_size = side_image.size
         bounds = infer_column_bounds(words, side_image.width)
-        rows = rows_from_words(words, bounds, y_cluster)
+        rows = rows_from_words(
+            words,
+            bounds,
+            y_cluster,
+            trailing_non_data_gap=LEGACY_TRAILING_NON_DATA_GAP,
+        )
         for row in rows:
             row["side"] = side
             page_rows.append(row)

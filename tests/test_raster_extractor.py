@@ -271,6 +271,26 @@ def test_rows_from_words_stops_after_two_non_data_clusters():
     assert rows[0]["機器番号"] == "F-EV-1"
 
 
+def test_rows_from_words_allows_larger_trailing_gap_when_configured():
+    words = [
+        _wb("F-EV-1", 70, 60, w=44),
+        _wb("排風機", 160, 60, w=32),
+        _wb("200", 250, 60, w=24),
+        _wb("0.425", 330, 60, w=32),
+        _wb("注記", 160, 82, w=28),
+        _wb("備考", 160, 104, w=28),
+        _wb("F-EV-2", 70, 126, w=44),
+        _wb("排風機", 160, 126, w=32),
+        _wb("200", 250, 126, w=24),
+        _wb("0.55", 330, 126, w=28),
+    ]
+    bounds = ColumnBounds(x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0)
+    rows = rows_from_words(words, bounds, y_cluster=8.0, start_y=40.0, trailing_non_data_gap=2)
+    assert len(rows) == 2
+    assert rows[0]["機器番号"] == "F-EV-1"
+    assert rows[1]["機器番号"] == "F-EV-2"
+
+
 def test_rows_from_words_rejects_location_labels_without_values():
     words = [
         _wb("PAC-15", 70, 60, w=44),
