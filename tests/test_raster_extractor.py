@@ -647,6 +647,20 @@ def test_normalize_row_cells_strips_three_phase_voltage_and_capacity_tail():
     assert row["容量(kW)"] == "9.0"
 
 
+def test_normalize_row_cells_normalizes_pump_name_with_trailing_noise():
+    row = normalize_row_cells(
+        {"機器番号": "DP-4", "機器名称": "湧水ポンプ(笑", "電圧(V)": "3φ200V", "容量(kW)": "2.2"}
+    )
+    assert row["機器名称"] == "清水ポンプ"
+
+
+def test_normalize_row_cells_strips_leading_symbol_from_name():
+    row = normalize_row_cells(
+        {"機器番号": "DP-12", "機器名称": ".汚泥引抜ポンプ", "電圧(V)": "3φ200V", "容量(kW)": "5.5"}
+    )
+    assert row["機器名称"] == "汚泥引抜ポンプ"
+
+
 def test_extract_raster_pdf_uses_legacy_first_for_page_one(tmp_path, monkeypatch):
     input_pdf = tmp_path / "input.pdf"
     input_pdf.write_bytes(b"%PDF-1.4\n")

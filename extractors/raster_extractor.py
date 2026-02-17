@@ -926,6 +926,9 @@ def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
             code = ""
             code_upper = ""
 
+    # OCRノイズで機器名称の先頭に記号が混入するケースを除去
+    name = re.sub(r"^[\.,，．。・･·:：;；]+", "", name)
+
     if name.startswith("-"):
         name = name.lstrip("-")
 
@@ -939,7 +942,8 @@ def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
             name = "空調室内機"
 
     name = name.replace("室內", "室内")
-    if name == "湧水ポンプ":
+    if name.startswith("湧水ポンプ") or name.startswith("清水ポンプ"):
+        # OCRノイズで末尾に余分な文字が混ざるケースを正規化
         name = "清水ポンプ"
 
     volt = normalize_voltage_text(volt)
