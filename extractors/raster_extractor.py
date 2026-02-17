@@ -47,6 +47,7 @@ TABLE_HEADER_X_MARGIN = 60.0
 TABLE_HEADER_RIGHT_MARGIN = 360.0
 TABLE_HEADER_TOP_MARGIN = 24.0
 TABLE_MAX_SCAN_HEIGHT = 360.0
+TABLE_SCAN_BOTTOM_TOLERANCE = 24.0
 TABLE_MIN_WIDTH = 140.0
 TABLE_MIN_HEIGHT = 45.0
 TABLE_MERGE_IOU = 0.55
@@ -55,6 +56,13 @@ TABLE_NEARBY_HEADER_X = 45.0
 TABLE_MIN_START_OFFSET = 10.0
 TABLE_MAX_START_OFFSET = 36.0
 TABLE_DEFAULT_START_OFFSET = 24.0
+TABLE_TRAILING_NON_DATA_GAP = 1
+TABLE_BOTTOM_NEAR_EDGE_PX = 28.0
+TABLE_BOTTOM_EXPAND_STEP_PX = 36.0
+TABLE_BOTTOM_EXPAND_MAX_TRIES = 4
+TABLE_BOTTOM_EXPAND_MAX_RATIO = 0.45
+TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK = 2
+TABLE_HEADER_CLUSTER_X_GAP = 180.0
 LEGACY_FIRST_PAGES = {1, 2}
 DRAWING_NO_Y_CLUSTER = 22.0
 DRAWING_NO_LABEL_TO_VALUE_MAX_OFFSET = 180.0
@@ -156,6 +164,17 @@ class TableParseResult:
     table_index: int
     candidate: TableCandidate
     rows: List[Dict[str, object]]
+    expand_attempts: int = 0
+    final_crop_bottom: float = 0.0
+
+
+@dataclass
+class RowsFromWordsResult:
+    rows: List[Dict[str, object]]
+    saw_data: bool
+    last_data_cluster_bottom: Optional[float]
+    trailing_non_data_count: int
+    stopped_by_footer: bool
 
 
 def parse_args() -> argparse.Namespace:
@@ -516,18 +535,19 @@ def detect_header_anchors(words: List[WordBox], y_cluster: float = HEADER_Y_CLUS
     clusters = cluster_by_y(words, y_cluster)
     anchors: List[HeaderAnchor] = []
     for cluster in clusters:
-        text = row_text(cluster)
-        categories = _header_categories_from_text(text)
-        if len(categories) < TABLE_HEADER_MIN_CATEGORIES:
-            continue
-        anchors.append(
-            HeaderAnchor(
-                row_y=cluster.row_y,
-                bbox=_cluster_bbox(cluster),
-                categories=tuple(sorted(categories)),
-                text=text,
+        for segment in _split_cluster_by_x_gap(cluster, TABLE_HEADER_CLUSTER_X_GAP):
+            text = row_text(segment)
+            categories = _header_categories_from_text(text)
+            if len(categories) < TABLE_HEADER_MIN_CATEGORIES:
+                continue
+            anchors.append(
+                HeaderAnchor(
+                    row_y=segment.row_y,
+                    bbox=_cluster_bbox(segment),
+                    categories=tuple(sorted(categories)),
+                    text=text,
+                )
             )
-        )
 
     anchors.sort(key=lambda a: (a.row_y, a.bbox[0]))
     deduped: List[HeaderAnchor] = []
@@ -557,11 +577,16 @@ def _infer_candidate_bbox(
     right = min(float(frame_w), x1 + TABLE_HEADER_RIGHT_MARGIN)
     top = max(0.0, y0 - TABLE_HEADER_TOP_MARGIN)
     max_bottom = min(float(frame_h), y1 + TABLE_MAX_SCAN_HEIGHT)
+    scan_bottom = min(float(frame_h), max_bottom + TABLE_SCAN_BOTTOM_TOLERANCE)
     nearby = [
         w
         for w in words
         if (left - 20.0) <= w.cx <= (right + 20.0)
-        and (y0 - 10.0) <= w.cy <= max_bottom
+        and (y0 - 10.0) <= w.cy
+        and (
+            w.cy <= scan_bottom
+            or (w.bbox[1] <= scan_bottom <= w.bbox[3])
+        )
     ]
     if nearby:
         left = max(0.0, min(left, min(w.bbox[0] for w in nearby) - 12.0))
@@ -943,6 +968,10 @@ def is_data_row(row: Dict[str, str]) -> bool:
     volt = normalize_text(row["電圧(V)"])
     power = normalize_text(row["容量(kW)"])
     combined = (code + name + volt + power).lower()
+    has_code = bool(re.search(r"[A-Z]{1,4}-[A-Z0-9]{1,6}", code))
+    has_name = bool(name)
+    has_voltage_num = bool(re.search(r"\d", volt))
+    has_power_num = bool(re.search(r"\d", power))
 
     if not combined:
         return False
@@ -951,18 +980,50 @@ def is_data_row(row: Dict[str, str]) -> bool:
     if any(kw in combined for kw in ["盤姿図", "主開閉器", "トリップ", "ロック連動"]):
         return False
 
-    if re.search(r"[A-Z]{1,4}-[A-Z0-9]{1,6}", code):
+    # Guard against plan/location labels (e.g. SL-6, L-H2) with no table values.
+    if has_code and not (has_name or has_voltage_num or has_power_num):
+        return False
+    # Guard against room labels without numeric table values.
+    if has_name and not has_code and not has_voltage_num and not has_power_num:
+        return False
+
+    if has_code and (has_name or has_voltage_num or has_power_num):
         return True
-    if any(k in name for k in ROW_FILTER_NAME_KEYWORDS):
+    if any(k in name for k in ROW_FILTER_NAME_KEYWORDS) and (has_voltage_num or has_power_num):
         return True
     if "同上用フロートスイッチ" in name or "操作電源" in name:
         return True
-    if name and re.search(r"\d", volt):
+    if has_name and has_voltage_num:
         return True
-    if name and re.search(r"\d", power):
+    if has_name and has_power_num:
         return True
 
     return False
+
+
+def _split_cluster_by_x_gap(cluster: RowCluster, max_gap: float) -> List[RowCluster]:
+    if not cluster.words:
+        return []
+    words = sorted(cluster.words, key=lambda w: w.cx)
+    grouped: List[List[WordBox]] = [[words[0]]]
+    prev = words[0]
+    for word in words[1:]:
+        gap = word.bbox[0] - prev.bbox[2]
+        if gap > max_gap:
+            grouped.append([word])
+        else:
+            grouped[-1].append(word)
+        prev = word
+
+    split_clusters: List[RowCluster] = []
+    for group in grouped:
+        split_clusters.append(
+            RowCluster(
+                row_y=sum(w.cy for w in group) / max(1, len(group)),
+                words=group,
+            )
+        )
+    return split_clusters
 
 
 def infer_dynamic_data_start_y(words: List[WordBox], header_y: float) -> float:
@@ -982,6 +1043,15 @@ def rows_from_words(
     y_cluster: float,
     start_y: Optional[float] = None,
 ) -> List[Dict[str, object]]:
+    return _rows_from_words_with_meta(words, bounds, y_cluster, start_y=start_y).rows
+
+
+def _rows_from_words_with_meta(
+    words: List[WordBox],
+    bounds: ColumnBounds,
+    y_cluster: float,
+    start_y: Optional[float] = None,
+) -> RowsFromWordsResult:
     if start_y is None:
         start_y = bounds.header_y + DATA_START_OFFSET
     all_clusters = cluster_by_y(words, y_cluster)
@@ -999,6 +1069,10 @@ def rows_from_words(
 
     rows: List[Dict[str, object]] = []
     row_idx = 1
+    saw_data = False
+    last_data_cluster_bottom: Optional[float] = None
+    trailing_non_data_count = 0
+    stopped_by_footer = False
     for cluster in clusters:
         cols: Dict[str, List[WordBox]] = {c: [] for c in CORE_COLUMNS}
         for w in cluster.words:
@@ -1034,12 +1108,24 @@ def rows_from_words(
 
         normalized = normalize_text("".join(row.values()))
         if is_footer_row(normalized):
+            stopped_by_footer = True
             break
         if is_header_row(normalized):
+            if saw_data:
+                trailing_non_data_count += 1
+                if trailing_non_data_count > TABLE_TRAILING_NON_DATA_GAP:
+                    break
             continue
         if not is_data_row(row):
+            if saw_data:
+                trailing_non_data_count += 1
+                if trailing_non_data_count > TABLE_TRAILING_NON_DATA_GAP:
+                    break
             continue
 
+        saw_data = True
+        trailing_non_data_count = 0
+        last_data_cluster_bottom = max(w.bbox[3] for w in cluster.words)
         rows.append(
             {
                 "row_index": row_idx,
@@ -1049,7 +1135,13 @@ def rows_from_words(
         )
         row_idx += 1
 
-    return rows
+    return RowsFromWordsResult(
+        rows=rows,
+        saw_data=saw_data,
+        last_data_cluster_bottom=last_data_cluster_bottom,
+        trailing_non_data_count=trailing_non_data_count,
+        stopped_by_footer=stopped_by_footer,
+    )
 
 
 def save_debug_image(
@@ -1160,30 +1252,121 @@ def parse_table_candidate(
     page_number: int,
 ) -> TableParseResult:
     x0, y0, x1, y1 = candidate.bbox
-    crop_bbox = (
-        int(max(0.0, x0)),
-        int(max(0.0, y0)),
-        int(min(float(page_image.width), x1)),
-        int(min(float(page_image.height), y1)),
-    )
-    crop_image = page_image.crop(crop_bbox)
-    words = ocr_table_crop(client, crop_image)
-    if not words:
-        return TableParseResult(table_index=table_index, candidate=candidate, rows=[])
+    page_w = float(page_image.width)
+    page_h = float(page_image.height)
+    left = max(0.0, x0)
+    top = max(0.0, y0)
+    right = min(page_w, x1)
+    initial_bottom = min(page_h, y1)
+    initial_height = max(1.0, y1 - y0)
+    max_bottom = min(page_h, y1 + (initial_height * TABLE_BOTTOM_EXPAND_MAX_RATIO))
 
-    bounds = infer_column_bounds(words, crop_image.width)
-    start_y = infer_dynamic_data_start_y(words, bounds.header_y)
-    rows = rows_from_words(words, bounds, y_cluster, start_y=start_y)
-    for row in rows:
-        row["row_y"] = round(float(row["row_y"]) + float(crop_bbox[1]), 2)
-    save_debug_image(
-        crop_image,
-        words,
-        bounds,
-        debug_dir / f"p{page_number}_table{table_index}.png",
-        data_start_y=start_y,
+    current_bottom = initial_bottom
+    expand_attempts = 0
+    no_growth_streak = 0
+    prev_row_count: Optional[int] = None
+
+    final_crop_bbox = (
+        int(left),
+        int(top),
+        int(right),
+        int(initial_bottom),
     )
-    return TableParseResult(table_index=table_index, candidate=candidate, rows=rows)
+    final_crop_image: Optional[Image.Image] = None
+    final_words: List[WordBox] = []
+    final_bounds: Optional[ColumnBounds] = None
+    final_start_y: Optional[float] = None
+    rows_result = RowsFromWordsResult(
+        rows=[],
+        saw_data=False,
+        last_data_cluster_bottom=None,
+        trailing_non_data_count=0,
+        stopped_by_footer=False,
+    )
+
+    for attempt in range(TABLE_BOTTOM_EXPAND_MAX_TRIES + 1):
+        crop_bbox = (
+            int(left),
+            int(top),
+            int(right),
+            int(min(page_h, current_bottom)),
+        )
+        if crop_bbox[2] <= crop_bbox[0] or crop_bbox[3] <= crop_bbox[1]:
+            break
+        crop_image = page_image.crop(crop_bbox)
+        words = ocr_table_crop(client, crop_image)
+
+        bounds: Optional[ColumnBounds] = None
+        start_y: Optional[float] = None
+        if words:
+            bounds = infer_column_bounds(words, crop_image.width)
+            start_y = infer_dynamic_data_start_y(words, bounds.header_y)
+            rows_result = _rows_from_words_with_meta(words, bounds, y_cluster, start_y=start_y)
+        else:
+            rows_result = RowsFromWordsResult(
+                rows=[],
+                saw_data=False,
+                last_data_cluster_bottom=None,
+                trailing_non_data_count=0,
+                stopped_by_footer=False,
+            )
+
+        final_crop_bbox = crop_bbox
+        final_crop_image = crop_image
+        final_words = words
+        final_bounds = bounds
+        final_start_y = start_y
+
+        if rows_result.stopped_by_footer:
+            break
+        if attempt >= TABLE_BOTTOM_EXPAND_MAX_TRIES:
+            break
+        if float(crop_bbox[3]) >= page_h:
+            break
+
+        near_bottom_edge = (
+            rows_result.last_data_cluster_bottom is not None
+            and (float(crop_bbox[3]) - rows_result.last_data_cluster_bottom) <= TABLE_BOTTOM_NEAR_EDGE_PX
+        )
+        unstable_tail = rows_result.trailing_non_data_count == TABLE_TRAILING_NON_DATA_GAP
+        should_expand = rows_result.saw_data and (near_bottom_edge or unstable_tail)
+        if not should_expand:
+            break
+
+        row_count = len(rows_result.rows)
+        if prev_row_count is not None and row_count <= prev_row_count:
+            no_growth_streak += 1
+        else:
+            no_growth_streak = 0
+        prev_row_count = row_count
+        if no_growth_streak >= TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK:
+            break
+
+        next_bottom = min(max_bottom, float(crop_bbox[3]) + TABLE_BOTTOM_EXPAND_STEP_PX)
+        if next_bottom <= float(crop_bbox[3]):
+            break
+        current_bottom = next_bottom
+        expand_attempts += 1
+
+    rows = list(rows_result.rows)
+    for row in rows:
+        row["row_y"] = round(float(row["row_y"]) + float(final_crop_bbox[1]), 2)
+
+    if final_crop_image is not None and final_words and final_bounds is not None:
+        save_debug_image(
+            final_crop_image,
+            final_words,
+            final_bounds,
+            debug_dir / f"p{page_number}_table{table_index}.png",
+            data_start_y=final_start_y,
+        )
+    return TableParseResult(
+        table_index=table_index,
+        candidate=candidate,
+        rows=rows,
+        expand_attempts=expand_attempts,
+        final_crop_bottom=float(final_crop_bbox[3]),
+    )
 
 
 def extract_page_rows_v3(

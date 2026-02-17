@@ -5,6 +5,7 @@ from PIL import Image
 
 from extractors.raster_extractor import (
     ColumnBounds,
+    TableCandidate,
     WordBox,
     detect_table_candidates_from_page_words,
     extract_raster_pdf,
@@ -12,6 +13,7 @@ from extractors.raster_extractor import (
     infer_column_bounds,
     infer_dynamic_data_start_y,
     normalize_row_cells,
+    parse_table_candidate,
     rows_from_words,
     resolve_target_pages,
     resolve_drawing_number,
@@ -155,6 +157,44 @@ def test_detect_table_candidates_with_split_header_words():
     assert len(candidates) == 1
 
 
+def test_detect_table_candidates_ignores_far_words_on_same_y_row():
+    words = [
+        _wb("機器記号", 80, 80, w=48),
+        _wb("機器名称", 170, 80, w=56),
+        _wb("電圧", 260, 80, w=28),
+        _wb("容量(kW)", 340, 80, w=52),
+        _wb("PAC-15", 80, 102, w=44),
+        _wb("空調室外機", 170, 102, w=56),
+        _wb("3φ200V", 260, 102, w=46),
+        _wb("9.0", 340, 102, w=24),
+        # Unrelated words at similar y should not stretch header bbox horizontally.
+        _wb("1102", 980, 80, w=32),
+        _wb("L-H2", 1040, 102, w=34),
+    ]
+    candidates = detect_table_candidates_from_page_words(words, frame_size=(1200, 500))
+    assert len(candidates) == 1
+    assert candidates[0].bbox[2] < 900.0
+
+
+def test_detect_table_candidates_keeps_tail_row_near_scan_boundary():
+    words = [
+        _wb("機器番号", 80, 80, w=48),
+        _wb("名称", 150, 80, w=28),
+        _wb("電圧", 210, 80, w=28),
+        _wb("容量(kW)", 290, 80, w=52),
+        _wb("EF-1", 80, 100, w=34),
+        _wb("排風機", 150, 100, w=30),
+        _wb("200", 210, 100, w=24),
+        _wb("0.75", 290, 100, w=28),
+        # This tail row sits just below the scan-height limit and should be recovered by bottom tolerance.
+        _wb("F-EV-1", 86, 454, w=44, h=8),
+        _wb("0.425", 290, 454, w=30, h=8),
+    ]
+    candidates = detect_table_candidates_from_page_words(words, frame_size=(800, 900))
+    assert len(candidates) == 1
+    assert candidates[0].bbox[3] >= 458.0
+
+
 def test_dynamic_start_extracts_small_single_row_table():
     words = [
         _wb("機器番号", 70, 22, w=48),
@@ -210,6 +250,137 @@ def test_rows_from_words_ignores_tall_digit_noise_in_capacity():
     assert len(rows) == 1
     assert rows[0]["機器番号"] == "F-B1-1"
     assert rows[0]["容量(kW)"] == "2.2"
+
+
+def test_rows_from_words_stops_after_two_non_data_clusters():
+    words = [
+        _wb("F-EV-1", 70, 60, w=44),
+        _wb("排風機", 160, 60, w=32),
+        _wb("200", 250, 60, w=24),
+        _wb("0.425", 330, 60, w=32),
+        _wb("注記", 160, 82, w=28),
+        _wb("備考", 160, 104, w=28),
+        _wb("F-EV-2", 70, 126, w=44),
+        _wb("排風機", 160, 126, w=32),
+        _wb("200", 250, 126, w=24),
+        _wb("0.55", 330, 126, w=28),
+    ]
+    bounds = ColumnBounds(x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0)
+    rows = rows_from_words(words, bounds, y_cluster=8.0, start_y=40.0)
+    assert len(rows) == 1
+    assert rows[0]["機器番号"] == "F-EV-1"
+
+
+def test_rows_from_words_rejects_location_labels_without_values():
+    words = [
+        _wb("PAC-15", 70, 60, w=44),
+        _wb("空調室外機", 160, 60, w=52),
+        _wb("3φ200V", 250, 60, w=46),
+        _wb("9.0", 330, 60, w=24),
+        _wb("EPS.AL弁室", 160, 82, w=84),
+        _wb("SL-6", 70, 104, w=34),
+        _wb("L-H2", 70, 126, w=34),
+    ]
+    bounds = ColumnBounds(x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0)
+    rows = rows_from_words(words, bounds, y_cluster=8.0, start_y=40.0)
+    assert len(rows) == 1
+    assert rows[0]["機器番号"] == "PAC-15"
+    assert rows[0]["機器名称"] == "空調室外機"
+
+
+def test_parse_table_candidate_expands_bottom_when_tail_near_edge(tmp_path, monkeypatch):
+    page_image = Image.new("RGB", (420, 300), color=(255, 255, 255))
+    candidate = TableCandidate(
+        bbox=(20.0, 20.0, 390.0, 100.0),
+        header_y=24.0,
+        header_text="機器番号 名称 電圧 容量",
+        categories=("code", "name", "power", "voltage"),
+    )
+    short_rows_words = [
+        _wb("F-EV-1", 70, 74, w=44),
+        _wb("排風機", 160, 74, w=32),
+        _wb("200", 250, 74, w=24),
+        _wb("0.425", 330, 74, w=32),
+    ]
+    expanded_rows_words = short_rows_words + [
+        _wb("F-EV-2", 70, 104, w=44),
+        _wb("排風機", 160, 104, w=32),
+        _wb("200", 250, 104, w=24),
+        _wb("0.55", 330, 104, w=28),
+    ]
+
+    def fake_ocr_table_crop(client, crop_image):
+        if crop_image.height <= 80:
+            return short_rows_words
+        return expanded_rows_words
+
+    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_column_bounds",
+        lambda words, side_width: ColumnBounds(
+            x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+        ),
+    )
+    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
+    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+
+    parsed = parse_table_candidate(
+        client=object(),
+        page_image=page_image,
+        candidate=candidate,
+        table_index=1,
+        y_cluster=8.0,
+        debug_dir=tmp_path,
+        page_number=1,
+    )
+    assert [row["機器番号"] for row in parsed.rows] == ["F-EV-1", "F-EV-2"]
+    assert parsed.expand_attempts >= 1
+    assert parsed.final_crop_bottom > 100.0
+
+
+def test_parse_table_candidate_does_not_expand_after_footer_stop(tmp_path, monkeypatch):
+    page_image = Image.new("RGB", (420, 300), color=(255, 255, 255))
+    candidate = TableCandidate(
+        bbox=(20.0, 20.0, 390.0, 100.0),
+        header_y=24.0,
+        header_text="機器番号 名称 電圧 容量",
+        categories=("code", "name", "power", "voltage"),
+    )
+    words_with_footer = [
+        _wb("F-EV-1", 70, 66, w=44),
+        _wb("排風機", 160, 66, w=32),
+        _wb("200", 250, 66, w=24),
+        _wb("0.425", 330, 66, w=32),
+        _wb("図面", 160, 78, w=28),
+    ]
+    ocr_calls = {"count": 0}
+
+    def fake_ocr_table_crop(client, crop_image):
+        ocr_calls["count"] += 1
+        return words_with_footer
+
+    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_column_bounds",
+        lambda words, side_width: ColumnBounds(
+            x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+        ),
+    )
+    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
+    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+
+    parsed = parse_table_candidate(
+        client=object(),
+        page_image=page_image,
+        candidate=candidate,
+        table_index=1,
+        y_cluster=6.0,
+        debug_dir=tmp_path,
+        page_number=1,
+    )
+    assert [row["機器番号"] for row in parsed.rows] == ["F-EV-1"]
+    assert parsed.expand_attempts == 0
+    assert ocr_calls["count"] == 1
 
 
 def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
