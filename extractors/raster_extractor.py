@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 try:
     from google.cloud import vision
@@ -32,6 +32,7 @@ import pdfplumber
 CORE_COLUMNS = ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]
 DRAWING_NUMBER_COLUMN = "図面番号"
 OUTPUT_COLUMNS = CORE_COLUMNS + [DRAWING_NUMBER_COLUMN]
+RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
 SIDE_SPLITS = {
     "L": (0.0, 0.0, 0.5, 1.0),
@@ -41,6 +42,20 @@ SIDE_SPLITS = {
 DEFAULT_CENTER_RATIOS = [0.24, 0.35, 0.40, 0.44]
 HEADER_Y_CLUSTER = 22.0
 DATA_START_OFFSET = 140.0
+TABLE_HEADER_MIN_CATEGORIES = 3
+TABLE_HEADER_X_MARGIN = 60.0
+TABLE_HEADER_RIGHT_MARGIN = 360.0
+TABLE_HEADER_TOP_MARGIN = 24.0
+TABLE_MAX_SCAN_HEIGHT = 360.0
+TABLE_MIN_WIDTH = 140.0
+TABLE_MIN_HEIGHT = 45.0
+TABLE_MERGE_IOU = 0.55
+TABLE_NEARBY_HEADER_Y = 14.0
+TABLE_NEARBY_HEADER_X = 45.0
+TABLE_MIN_START_OFFSET = 10.0
+TABLE_MAX_START_OFFSET = 36.0
+TABLE_DEFAULT_START_OFFSET = 24.0
+LEGACY_FIRST_PAGES = {1, 2}
 DRAWING_NO_Y_CLUSTER = 22.0
 DRAWING_NO_LABEL_TO_VALUE_MAX_OFFSET = 180.0
 DRAWING_NO_LABEL_X_TOLERANCE_LEFT = 120.0
@@ -118,6 +133,29 @@ class ColumnBounds:
     b34: float
     x_max: float
     header_y: float
+
+
+@dataclass
+class HeaderAnchor:
+    row_y: float
+    bbox: Tuple[float, float, float, float]
+    categories: Tuple[str, ...]
+    text: str
+
+
+@dataclass
+class TableCandidate:
+    bbox: Tuple[float, float, float, float]
+    header_y: float
+    header_text: str
+    categories: Tuple[str, ...]
+
+
+@dataclass
+class TableParseResult:
+    table_index: int
+    candidate: TableCandidate
+    rows: List[Dict[str, object]]
 
 
 def parse_args() -> argparse.Namespace:
@@ -408,6 +446,207 @@ def header_score(cluster: RowCluster) -> int:
     return score
 
 
+def _header_categories_from_text(text: str) -> Set[str]:
+    normalized = normalize_text(text).lower().replace(" ", "").replace("　", "")
+    categories: Set[str] = set()
+
+    if "機器番号" in normalized:
+        categories.add("code")
+    if "機器" in normalized and ("番号" in normalized or "記号" in normalized):
+        categories.add("code")
+    if ("機" in normalized and "器" in normalized and "番" in normalized and "号" in normalized):
+        categories.add("code")
+
+    if "名称" in normalized or ("名" in normalized and "称" in normalized):
+        categories.add("name")
+
+    if "電圧" in normalized or ("電" in normalized and "圧" in normalized):
+        categories.add("voltage")
+    if "(v" in normalized or "v)" in normalized:
+        categories.add("voltage")
+
+    if "容量" in normalized or ("容" in normalized and "量" in normalized):
+        categories.add("power")
+    if "kw" in normalized or "(kw" in normalized:
+        categories.add("power")
+    return categories
+
+
+def _cluster_bbox(cluster: RowCluster) -> Tuple[float, float, float, float]:
+    xs0 = [w.bbox[0] for w in cluster.words]
+    ys0 = [w.bbox[1] for w in cluster.words]
+    xs1 = [w.bbox[2] for w in cluster.words]
+    ys1 = [w.bbox[3] for w in cluster.words]
+    return (min(xs0), min(ys0), max(xs1), max(ys1))
+
+
+def _bbox_intersection(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    w = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+    h = max(0.0, min(ay1, by1) - max(ay0, by0))
+    return w * h
+
+
+def _bbox_area(b: Tuple[float, float, float, float]) -> float:
+    return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+
+
+def _bbox_iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    inter = _bbox_intersection(a, b)
+    if inter <= 0:
+        return 0.0
+    union = _bbox_area(a) + _bbox_area(b) - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+def _bbox_union(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+
+
+def _x_overlap_ratio(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    base = max(1.0, min(a[2] - a[0], b[2] - b[0]))
+    return w / base
+
+
+def detect_header_anchors(words: List[WordBox], y_cluster: float = HEADER_Y_CLUSTER) -> List[HeaderAnchor]:
+    clusters = cluster_by_y(words, y_cluster)
+    anchors: List[HeaderAnchor] = []
+    for cluster in clusters:
+        text = row_text(cluster)
+        categories = _header_categories_from_text(text)
+        if len(categories) < TABLE_HEADER_MIN_CATEGORIES:
+            continue
+        anchors.append(
+            HeaderAnchor(
+                row_y=cluster.row_y,
+                bbox=_cluster_bbox(cluster),
+                categories=tuple(sorted(categories)),
+                text=text,
+            )
+        )
+
+    anchors.sort(key=lambda a: (a.row_y, a.bbox[0]))
+    deduped: List[HeaderAnchor] = []
+    for anchor in anchors:
+        if not deduped:
+            deduped.append(anchor)
+            continue
+        prev = deduped[-1]
+        same_row = abs(anchor.row_y - prev.row_y) <= TABLE_NEARBY_HEADER_Y
+        same_x = abs(anchor.bbox[0] - prev.bbox[0]) <= TABLE_NEARBY_HEADER_X
+        if same_row and same_x:
+            prev_score = len(prev.categories)
+            cur_score = len(anchor.categories)
+            if cur_score > prev_score or (cur_score == prev_score and len(anchor.text) > len(prev.text)):
+                deduped[-1] = anchor
+            continue
+        deduped.append(anchor)
+    return deduped
+
+
+def _infer_candidate_bbox(
+    anchor: HeaderAnchor, words: List[WordBox], frame_size: Tuple[int, int]
+) -> Tuple[float, float, float, float]:
+    frame_w, frame_h = frame_size
+    x0, y0, x1, y1 = anchor.bbox
+    left = max(0.0, x0 - TABLE_HEADER_X_MARGIN)
+    right = min(float(frame_w), x1 + TABLE_HEADER_RIGHT_MARGIN)
+    top = max(0.0, y0 - TABLE_HEADER_TOP_MARGIN)
+    max_bottom = min(float(frame_h), y1 + TABLE_MAX_SCAN_HEIGHT)
+    nearby = [
+        w
+        for w in words
+        if (left - 20.0) <= w.cx <= (right + 20.0)
+        and (y0 - 10.0) <= w.cy <= max_bottom
+    ]
+    if nearby:
+        left = max(0.0, min(left, min(w.bbox[0] for w in nearby) - 12.0))
+        right = min(float(frame_w), max(right, max(w.bbox[2] for w in nearby) + 12.0))
+        bottom = min(float(frame_h), max(max(w.bbox[3] for w in nearby) + 20.0, y1 + 80.0))
+    else:
+        bottom = min(float(frame_h), y1 + 220.0)
+    bottom = max(bottom, y1 + TABLE_MIN_HEIGHT)
+    return (left, top, right, bottom)
+
+
+def _merge_close_candidates(candidates: List[TableCandidate]) -> List[TableCandidate]:
+    merged: List[TableCandidate] = []
+    for candidate in sorted(candidates, key=lambda c: (c.header_y, c.bbox[0])):
+        if not merged:
+            merged.append(candidate)
+            continue
+        last = merged[-1]
+        near_header = (
+            abs(candidate.header_y - last.header_y) <= TABLE_NEARBY_HEADER_Y
+            and abs(candidate.bbox[0] - last.bbox[0]) <= TABLE_NEARBY_HEADER_X
+        )
+        overlap = _bbox_iou(candidate.bbox, last.bbox) >= TABLE_MERGE_IOU
+        if near_header or overlap:
+            union_bbox = _bbox_union(candidate.bbox, last.bbox)
+            preferred_text = candidate.header_text if len(candidate.header_text) > len(last.header_text) else last.header_text
+            merged[-1] = TableCandidate(
+                bbox=union_bbox,
+                header_y=min(candidate.header_y, last.header_y),
+                header_text=preferred_text,
+                categories=tuple(sorted(set(candidate.categories) | set(last.categories))),
+            )
+            continue
+        merged.append(candidate)
+    return merged
+
+
+def detect_table_candidates_from_page_words(
+    words: List[WordBox], frame_size: Tuple[int, int], y_cluster: float = HEADER_Y_CLUSTER
+) -> List[TableCandidate]:
+    anchors = detect_header_anchors(words, y_cluster=y_cluster)
+    if not anchors:
+        return []
+
+    candidates: List[TableCandidate] = []
+    for anchor in anchors:
+        bbox = _infer_candidate_bbox(anchor, words, frame_size)
+        if (bbox[2] - bbox[0]) < TABLE_MIN_WIDTH:
+            continue
+        if (bbox[3] - bbox[1]) < TABLE_MIN_HEIGHT:
+            continue
+        candidates.append(
+            TableCandidate(
+                bbox=bbox,
+                header_y=anchor.row_y,
+                header_text=anchor.text,
+                categories=anchor.categories,
+            )
+        )
+    if not candidates:
+        return []
+
+    candidates = _merge_close_candidates(candidates)
+    for idx, base in enumerate(candidates):
+        bx0, by0, bx1, by1 = base.bbox
+        next_top = by1
+        for later in candidates[idx + 1:]:
+            if later.header_y <= base.header_y:
+                continue
+            if _x_overlap_ratio(base.bbox, later.bbox) < 0.2:
+                continue
+            candidate_top = later.bbox[1]
+            if candidate_top < next_top:
+                next_top = candidate_top
+        if next_top < by1:
+            clipped = (bx0, by0, bx1, max(by0 + TABLE_MIN_HEIGHT, next_top - 6.0))
+            candidates[idx] = TableCandidate(
+                bbox=clipped,
+                header_y=base.header_y,
+                header_text=base.header_text,
+                categories=base.categories,
+            )
+    return sorted(candidates, key=lambda c: (c.header_y, c.bbox[0]))
+
+
 def median_or_none(values: List[float]) -> Optional[float]:
     if not values:
         return None
@@ -500,6 +739,18 @@ def infer_column_bounds(words: List[WordBox], side_width: int) -> ColumnBounds:
             pick="min",
         )
 
+    c5 = find_x(
+        lambda t: (
+            "配管" in t
+            or "配線" in t
+            or "サイズ" in t
+            or "size" in t
+            or t in {"配", "線", "サ", "ズ"}
+        ),
+        x_min=(c4 or 0) + 30,
+        pick="min",
+    )
+
     centers = [c1, c2, c3, c4]
     for i, default_ratio in enumerate(DEFAULT_CENTER_RATIOS):
         if centers[i] is None:
@@ -513,11 +764,16 @@ def infer_column_bounds(words: List[WordBox], side_width: int) -> ColumnBounds:
     if c4f <= c3f + 20:
         c4f = c3f + 80
 
-    return build_bounds_from_centers(
+    bounds = build_bounds_from_centers(
         [c1f, c2f, c3f, c4f],
         header_y=best.row_y,
         side_width=side_width,
     )
+    if c5 is not None and float(c5) > (c4f + 35.0):
+        right_guard = (c4f + float(c5)) / 2.0
+        if right_guard > bounds.b34 + 15.0:
+            bounds.x_max = min(bounds.x_max, right_guard)
+    return bounds
 
 
 def build_bounds_from_centers(
@@ -568,8 +824,13 @@ def contains_japanese(text: str) -> bool:
 def normalize_power_text(power: str) -> str:
     power_norm = normalize_text(power).replace(" ", "").replace("　", "")
     power_norm = power_norm.replace(",", "")
+    if not power_norm:
+        return ""
     if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", power_norm):
-        return power_norm
+        first_number = re.search(r"[+-]?\d+(?:\.\d+)?", power_norm)
+        if first_number is None:
+            return ""
+        power_norm = first_number.group(0)
     if "." not in power_norm:
         return power_norm
 
@@ -587,6 +848,27 @@ def normalize_power_text(power: str) -> str:
     if "." in rounded_text:
         rounded_text = rounded_text.rstrip("0").rstrip(".")
     return rounded_text
+
+
+def normalize_voltage_text(volt: str) -> str:
+    volt_norm = normalize_text(volt).upper().replace(" ", "").replace("　", "")
+    if not volt_norm:
+        return ""
+    if volt_norm == "1/200":
+        return "1φ200"
+
+    digit_only = "".join(ch for ch in volt_norm if ch.isdigit())
+    if re.search(r"3[Φφ/\+\$＊*]?200", volt_norm):
+        return "200"
+    if digit_only in {"3200", "34200", "36200", "30200"}:
+        return "200"
+    if digit_only == "200":
+        return "200"
+
+    simple = re.fullmatch(r"([+-]?\d+)(?:V)?", volt_norm)
+    if simple:
+        return simple.group(1)
+    return volt_norm
 
 
 def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
@@ -634,10 +916,7 @@ def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
     if name == "湧水ポンプ":
         name = "清水ポンプ"
 
-    volt_norm = normalize_text(volt)
-    if volt_norm == "1/200":
-        volt = "1φ200"
-
+    volt = normalize_voltage_text(volt)
     power = normalize_power_text(power)
 
     return {
@@ -686,12 +965,37 @@ def is_data_row(row: Dict[str, str]) -> bool:
     return False
 
 
+def infer_dynamic_data_start_y(words: List[WordBox], header_y: float) -> float:
+    header_words = [w for w in words if abs(w.cy - header_y) <= HEADER_Y_CLUSTER]
+    if not header_words:
+        return header_y + TABLE_DEFAULT_START_OFFSET
+    header_bottom = max(w.bbox[3] for w in header_words)
+    heights = [max(1.0, w.bbox[3] - w.bbox[1]) for w in header_words]
+    median_height = float(median(heights)) if heights else 0.0
+    offset = min(TABLE_MAX_START_OFFSET, max(TABLE_MIN_START_OFFSET, median_height * 1.2))
+    return header_bottom + offset
+
+
 def rows_from_words(
-    words: List[WordBox], bounds: ColumnBounds, y_cluster: float
+    words: List[WordBox],
+    bounds: ColumnBounds,
+    y_cluster: float,
+    start_y: Optional[float] = None,
 ) -> List[Dict[str, object]]:
-    start_y = bounds.header_y + DATA_START_OFFSET
-    target_words = [w for w in words if w.cy >= start_y]
-    clusters = cluster_by_y(target_words, y_cluster)
+    if start_y is None:
+        start_y = bounds.header_y + DATA_START_OFFSET
+    all_clusters = cluster_by_y(words, y_cluster)
+    clusters = [
+        cluster
+        for cluster in all_clusters
+        if (
+            cluster.row_y >= start_y
+            or (
+                min(w.bbox[1] for w in cluster.words) <= start_y
+                <= max(w.bbox[3] for w in cluster.words)
+            )
+        )
+    ]
 
     rows: List[Dict[str, object]] = []
     row_idx = 1
@@ -705,11 +1009,26 @@ def rows_from_words(
         if all(not cols[c] for c in CORE_COLUMNS):
             continue
 
+        power_words = sorted(cols["容量(kW)"], key=lambda x: x.cx)
+        if power_words:
+            cluster_heights = [max(1.0, w.bbox[3] - w.bbox[1]) for w in cluster.words]
+            median_height = float(median(cluster_heights)) if cluster_heights else 0.0
+            if median_height > 0:
+                max_noise_height = max(36.0, median_height * 2.2)
+                power_words = [
+                    w
+                    for w in power_words
+                    if not (
+                        (w.bbox[3] - w.bbox[1]) > max_noise_height
+                        and re.fullmatch(r"\d{2,}", normalize_text(w.text).replace(" ", ""))
+                    )
+                ] or power_words
+
         row = {
             "機器番号": clean_cell("".join(w.text for w in sorted(cols["機器番号"], key=lambda x: x.cx))),
             "機器名称": clean_cell("".join(w.text for w in sorted(cols["機器名称"], key=lambda x: x.cx))),
             "電圧(V)": clean_cell("".join(w.text for w in sorted(cols["電圧(V)"], key=lambda x: x.cx))),
-            "容量(kW)": clean_cell("".join(w.text for w in sorted(cols["容量(kW)"], key=lambda x: x.cx))),
+            "容量(kW)": clean_cell("".join(w.text for w in power_words)),
         }
         row = normalize_row_cells(row)
 
@@ -738,14 +1057,17 @@ def save_debug_image(
     words: List[WordBox],
     bounds: ColumnBounds,
     out_path: Path,
+    data_start_y: Optional[float] = None,
 ) -> None:
     debug = side_image.convert("RGB")
     draw = ImageDraw.Draw(debug)
 
     for x in [bounds.x_min, bounds.b12, bounds.b23, bounds.b34, bounds.x_max]:
         draw.line([(x, 0), (x, debug.height)], fill=(255, 120, 0), width=2)
+    if data_start_y is None:
+        data_start_y = bounds.header_y + DATA_START_OFFSET
     draw.line(
-        [(0, bounds.header_y + DATA_START_OFFSET), (debug.width, bounds.header_y + DATA_START_OFFSET)],
+        [(0, data_start_y), (debug.width, data_start_y)],
         fill=(0, 180, 255),
         width=2,
     )
@@ -759,6 +1081,199 @@ def save_debug_image(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     debug.save(out_path)
+
+
+def save_header_debug_image(
+    page_image: Image.Image,
+    headers: List[HeaderAnchor],
+    out_path: Path,
+) -> None:
+    debug = page_image.convert("RGB")
+    draw = ImageDraw.Draw(debug)
+    for header in headers:
+        x0, y0, x1, y1 = header.bbox
+        draw.rectangle((x0, y0, x1, y1), outline=(255, 180, 0), width=3)
+        draw.text((x0, max(0.0, y0 - 14.0)), "/".join(header.categories), fill=(255, 120, 0))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    debug.save(out_path)
+
+
+def save_table_candidates_debug_image(
+    page_image: Image.Image,
+    candidates: List[TableCandidate],
+    out_path: Path,
+) -> None:
+    debug = page_image.convert("RGB")
+    draw = ImageDraw.Draw(debug)
+    for index, candidate in enumerate(candidates, start=1):
+        x0, y0, x1, y1 = candidate.bbox
+        draw.rectangle((x0, y0, x1, y1), outline=(120, 220, 80), width=3)
+        draw.text((x0, max(0.0, y0 - 14.0)), f"T{index}", fill=(60, 180, 60))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    debug.save(out_path)
+
+
+def _rescale_words(words: List[WordBox], scale: float) -> List[WordBox]:
+    if scale <= 1.0:
+        return words
+    scaled: List[WordBox] = []
+    for w in words:
+        x0, y0, x1, y1 = w.bbox
+        scaled.append(
+            WordBox(
+                text=w.text,
+                cx=w.cx / scale,
+                cy=w.cy / scale,
+                bbox=(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+            )
+        )
+    return scaled
+
+
+def ocr_table_crop(
+    client: vision.ImageAnnotatorClient,
+    crop_image: Image.Image,
+) -> List[WordBox]:
+    if crop_image.width < 1 or crop_image.height < 1:
+        return []
+    scale = 1.0
+    if crop_image.width < 900:
+        scale = min(3.0, max(1.0, 900.0 / float(crop_image.width)))
+    if scale > 1.0:
+        resized = crop_image.resize(
+            (int(crop_image.width * scale), int(crop_image.height * scale)),
+            resample=RESAMPLE_LANCZOS,
+        )
+        words = extract_words(client, resized)
+        return _rescale_words(words, scale)
+    return extract_words(client, crop_image)
+
+
+def parse_table_candidate(
+    *,
+    client: vision.ImageAnnotatorClient,
+    page_image: Image.Image,
+    candidate: TableCandidate,
+    table_index: int,
+    y_cluster: float,
+    debug_dir: Path,
+    page_number: int,
+) -> TableParseResult:
+    x0, y0, x1, y1 = candidate.bbox
+    crop_bbox = (
+        int(max(0.0, x0)),
+        int(max(0.0, y0)),
+        int(min(float(page_image.width), x1)),
+        int(min(float(page_image.height), y1)),
+    )
+    crop_image = page_image.crop(crop_bbox)
+    words = ocr_table_crop(client, crop_image)
+    if not words:
+        return TableParseResult(table_index=table_index, candidate=candidate, rows=[])
+
+    bounds = infer_column_bounds(words, crop_image.width)
+    start_y = infer_dynamic_data_start_y(words, bounds.header_y)
+    rows = rows_from_words(words, bounds, y_cluster, start_y=start_y)
+    for row in rows:
+        row["row_y"] = round(float(row["row_y"]) + float(crop_bbox[1]), 2)
+    save_debug_image(
+        crop_image,
+        words,
+        bounds,
+        debug_dir / f"p{page_number}_table{table_index}.png",
+        data_start_y=start_y,
+    )
+    return TableParseResult(table_index=table_index, candidate=candidate, rows=rows)
+
+
+def extract_page_rows_v3(
+    *,
+    client: vision.ImageAnnotatorClient,
+    page_image: Image.Image,
+    y_cluster: float,
+    debug_dir: Path,
+    page_number: int,
+) -> Dict[str, object]:
+    page_words = extract_words(client, page_image)
+    headers = detect_header_anchors(page_words)
+    candidates = detect_table_candidates_from_page_words(page_words, page_image.size)
+
+    save_header_debug_image(page_image, headers, debug_dir / f"p{page_number}_headers.png")
+    save_table_candidates_debug_image(page_image, candidates, debug_dir / f"p{page_number}_tables.png")
+
+    parsed_tables: List[TableParseResult] = []
+    page_rows: List[Dict[str, object]] = []
+    row_index = 1
+    for table_index, candidate in enumerate(candidates, start=1):
+        parsed = parse_table_candidate(
+            client=client,
+            page_image=page_image,
+            candidate=candidate,
+            table_index=table_index,
+            y_cluster=y_cluster,
+            debug_dir=debug_dir,
+            page_number=page_number,
+        )
+        parsed_tables.append(parsed)
+        for row in parsed.rows:
+            page_rows.append(
+                {
+                    "row_index": row_index,
+                    "row_y": row["row_y"],
+                    "side": f"T{table_index:02d}",
+                    "table_index": table_index,
+                    "機器番号": row["機器番号"],
+                    "機器名称": row["機器名称"],
+                    "電圧(V)": row["電圧(V)"],
+                    "容量(kW)": row["容量(kW)"],
+                }
+            )
+            row_index += 1
+    return {
+        "rows": page_rows,
+        "page_words": page_words,
+        "headers": headers,
+        "candidates": candidates,
+        "tables": parsed_tables,
+    }
+
+
+def legacy_side_split_extract_page(
+    *,
+    client: vision.ImageAnnotatorClient,
+    page_image: Image.Image,
+    y_cluster: float,
+    debug_dir: Path,
+    page_number: int,
+) -> Dict[str, object]:
+    right_side_words: List[WordBox] = []
+    right_side_size = (0, 0)
+    page_rows: List[Dict[str, object]] = []
+    sides = split_sides(page_image)
+    for side in ["L", "R"]:
+        side_image = sides[side]
+        words = extract_words(client, side_image)
+        if not words:
+            continue
+        if side == "R":
+            right_side_words = words
+            right_side_size = side_image.size
+        bounds = infer_column_bounds(words, side_image.width)
+        rows = rows_from_words(words, bounds, y_cluster)
+        for row in rows:
+            row["side"] = side
+            page_rows.append(row)
+        save_debug_image(
+            side_image,
+            words,
+            bounds,
+            debug_dir / f"bbox_p{page_number}_{side}.png",
+        )
+    return {
+        "rows": page_rows,
+        "right_side_words": right_side_words,
+        "right_side_size": right_side_size,
+    }
 
 
 def write_csv(rows: List[Dict[str, object]], out_csv: Path) -> None:
@@ -799,38 +1314,72 @@ def extract_raster_pdf(
     target_pages = resolve_target_pages(total_pages=total_pages, page=page)
     drawing_number_by_page: Dict[int, str] = {}
     drawing_number_source_by_page: Dict[int, str] = {}
+    rows_by_page: Dict[int, int] = {}
+    tables_detected_by_page: Dict[int, int] = {}
+    table_count_by_page: Dict[int, int] = {}
+    fallback_pages: List[int] = []
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         for target_page in target_pages:
-            right_side_words: List[WordBox] = []
-            right_side_size = (0, 0)
-            page_rows: List[Dict[str, object]] = []
-
             png_path = run_pdftoppm(pdf_path, target_page, dpi, tmp_dir)
             page_image = Image.open(png_path).convert("RGB")
-            sides = split_sides(page_image)
+            right_side_words: List[WordBox] = []
+            right_side_size = page_image.size
+            page_rows: List[Dict[str, object]] = []
 
-            for side in ["L", "R"]:
-                side_image = sides[side]
-                words = extract_words(client, side_image)
-                if not words:
-                    continue
-                if side == "R":
-                    right_side_words = words
-                    right_side_size = side_image.size
-                bounds = infer_column_bounds(words, side_image.width)
-                rows = rows_from_words(words, bounds, y_cluster)
-                for row in rows:
-                    row["side"] = side
-                    row["page"] = target_page
-                    page_rows.append(row)
-                save_debug_image(
-                    side_image,
-                    words,
-                    bounds,
-                    debug_dir / f"bbox_p{target_page}_{side}.png",
+            if target_page in LEGACY_FIRST_PAGES:
+                tables_detected_by_page[target_page] = 0
+                table_count_by_page[target_page] = 0
+                legacy_result = legacy_side_split_extract_page(
+                    client=client,
+                    page_image=page_image,
+                    y_cluster=y_cluster,
+                    debug_dir=debug_dir,
+                    page_number=target_page,
                 )
+                page_rows = list(legacy_result["rows"])
+                right_side_words = list(legacy_result["right_side_words"])
+                right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
+                if not page_rows:
+                    fallback_pages.append(target_page)
+                    v3_result = extract_page_rows_v3(
+                        client=client,
+                        page_image=page_image,
+                        y_cluster=y_cluster,
+                        debug_dir=debug_dir,
+                        page_number=target_page,
+                    )
+                    page_rows = list(v3_result["rows"])
+                    right_side_words = list(v3_result["page_words"])
+                    candidates = list(v3_result["candidates"])
+                    tables_detected_by_page[target_page] = len(candidates)
+                    table_count_by_page[target_page] = len(candidates)
+            else:
+                v3_result = extract_page_rows_v3(
+                    client=client,
+                    page_image=page_image,
+                    y_cluster=y_cluster,
+                    debug_dir=debug_dir,
+                    page_number=target_page,
+                )
+                page_rows = list(v3_result["rows"])
+                right_side_words = list(v3_result["page_words"])
+                candidates = list(v3_result["candidates"])
+                tables_detected_by_page[target_page] = len(candidates)
+                table_count_by_page[target_page] = len(candidates)
+                if not page_rows:
+                    fallback_pages.append(target_page)
+                    legacy_result = legacy_side_split_extract_page(
+                        client=client,
+                        page_image=page_image,
+                        y_cluster=y_cluster,
+                        debug_dir=debug_dir,
+                        page_number=target_page,
+                    )
+                    page_rows = list(legacy_result["rows"])
+                    right_side_words = list(legacy_result["right_side_words"])
+                    right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
 
             drawing_number, drawing_number_source = resolve_drawing_number(
                 pdf_path=pdf_path,
@@ -840,8 +1389,10 @@ def extract_raster_pdf(
             )
             drawing_number_by_page[target_page] = drawing_number
             drawing_number_source_by_page[target_page] = drawing_number_source
+            rows_by_page[target_page] = len(page_rows)
             for row in page_rows:
                 row[DRAWING_NUMBER_COLUMN] = drawing_number
+                row["page"] = target_page
                 all_rows.append(row)
 
     summary_drawing_number = ""
@@ -865,6 +1416,10 @@ def extract_raster_pdf(
         "target_pages": target_pages,
         "drawing_numbers_by_page": drawing_number_by_page,
         "drawing_number_sources_by_page": drawing_number_source_by_page,
+        "rows_by_page": rows_by_page,
+        "tables_detected_by_page": tables_detected_by_page,
+        "table_count_by_page": table_count_by_page,
+        "fallback_pages": fallback_pages,
     }
 
 
@@ -886,28 +1441,53 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         for target_page in target_pages:
-            right_side_words: List[WordBox] = []
-            right_side_size = (0, 0)
-            page_rows: List[Dict[str, object]] = []
-
             png_path = run_pdftoppm(pdf_path, target_page, args.dpi, tmp_dir)
             page_image = Image.open(png_path).convert("RGB")
-            sides = split_sides(page_image)
-            for side in ["L", "R"]:
-                side_image = sides[side]
-                words = extract_words(client, side_image)
-                if not words:
-                    continue
-                if side == "R":
-                    right_side_words = words
-                    right_side_size = side_image.size
-                bounds = infer_column_bounds(words, side_image.width)
-                rows = rows_from_words(words, bounds, y_cluster)
-                for row in rows:
-                    row["side"] = side
-                    row["page"] = target_page
-                    page_rows.append(row)
-                save_debug_image(side_image, words, bounds, debug_dir / f"bbox_p{target_page}_{side}.png")
+            right_side_words: List[WordBox] = []
+            right_side_size = page_image.size
+            page_rows: List[Dict[str, object]] = []
+            if target_page in LEGACY_FIRST_PAGES:
+                legacy_result = legacy_side_split_extract_page(
+                    client=client,
+                    page_image=page_image,
+                    y_cluster=y_cluster,
+                    debug_dir=debug_dir,
+                    page_number=target_page,
+                )
+                page_rows = list(legacy_result["rows"])
+                right_side_words = list(legacy_result["right_side_words"])
+                right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
+                if not page_rows:
+                    v3_result = extract_page_rows_v3(
+                        client=client,
+                        page_image=page_image,
+                        y_cluster=y_cluster,
+                        debug_dir=debug_dir,
+                        page_number=target_page,
+                    )
+                    page_rows = list(v3_result["rows"])
+                    right_side_words = list(v3_result["page_words"])
+            else:
+                v3_result = extract_page_rows_v3(
+                    client=client,
+                    page_image=page_image,
+                    y_cluster=y_cluster,
+                    debug_dir=debug_dir,
+                    page_number=target_page,
+                )
+                page_rows = list(v3_result["rows"])
+                right_side_words = list(v3_result["page_words"])
+                if not page_rows:
+                    legacy_result = legacy_side_split_extract_page(
+                        client=client,
+                        page_image=page_image,
+                        y_cluster=y_cluster,
+                        debug_dir=debug_dir,
+                        page_number=target_page,
+                    )
+                    page_rows = list(legacy_result["rows"])
+                    right_side_words = list(legacy_result["right_side_words"])
+                    right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
 
             drawing_number, _ = resolve_drawing_number(
                 pdf_path=pdf_path,
@@ -917,6 +1497,7 @@ def main() -> int:
             )
             for row in page_rows:
                 row[DRAWING_NUMBER_COLUMN] = drawing_number
+                row["page"] = target_page
                 all_rows.append(row)
     all_rows.sort(key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"])))
     write_csv(all_rows, out_csv)

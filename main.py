@@ -649,7 +649,7 @@ def _run_raster_job(file_bytes: bytes, source_filename: str):
             "csv_files": ["raster.csv"],
             "row_count": profile["rows"],
             "columns": profile["columns"],
-            "extractor_version": "raster-v2",
+            "extractor_version": "raster-v3",
             "extract_result": extract_result,
         },
     )
