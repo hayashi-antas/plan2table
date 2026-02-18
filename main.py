@@ -483,6 +483,7 @@ CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
     "総合判定(◯/✗)",
     "総合判定(○/×)",
 ]
+DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 盤表 - 機器表"
 
 CUSTOMER_TABLE_COLUMNS = [
     ("照合結果", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
@@ -537,10 +538,7 @@ def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
 
 def _build_customer_table_html(unified_csv_path: Path) -> str:
     rows = _read_csv_dict_rows(unified_csv_path)
-    diff_note_html = (
-        '<p class="mt-2 text-xs text-stone-600">※ 台数差 / 容量差は 盤表 - 機器表'
-        "（正: 盤表が大きい、負: 機器表が大きい）</p>"
-    )
+    diff_note_html = f'<p class="mt-2 text-xs text-stone-600">{html.escape(DIFF_NOTE_TEXT)}</p>'
     header_cells = "".join(
         f"<th class=\"border border-stone-300 bg-stone-50 px-3 py-2 text-left text-sm font-semibold\">{html.escape(label)}</th>"
         for label, _ in CUSTOMER_TABLE_COLUMNS
