@@ -1,3 +1,5 @@
+import asyncio
+import concurrent.futures
 import csv
 import io
 import re
@@ -443,6 +445,62 @@ def test_customer_run_prefers_panel_stage_when_both_extracts_fail(tmp_path, monk
     captured = capsys.readouterr()
     assert "Customer flow failed at panel->raster: panel raster failed" in captured.out
     assert "Customer flow failed at equipment->vector: equipment vector failed" in captured.out
+
+
+def test_customer_run_handles_non_exception_base_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
+
+    class NonExceptionFailure(BaseException):
+        pass
+
+    def fake_raster_job(file_bytes, source_filename):
+        raise NonExceptionFailure("non-exception failure")
+
+    def fake_vector_job(file_bytes, source_filename):
+        job = job_store.create_job(kind="vector", source_filename=source_filename)
+        (job.job_dir / "vector.csv").write_text("機器番号,名称\nA-1,排風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "名称"]}
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert 'data-stage="panel-&gt;raster"' in resp.text
+    assert "message: non-exception failure" in resp.text
+
+
+def test_customer_run_reraises_cancelled_error_from_parallel_extract(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
+
+    def fake_raster_job(file_bytes, source_filename):
+        raise asyncio.CancelledError()
+
+    def fake_vector_job(file_bytes, source_filename):
+        job = job_store.create_job(kind="vector", source_filename=source_filename)
+        (job.job_dir / "vector.csv").write_text("機器番号,名称\nA-1,排風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "名称"]}
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+
+    with pytest.raises((asyncio.CancelledError, concurrent.futures.CancelledError)):
+        client.post(
+            "/customer/run",
+            files={
+                "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+                "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+            },
+        )
 
 
 def test_unified_merge_and_download(tmp_path, monkeypatch):

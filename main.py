@@ -588,7 +588,7 @@ def _exception_message(exc: Exception) -> str:
 
 
 def _is_parallel_extract_enabled() -> bool:
-    raw = str(os.getenv("ME_CHECK_PARALLEL_EXTRACT", "1") or "").strip().lower()
+    raw = os.getenv("ME_CHECK_PARALLEL_EXTRACT", "1").strip().lower()
     return raw not in {"0", "false"}
 
 
@@ -915,8 +915,13 @@ async def handle_customer_run(
             ),
             return_exceptions=True,
         )
-        raster_exc = raster_result if isinstance(raster_result, Exception) else None
-        vector_exc = vector_result if isinstance(vector_result, Exception) else None
+        raster_exc = raster_result if isinstance(raster_result, BaseException) else None
+        vector_exc = vector_result if isinstance(vector_result, BaseException) else None
+
+        if isinstance(raster_exc, asyncio.CancelledError):
+            raise raster_exc
+        if isinstance(vector_exc, asyncio.CancelledError):
+            raise vector_exc
 
         if raster_exc and vector_exc:
             print(f"Customer flow failed at panel->raster: {raster_exc}")
