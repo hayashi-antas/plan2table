@@ -1090,8 +1090,18 @@ def validate_headers(actual_header: Sequence[Sequence[str]], expected_xlsx: Path
 
 
 def extract_pdf_to_rows(
-    pdf_path: Path, *, include_record_page_indexes: bool = False
-) -> Tuple[List[List[str]], int, List[List[str]]] | Tuple[List[List[str]], int, List[List[str]], List[int]]:
+    pdf_path: Path,
+    *,
+    include_record_page_indexes: bool = False,
+    include_page_drawing_numbers: bool = False,
+) -> (
+    Tuple[List[List[str]], int, List[List[str]]]
+    | Tuple[List[List[str]], int, List[List[str]], List[int]]
+    | Tuple[List[List[str]], int, List[List[str]], List[int], Dict[int, str]]
+):
+    if include_page_drawing_numbers and not include_record_page_indexes:
+        raise ValueError("include_page_drawing_numbers requires include_record_page_indexes=True")
+
     with pdfplumber.open(str(pdf_path)) as pdf:
         if not pdf.pages:
             raise ValueError("PDF has no pages.")
@@ -1100,6 +1110,7 @@ def extract_pdf_to_rows(
         note_rows_total = 0
         header_rows: List[List[str]] | None = None
         record_page_indexes: List[int] = []
+        drawing_by_page: Dict[int, str] = {}
 
         for page_index, page in enumerate(pdf.pages):
             target_tables = pick_target_tables(page)
@@ -1136,27 +1147,17 @@ def extract_pdf_to_rows(
                 merged_records.extend(records)
                 if include_record_page_indexes:
                     record_page_indexes.extend([page_index] * len(records))
+                    if include_page_drawing_numbers and records and page_index not in drawing_by_page:
+                        drawing_by_page[page_index] = extract_drawing_number_from_page(page)
 
         if header_rows is None:
             raise ValueError("No target tables found in any PDF page.")
         final_rows = header_rows + merged_records
         if include_record_page_indexes:
+            if include_page_drawing_numbers:
+                return final_rows, note_rows_total, header_rows, record_page_indexes, drawing_by_page
             return final_rows, note_rows_total, header_rows, record_page_indexes
         return final_rows, note_rows_total, header_rows
-
-
-def _resolve_record_drawing_numbers(pdf_path: Path, record_page_indexes: Sequence[int]) -> List[str]:
-    if not record_page_indexes:
-        return []
-    page_indexes = sorted(set(record_page_indexes))
-    drawing_by_page: Dict[int, str] = {}
-    with pdfplumber.open(str(pdf_path)) as pdf:
-        for page_index in page_indexes:
-            if page_index < 0 or page_index >= len(pdf.pages):
-                drawing_by_page[page_index] = ""
-                continue
-            drawing_by_page[page_index] = extract_drawing_number_from_page(pdf.pages[page_index])
-    return [drawing_by_page.get(page_index, "") for page_index in record_page_indexes]
 
 
 def extract_vector_pdf_four_columns(pdf_path: Path, out_csv_path: Path) -> Dict[str, object]:
@@ -1164,10 +1165,12 @@ def extract_vector_pdf_four_columns(pdf_path: Path, out_csv_path: Path) -> Dict[
     if not pdf_path.exists():
         raise FileNotFoundError(f"Input PDF not found: {pdf_path}")
 
-    rows, note_rows, _, record_page_indexes = extract_pdf_to_rows(
-        pdf_path, include_record_page_indexes=True
+    rows, note_rows, _, record_page_indexes, drawing_by_page = extract_pdf_to_rows(
+        pdf_path,
+        include_record_page_indexes=True,
+        include_page_drawing_numbers=True,
     )
-    drawing_numbers = _resolve_record_drawing_numbers(pdf_path, record_page_indexes)
+    drawing_numbers = [drawing_by_page.get(page_index, "") for page_index in record_page_indexes]
     four_rows = build_four_column_rows(rows, drawing_numbers=drawing_numbers)
     write_csv(out_csv_path, four_rows)
 
