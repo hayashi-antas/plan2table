@@ -1,6 +1,9 @@
+import asyncio
+import concurrent.futures
 import csv
 import io
 import re
+import threading
 from urllib.parse import unquote
 from uuid import uuid4
 
@@ -258,6 +261,7 @@ def test_customer_run_handles_judgment_header_variants(
 def test_customer_run_returns_stage_for_panel_to_raster_error(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success)
 
     def fake_raster_failure(**kwargs):
         raise RuntimeError("panel raster failed")
@@ -322,6 +326,181 @@ def test_customer_run_returns_stage_for_unified_error(tmp_path, monkeypatch):
     assert 'data-status="error"' in resp.text
     assert 'data-stage="unified"' in resp.text
     assert "message: unified failed detail" in resp.text
+
+
+def test_customer_run_executes_raster_and_vector_in_parallel(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
+
+    raster_started = threading.Event()
+    vector_started = threading.Event()
+    both_started = threading.Event()
+
+    def fake_raster_job(file_bytes, source_filename):
+        raster_started.set()
+        if not vector_started.wait(timeout=2):
+            raise RuntimeError("vector did not start in parallel")
+        both_started.set()
+        job = job_store.create_job(kind="raster", source_filename=source_filename)
+        (job.job_dir / "raster.csv").write_text("機器番号,機器名称\nA-1,送風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "機器名称"]}
+
+    def fake_vector_job(file_bytes, source_filename):
+        vector_started.set()
+        if not raster_started.wait(timeout=2):
+            raise RuntimeError("raster did not start in parallel")
+        both_started.set()
+        job = job_store.create_job(kind="vector", source_filename=source_filename)
+        (job.job_dir / "vector.csv").write_text("機器番号,名称\nA-1,排風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "名称"]}
+
+    def fake_unified_job(raster_job_id, vector_job_id):
+        job = job_store.create_job(kind="unified", source_filename=f"{raster_job_id}+{vector_job_id}")
+        (job.job_dir / "unified.csv").write_text("照合結果\n一致\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["照合結果"]}
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+    monkeypatch.setattr(app_main, "_run_unified_job", fake_unified_job)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+    assert both_started.is_set()
+
+
+def test_customer_run_falls_back_to_sequential_when_parallel_is_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "0")
+
+    execution_order = []
+    raster_done = threading.Event()
+
+    def fake_raster_job(file_bytes, source_filename):
+        execution_order.append("raster")
+        raster_done.set()
+        job = job_store.create_job(kind="raster", source_filename=source_filename)
+        (job.job_dir / "raster.csv").write_text("機器番号,機器名称\nA-1,送風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "機器名称"]}
+
+    def fake_vector_job(file_bytes, source_filename):
+        execution_order.append("vector")
+        assert raster_done.is_set()
+        job = job_store.create_job(kind="vector", source_filename=source_filename)
+        (job.job_dir / "vector.csv").write_text("機器番号,名称\nA-1,排風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "名称"]}
+
+    def fake_unified_job(raster_job_id, vector_job_id):
+        job = job_store.create_job(kind="unified", source_filename=f"{raster_job_id}+{vector_job_id}")
+        (job.job_dir / "unified.csv").write_text("照合結果\n一致\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["照合結果"]}
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+    monkeypatch.setattr(app_main, "_run_unified_job", fake_unified_job)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+    assert execution_order == ["raster", "vector"]
+
+
+def test_customer_run_prefers_panel_stage_when_both_extracts_fail(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
+
+    def fake_raster_job(file_bytes, source_filename):
+        raise RuntimeError("panel raster failed")
+
+    def fake_vector_job(file_bytes, source_filename):
+        raise RuntimeError("equipment vector failed")
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert 'data-stage="panel-&gt;raster"' in resp.text
+    assert "message: panel raster failed" in resp.text
+
+    captured = capsys.readouterr()
+    assert "Customer flow failed at panel->raster: panel raster failed" in captured.out
+    assert "Customer flow failed at equipment->vector: equipment vector failed" in captured.out
+
+
+def test_customer_run_handles_non_exception_base_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
+
+    class NonExceptionFailure(BaseException):
+        pass
+
+    def fake_raster_job(file_bytes, source_filename):
+        raise NonExceptionFailure("non-exception failure")
+
+    def fake_vector_job(file_bytes, source_filename):
+        job = job_store.create_job(kind="vector", source_filename=source_filename)
+        (job.job_dir / "vector.csv").write_text("機器番号,名称\nA-1,排風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "名称"]}
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert 'data-stage="panel-&gt;raster"' in resp.text
+    assert "message: non-exception failure" in resp.text
+
+
+def test_customer_run_reraises_cancelled_error_from_parallel_extract(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
+
+    def fake_raster_job(file_bytes, source_filename):
+        raise asyncio.CancelledError()
+
+    def fake_vector_job(file_bytes, source_filename):
+        job = job_store.create_job(kind="vector", source_filename=source_filename)
+        (job.job_dir / "vector.csv").write_text("機器番号,名称\nA-1,排風機\n", encoding="utf-8")
+        return job, {"rows": 1, "columns": ["機器番号", "名称"]}
+
+    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
+    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+
+    with pytest.raises((asyncio.CancelledError, concurrent.futures.CancelledError)):
+        client.post(
+            "/customer/run",
+            files={
+                "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+                "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+            },
+        )
 
 
 def test_unified_merge_and_download(tmp_path, monkeypatch):
