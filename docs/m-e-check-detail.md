@@ -60,8 +60,8 @@
   - **機器表PDF**（[equipment_file](../main.py#L871)）: 換気機器表など、表形式のPDF。1ページ目に2つの横並び表がある想定。
   - **盤表PDF**（[panel_file](../main.py#L871)）: 電力制御盤表。1ページ目を画像化してOCRする想定。
 - **出力**
-  - **HTML**: 照合結果の主要列（照合結果・不一致内容・機器ID・機器名・機器表 台数・盤表 台数・台数差・容量差など）を簡易表示。
-  - **CSV**（`unified.csv`）: 統合結果の11列（[OUTPUT_COLUMNS](../extractors/unified_csv.py#L23)）。ダウンロード用エンドポイント `GET /jobs/{job_id}/unified.csv` で取得。
+- **HTML**: 照合結果の主要列（照合結果・不一致内容・機器ID・機器表 記載名・機器表 台数・盤表 台数・台数差・容量差など）を簡易表示。
+  - **CSV**（`unified.csv`）: 統合結果の14列（[OUTPUT_COLUMNS](../extractors/unified_csv.py#L23)）。ダウンロード用エンドポイント `GET /jobs/{job_id}/unified.csv` で取得。
 
 ---
 
@@ -93,14 +93,19 @@
 | 照合結果 | 照合結果（値は「一致」「不一致」に正規化） |
 | 不一致内容 | 不一致内容、不一致理由 |
 | 機器ID | 機器ID、機器番号、機械番号 |
-| 機器名 | 機器名、名称、機器名称 |
+| 機器表 記載名 | 機器表 記載名、機器表記載名、機器名、名称、機器名称 |
+| 盤表 記載名 | 盤表 記載名、盤表記載名 |
+| 名称差異 | 名称差異 |
 | 機器表 台数 | 機器表 台数、台数、vector_台数_numeric |
 | 盤表 台数 | 盤表 台数、raster_match_count、raster_台数_calc |
-| 台数差（盤表-機器表） | 台数差（盤表-機器表）、台数差分 |
-| 機器表 容量合計(kW) | 機器表 容量合計(kW)、vector_容量(kW)_calc |
-| 盤表 容量合計(kW) | 盤表 容量合計(kW)、raster_容量(kW)_sum |
+| 台数差 | 台数差、台数差（盤表-機器表）、台数差分 |
+| 機器表 消費電力(kW) | 機器表 消費電力(kW)、機器表 容量合計(kW)、vector_容量(kW)_calc |
+| 盤表 容量(kW) | 盤表 容量(kW)、盤表 容量合計(kW)、raster_容量(kW)_sum |
 | 容量差(kW) | 容量差(kW)、容量差分(kW) |
-| 図面番号 | 図面番号 |
+| 機器表 図面番号 | 機器表 図面番号、機器表図面番号 |
+| 盤表 図面番号 | 盤表 図面番号、図面番号、図番 |
+
+※ 表の下に `台数差 / 容量差は 盤表 - 機器表（正: 盤表が大きい、負: 機器表が大きい）` の注記を表示する。
 
 ---
 
@@ -115,7 +120,7 @@
 1. **Panel → Raster**  
    [panel_file](../main.py#L871) のバイト列を [_run_raster_job](../main.py#L625) に渡す。盤表PDFを画像化し、Vision API でOCRして **raster.csv** を生成し、raster ジョブとして保存する。
 2. **Equipment → Vector**  
-   [equipment_file](../main.py#L871) のバイト列を [_run_vector_job](../main.py#L658) に渡す。機器表PDFから pdfplumber で表を抽出し、**vector.csv**（4列）を生成し、vector ジョブとして保存する。
+   [equipment_file](../main.py#L871) のバイト列を [_run_vector_job](../main.py#L658) に渡す。機器表PDFから pdfplumber で表を抽出し、**vector.csv**（5列）を生成し、vector ジョブとして保存する。
 3. **Unified**  
    [_run_unified_job](../main.py#L694)(raster_job_id, vector_job_id) で、既存の raster.csv と vector.csv を読み、[merge_vector_raster_csv](../extractors/unified_csv.py#L104) により **unified.csv** を生成する。結果は unified ジョブとして保存され、その `job_id` で CSV ダウンロードと簡易表の表示に使われる。
 
@@ -149,22 +154,24 @@ CSV の実体ファイル名は kind に応じて `raster.csv` / `vector.csv` / 
 #### 5.1.1 処理の流れ
 
 1. **PDF → 画像**  
-   `pdftoppm` で指定ページ（デフォルト1ページ目）を PNG に変換する（DPI はデフォルト 300）。[run_pdftoppm](../extractors/raster_extractor.py#L130) がこれを実行する。
-2. **左右分割**  
-   画像を縦の中央で **左(L) と 右(R)** に分割する（[SIDE_SPLITS](../extractors/raster_extractor.py#L31)）。盤表が2段や2列に分かれているレイアウトに対応する。
-3. **OCR**  
-   各サイド画像を **Google Cloud Vision API** の `document_text_detection` に送り、単語単位のテキストとバウンディングボックスを取得する（[extract_words](../extractors/raster_extractor.py#L171)）。
-4. **行クラスタリング**  
-   Y座標に基づき単語を **行** にグループ化する（[cluster_by_y](../extractors/raster_extractor.py#L211)）。しきい値は [y_cluster](../extractors/raster_extractor.py#L504)（デフォルト 20.0 px）。
-5. **列境界の推定**  
-   ヘッダー行らしき行から「機器番号」「機器名称」「電圧(V)」「容量(kW)」の4列の境界（[ColumnBounds](../extractors/raster_extractor.py#L99)）を推定する（[infer_column_bounds](../extractors/raster_extractor.py#L253)）。ヘッダーキーワード（機器・記号・名称・電圧・容量など）のスコアでヘッダー行を選び、その単語のX座標から列の区切りを決める。
-6. **データ行の抽出**  
-   ヘッダーより下の領域（[DATA_START_OFFSET](../extractors/raster_extractor.py#L38) 以降）の単語を、列境界に従って4列に割り当て、行ごとにまとめる（[rows_from_words](../extractors/raster_extractor.py#L503)）。  
-   ヘッダー行・フッター行はキーワードで除外し、**データ行** のみを残す（[is_data_row](../extractors/raster_extractor.py#L475)）。機器番号のパターン（例: `[A-Z]{1,4}-[A-Z0-9]{1,6}`）や、名称に含まれるキーワード（ポンプ・排風・送風など）でデータ行を判定する。
-7. **セル正規化**  
-   機器番号と名称の混入補正、単位表記の統一（例: 1/200 → 1φ200）、名称の表記ゆれ（湧水ポンプ→清水ポンプ）などを [normalize_row_cells](../extractors/raster_extractor.py#L404) で行う。
-8. **CSV出力**  
-   列は [OUTPUT_COLUMNS](../extractors/raster_extractor.py#L29) = `["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]` の5列。左右両サイドの行をまとめて `raster.csv` に書き出し、図面番号を各行へ付与する。デバッグ用に `debug_dir` へ列境界や単語ボックスを描画した画像を保存する。
+   `pdftoppm` で対象ページを PNG に変換する（DPI はデフォルト 300）。
+2. **1パス目 OCR（全ページ画像）**  
+   ページ全体を Vision `document_text_detection` に送り、単語（WordBox）を取得する。
+3. **ヘッダー行検出（複数表対応）**  
+   単語を Yクラスタで行にまとめ、ヘッダー語群（機器番号/名称/電圧/容量）を満たす行を複数検出する。4カテゴリ中3カテゴリ以上で表候補として採用する。
+4. **表候補 bbox の生成と重複マージ**  
+   ヘッダー位置から表領域を推定し、近接候補や重複候補は IoU/近傍判定で統合する。これにより、四隅や上辺の小表を複数拾える。
+5. **2パス目 OCR（候補ごと）**  
+   各候補領域を `crop + margin` で切り出して再OCRし、表ごとに列境界を再推定する（小表・1行表の精度を上げる）。
+6. **データ行抽出（可変開始Y）**  
+   固定オフセットではなく、ヘッダー高さベースで開始Yを算出して4列へ割り当てる。  
+   ヘッダー/フッター行を除外し、**機器番号パターン** または **名称+数値（電圧/容量）** を満たす行を採用する。
+7. **Hybrid fallback**  
+   1〜2ページ目は旧「左右分割」ロジックを優先し、3ページ目以降は新ロジックを優先する。優先ロジックで0行だったページのみ、もう一方へフォールバックする。
+8. **CSV出力・図面番号付与**  
+   列は `["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]` の5列を維持。図面番号はページごとに1つ解決して全行へ付与する。重複機器番号行は保持する。
+9. **デバッグ出力**  
+   `debug_dir` に `p{n}_headers.png`, `p{n}_tables.png`, `p{n}_table{k}.png` を保存する。
 
 <a id="raster-deps"></a>
 #### 5.1.2 依存関係
@@ -191,10 +198,11 @@ Vision API は「この画像にどんな文字が、どこにあったか」を
 | 段階 | やっていること | コード上の主なもの |
 |------|----------------|---------------------|
 | 1. 単語をまとめる | 返ってきた単語に、中心座標（cx, cy）と矩形（bbox）を付けて **WordBox** として保持 | [extract_words](../extractors/raster_extractor.py#L171) → [WordBox](../extractors/raster_extractor.py#L85)（dataclass） |
-| 2. 行に分ける | Y座標が近い単語を「同じ行」として **RowCluster** にまとめる | [cluster_by_y](../extractors/raster_extractor.py#L211) → [RowCluster](../extractors/raster_extractor.py#L93)（dataclass） |
-| 3. 列を決める | ヘッダー行の単語のX座標から、4列の境界 **ColumnBounds** を推定 | [infer_column_bounds](../extractors/raster_extractor.py#L253) → [ColumnBounds](../extractors/raster_extractor.py#L99)（dataclass） |
-| 4. セルに割り当て | 各行の単語を、X座標で列境界と照らして「機器番号列」「名称列」… に振り分け | [assign_column](../extractors/raster_extractor.py#L382), [rows_from_words](../extractors/raster_extractor.py#L503) |
-| 5. 表として出力 | データ行だけ残し、表記ゆれを補正してから **csv** で書き出し | [normalize_row_cells](../extractors/raster_extractor.py#L404), `write_csv`（標準ライブラリ） |
+| 2. 行に分ける | Y座標が近い単語を「同じ行」として **RowCluster** にまとめる | `cluster_by_y` → `RowCluster` |
+| 3. 表候補を決める | ヘッダー語群を満たす行を **HeaderAnchor** として検出し、候補 bbox を作る | `detect_header_anchors` / `detect_table_candidates_from_page_words` |
+| 4. 候補ごと再OCR | 候補領域を再OCRして列境界 **ColumnBounds** を推定 | `ocr_table_crop` / `infer_column_bounds` |
+| 5. セルに割り当て | 各行の単語を、X座標で列境界と照らして4列へ振り分け | `assign_column`, `rows_from_words` |
+| 6. 表として出力 | データ行だけ残し、表記ゆれを補正してから **csv** で書き出し | `normalize_row_cells`, `write_csv` |
 
 **使っている型（すべて raster_extractor 内の dataclass）**
 
@@ -202,14 +210,17 @@ Vision API は「この画像にどんな文字が、どこにあったか」を
 |------|------|
 | **[WordBox](../extractors/raster_extractor.py#L85)** | 単語1つ分。テキスト・中心(cx,cy)・矩形(bbox) を持つ。Vision の返り値を入れる入れ物。 |
 | **[RowCluster](../extractors/raster_extractor.py#L93)** | 「同じ行」とみなした単語の集まり。行のY座標(row_y) と、その行に属する WordBox のリスト(words)。 |
-| **[ColumnBounds](../extractors/raster_extractor.py#L99)** | 4列の境界のX座標。ヘッダーから推定した「ここより左が1列目、ここから2列目…」の区切り。 |
+| **ColumnBounds** | 4列の境界のX座標。ヘッダーから推定した「ここより左が1列目、ここから2列目…」の区切り。 |
+| **HeaderAnchor** | ヘッダー語群（機器番号/名称/電圧/容量）を満たした行。複数表検出の起点。 |
+| **TableCandidate** | 1つの表候補の bbox とヘッダー情報。2パス目OCRの対象単位。 |
+| **TableParseResult** | 候補表ごとの抽出結果（行リスト）。 |
 
 **使っているライブラリ（表の「構造」には表用ライブラリは使っていない）**
 
 | 種類 | ライブラリ | 役割 |
 |------|------------|------|
 | Vision | `google.cloud.vision` | 画像を送って、単語テキスト＋座標の一覧をもらう。 |
-| 画像 | Pillow（`PIL.Image`, `ImageDraw`） | 画像の読み込み・左右分割・デバッグ用の枠描画。 |
+| 画像 | Pillow（`PIL.Image`, `ImageDraw`） | 画像の読み込み・切り出し・デバッグ用の枠描画。 |
 | 表の組み立て | **なし**（自前ロジック） | 行・列の割り当てやヘッダー／データ行の判定は、すべて raster_extractor 内のコード。pandas や表解析ライブラリは使っていない。 |
 | その他 | 標準ライブラリのみ | `csv`（CSV書き出し）、`re`、`unicodedata`、`dataclasses`、`statistics.median` など。 |
 
@@ -246,15 +257,16 @@ pandas を使うと「行のリストができたあと」のフィルタや CSV
    表領域内の単語から、1行目データより上をヘッダーとみなし、グループ行・サブ行・単位行を再構成する（[reconstruct_headers_from_pdf](../extractors/vector_extractor.py#L187)）。「換気機器表」などのタイトルや、最初の機器番号の位置からデータ開始位置を決め、その上をヘッダーとして扱う。
 5. **データ行の抽出**  
    先頭列が機器番号パターン（[looks_like_equipment_code](../extractors/vector_extractor.py#L35)、例: `SF-P-1`, `EF-B2-3`）の行をレコードの開始とし、続く行は同じレコードにマージする（[extract_records](../extractors/vector_extractor.py#L321)）。「記記事」「注記事項」等が出てきたらデータ終端とする。
-6. **4列CSVの生成**  
-   フル表ではなく、**統合用の4列** だけを切り出す（[build_four_column_rows](../extractors/vector_extractor.py#L506)）。  
+6. **5列CSVの生成**  
+   フル表ではなく、**統合用の5列** を切り出す（[build_four_column_rows](../extractors/vector_extractor.py#L506)）。  
    列対応は次のとおり:
    - 機器番号: 元表の 0 列目
    - 名称: 1 列目
    - 動力 (50Hz)_消費電力 (KW): 9 列目
-   - 台数: 15 列目  
+   - 台数: 15 列目
+   - 図面番号: ページ単位で抽出した図面番号を各レコードに付与
 
-   ヘッダーは `["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数"]` である。この4列だけが **vector.csv** として書き出され、unified 統合の「vector 側」入力になる。
+   ヘッダーは `["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]` である。この5列が **vector.csv** として書き出され、unified 統合の「vector 側」入力になる。
 
 <a id="vector-aliases"></a>
 #### 5.2.2 列名のゆれへの対応
@@ -286,9 +298,11 @@ unified 側では、機器番号・消費電力・台数などの列名が PDF �
 | vector_name | 名称, 機器名称 |
 | vector_power_per_unit_kw | 動力 (50Hz)_消費電力 (KW), 動力(50Hz)_消費電力(KW), 動力(50Hz)_消費電力(Kw) 等 |
 | vector_count | 台数 |
+| vector_drawing_number | 図面番号, 図番, 機器表 図面番号 |
 | raster_name | 機器名称, 名称 |
 | raster_voltage | 電圧(V), 電圧（V） |
 | raster_capacity_kw | 容量(kW), 容量(KW), 容量(Kw), 容量（kW） 等 |
+| raster_drawing_number | 図面番号, 盤表 図面番号 |
 
 ヘッダーは NFKC 正規化し、空白・全角空白を除いた小文字で比較してマッチさせる（[_normalize_header](../extractors/unified_csv.py#L39)）。機器番号の結合キーは **大文字化・空白除去** した値（[_normalize_key](../extractors/unified_csv.py#L45)）を使う。
 
@@ -298,42 +312,53 @@ unified 側では、機器番号・消費電力・台数などの列名が PDF �
 Raster CSV では、**同じ機器番号** が複数行にまたがることがある（1台あたり1行の記載など）。unified では raster を **機器番号でグループ化** し、次のように扱う。
 
 - マッチした行数: `raster_match_count`（＝盤表にその機器番号が何行あるか）
-- 容量(kW): **数値として解釈できる値のみ合計**（`raster_容量(kW)_sum`）。数値化できない値は合計に含めない。
-- 機器名称・電圧・容量の生値も内部で収集するが、**現行の unified.csv（11列）には出力しない**。
+- 容量(kW): 非空・出現順・重複除去で容量候補を保持する（数値化できる値は正規化した表示値にする）。
+- 名称候補: 非空・出現順・重複除去で連結し、`盤表 記載名` に出力する。
+- 図面番号: 非空・出現順・重複除去で連結し、`盤表 図面番号` に出力する（例: `E-024,E-031`）。
 
 <a id="unified-merge"></a>
 ### 6.3 結合と判定
 
 - **主軸は Vector** である。vector の各行（機器番号）に対して、同じ機器番号の raster 集約結果を1つ紐づける。
-- **機器名**: unified の `機器名` は vector 側の名称列（`vector_name`）を採用する。
+- **raster のみ機器**: vector に存在しない機器番号が raster にある場合、その行は統合結果の末尾に追加し、`不一致内容=機器表に記載なし` として出力する。
+- **機器表 記載名**: unified の `機器表 記載名` は vector 側の名称列（`vector_name`）を NFKC + 空白除去した値を採用する。
+- **機器表 図面番号**: vector 側の図面番号を機器番号単位で集約し、非空・出現順・重複除去で連結して出力する。
 - **存在判定**: その機器番号が raster に1行以上あるか。なければ「盤表に記載なし」。
-- **台数**: vector の「台数」と raster のマッチ行数を比較。一致で ○、不一致で ×。差分は **台数差（盤表-機器表）** として出力する。
-- **容量**: vector 側は `消費電力(kW)/台 × 台数` で **機器表 容量合計(kW)** を計算。raster 側は集約した容量合計を **盤表 容量合計(kW)** として出力。その差が **容量差(kW)**。  
-  **容量判定**: 容量差の絶対値が [EPS_KW](../extractors/unified_csv.py#L36)（0.1 kW）以下なら ○、それ以外は ×。どちらかが欠損している場合は「容量欠損」として **不一致内容** に入れる。
+- **台数**: vector の「台数」と raster のマッチ行数を比較。一致で ○、不一致で ×。差分は **台数差** として出力する。
+- **容量**: `機器表 消費電力(kW)` は vector の単価列値を使用し、`盤表 容量(kW)` は raster 側容量候補の同一 index の値を使用する。  
+  `容量差(kW) = 盤表 容量(kW) - 機器表 消費電力(kW)`（行単位）。  
+  **容量判定**: 容量差の絶対値が [EPS_KW](../extractors/unified_csv.py#L42)（0.1 kW）以下なら ○、それ以外は ×。どちらかが欠損している場合は「容量欠損」として **不一致内容** に入れる。
+- **複数候補行**: 2行目以降の候補行では `照合結果` / `不一致内容` / `機器表 台数` / `盤表 台数` / `台数差` を空欄にして出力する（容量候補の表示行）。
+- **名称差異**: raster 側の正規化後ユニーク名称が2件以上なら `名称差異=あり`。1件のみの場合は `機器表 記載名` と NFKC + 空白除去で比較し、不一致なら `あり`。**照合結果の判定には使わない**。
 - **照合結果**: 存在 ○ かつ 台数 ○ かつ 容量 ○ のときのみ「一致」、それ以外は「不一致」。
 - **不一致内容**: 照合が「不一致」のとき、次の優先順で **1つだけ** 設定する。  
   1) `盤表に記載なし`  
   2) `台数差分=...`（台数が欠損時は `台数差分=欠損`）  
   3) `容量欠損`  
   4) `容量差分=...`
+  ※ raster のみ機器として追加された行では `機器表に記載なし` を設定する。
 
 <a id="unified-output"></a>
 ### 6.4 出力列（unified CSV）
 
-unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUMNS](../extractors/unified_csv.py#L23) の11列だけを出力する。
+unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUMNS](../extractors/unified_csv.py#L23) の14列だけを出力する。
 
 | 列名 |
 |------|
 | 照合結果 |
 | 不一致内容 |
 | 機器ID |
-| 機器名 |
+| 機器表 記載名 |
+| 盤表 記載名 |
+| 名称差異 |
 | 機器表 台数 |
 | 盤表 台数 |
-| 台数差（盤表-機器表） |
-| 機器表 容量合計(kW) |
-| 盤表 容量合計(kW) |
+| 台数差 |
+| 機器表 消費電力(kW) |
+| 盤表 容量(kW) |
 | 容量差(kW) |
+| 機器表 図面番号 |
+| 盤表 図面番号 |
 
 ---
 

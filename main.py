@@ -483,19 +483,23 @@ CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
     "総合判定(◯/✗)",
     "総合判定(○/×)",
 ]
+DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 盤表 - 機器表"
 
 CUSTOMER_TABLE_COLUMNS = [
     ("照合結果", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
     ("不一致内容", ["不一致内容", "不一致理由"]),
     ("機器ID", ["機器ID", "機器番号", "機械番号"]),
-    ("機器名", ["機器名", "名称", "機器名称"]),
+    ("機器表 記載名", ["機器表 記載名", "機器表記載名", "機器名", "名称", "機器名称"]),
+    ("盤表 記載名", ["盤表 記載名", "盤表記載名"]),
+    ("名称差異", ["名称差異"]),
     ("機器表 台数", ["機器表 台数", "台数", "vector_台数_numeric"]),
     ("盤表 台数", ["盤表 台数", "raster_match_count", "raster_台数_calc"]),
-    ("台数差（盤表-機器表）", ["台数差（盤表-機器表）", "台数差分"]),
+    ("台数差", ["台数差", "台数差（盤表-機器表）", "台数差分"]),
     ("機器表 消費電力(kW)", ["機器表 消費電力(kW)", "機器表 容量合計(kW)", "vector_容量(kW)_calc"]),
     ("盤表 容量(kW)", ["盤表 容量(kW)", "盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
     ("容量差(kW)", ["容量差(kW)", "容量差分(kW)"]),
-    ("図面番号", ["図面番号", "図番"]),
+    ("機器表 図面番号", ["機器表 図面番号", "機器表図面番号"]),
+    ("盤表 図面番号", ["盤表 図面番号", "図面番号", "図番"]),
 ]
 
 
@@ -534,6 +538,7 @@ def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
 
 def _build_customer_table_html(unified_csv_path: Path) -> str:
     rows = _read_csv_dict_rows(unified_csv_path)
+    diff_note_html = f'<p class="mt-2 text-xs text-stone-600">{html.escape(DIFF_NOTE_TEXT)}</p>'
     header_cells = "".join(
         f"<th class=\"border border-stone-300 bg-stone-50 px-3 py-2 text-left text-sm font-semibold\">{html.escape(label)}</th>"
         for label, _ in CUSTOMER_TABLE_COLUMNS
@@ -545,6 +550,7 @@ def _build_customer_table_html(unified_csv_path: Path) -> str:
             f"<thead><tr>{header_cells}</tr></thead>"
             "<tbody><tr><td class=\"border border-stone-300 px-3 py-6 text-center text-stone-500\""
             f" colspan=\"{len(CUSTOMER_TABLE_COLUMNS)}\">データがありません</td></tr></tbody></table>"
+            f"{diff_note_html}"
         )
 
     body_rows = []
@@ -563,6 +569,7 @@ def _build_customer_table_html(unified_csv_path: Path) -> str:
         "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
         f"<thead><tr>{header_cells}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody></table>"
+        f"{diff_note_html}"
     )
 
 
@@ -649,7 +656,7 @@ def _run_raster_job(file_bytes: bytes, source_filename: str):
             "csv_files": ["raster.csv"],
             "row_count": profile["rows"],
             "columns": profile["columns"],
-            "extractor_version": "raster-v2",
+            "extractor_version": "raster-v3",
             "extract_result": extract_result,
         },
     )

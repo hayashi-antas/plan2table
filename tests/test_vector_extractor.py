@@ -38,15 +38,23 @@ class _FakePage:
         width=1000.0,
         height=1000.0,
         tables=None,
+        words=None,
     ):
         self.name = name
         self._crop_text = crop_text
         self.width = width
         self.height = height
         self._tables = tables or []
+        self._words = words or []
 
     def crop(self, bbox):
         return _FakeCrop(self._crop_text)
+
+    def extract_text(self):
+        return self._crop_text
+
+    def extract_words(self, **kwargs):
+        return self._words
 
     def find_tables(self):
         return self._tables
@@ -463,3 +471,84 @@ def test_extract_pdf_to_rows_raises_when_no_target_tables_in_any_page(tmp_path, 
 
     with pytest.raises(ValueError, match="No target tables found in any PDF page."):
         ve.extract_pdf_to_rows(pdf_path)
+
+
+def test_extract_drawing_number_from_page_prefers_label_line():
+    page = _FakePage(crop_text="図面番号 E-024\n")
+    assert ve.extract_drawing_number_from_page(page) == "E-024"
+
+
+def test_normalize_drawing_number_candidate_strips_trailing_punctuation():
+    assert ve.normalize_drawing_number_candidate("E-024,") == "E-024"
+    assert ve.normalize_drawing_number_candidate("E-024)") == "E-024"
+
+
+def test_extract_drawing_number_from_page_bottom_right_word_with_punctuation():
+    page = _FakePage(
+        crop_text="",
+        words=[
+            {"text": "機器番号", "x0": 120.0, "top": 120.0},
+            {"text": "E-024,", "x0": 800.0, "top": 760.0},
+        ],
+    )
+    assert ve.extract_drawing_number_from_page(page) == "E-024"
+
+
+def test_extract_pdf_to_rows_returns_drawing_cache_without_reopening_pdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "equipment.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    page = _FakePage("page-1")
+    monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF([page]))
+    monkeypatch.setattr(ve, "pick_target_tables", lambda _: [_FakeTable((0, 0, 1, 1)), _FakeTable((1, 0, 2, 1))])
+    monkeypatch.setattr(ve, "collect_grid_lines", lambda page, bbox: ([0.0], [0.0]))
+    monkeypatch.setattr(ve, "extract_grid_rows", lambda page, vertical, horizontal: [["raw"]])
+    monkeypatch.setattr(ve, "reconstruct_headers_from_pdf", lambda page, bbox, vertical: (["H1"], ["H2"]))
+
+    records_queue = iter(
+        [
+            ([["A-1"]], 0),
+            ([["A-2"]], 0),
+        ]
+    )
+    monkeypatch.setattr(ve, "extract_records", lambda rows: next(records_queue))
+
+    draw_calls = {"count": 0}
+
+    def fake_extract_drawing_number_from_page(_page):
+        draw_calls["count"] += 1
+        return "M-001"
+
+    monkeypatch.setattr(ve, "extract_drawing_number_from_page", fake_extract_drawing_number_from_page)
+
+    rows, note_rows, headers, page_indexes, drawing_by_page = ve.extract_pdf_to_rows(
+        pdf_path,
+        include_record_page_indexes=True,
+        include_page_drawing_numbers=True,
+    )
+
+    assert rows == [["H1"], ["H2"], ["A-1"], ["A-2"]]
+    assert note_rows == 0
+    assert headers == [["H1"], ["H2"]]
+    assert page_indexes == [0, 0]
+    assert drawing_by_page == {0: "M-001"}
+    assert draw_calls["count"] == 1
+
+
+def test_extract_pdf_to_rows_rejects_drawing_cache_without_page_indexes(tmp_path):
+    pdf_path = tmp_path / "equipment.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    with pytest.raises(ValueError, match="include_page_drawing_numbers requires include_record_page_indexes=True"):
+        ve.extract_pdf_to_rows(pdf_path, include_page_drawing_numbers=True)
+
+
+def test_build_four_column_rows_includes_drawing_number_when_provided():
+    rows = [
+        ["h1"] * ve.CELL_COUNT,
+        ["h2"] * ve.CELL_COUNT,
+        _row("A-1", "排風機", "1.5", "1"),
+    ]
+    four_rows = ve.build_four_column_rows(rows, drawing_numbers=["M-001"])
+    assert four_rows[0] == ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]
+    assert four_rows[1] == ["A-1", "排風機", "1.5", "1", "M-001"]
