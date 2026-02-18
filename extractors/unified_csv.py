@@ -25,7 +25,9 @@ OUTPUT_COLUMNS = [
     "照合結果",
     "不一致内容",
     "機器ID",
-    "機器名",
+    "機器表記載名",
+    "盤表記載名",
+    "名称差異",
     "機器表 台数",
     "盤表 台数",
     "台数差（盤表-機器表）",
@@ -106,12 +108,48 @@ def _pick_capacity_variant(
     return "", None
 
 
+def _normalize_name_for_compare(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(text or "")).strip()
+    normalized = normalized.replace(" ", "").replace("　", "")
+    return normalized.lower()
+
+
+def _normalize_name_for_output(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(text or "")).strip()
+    return normalized.replace(" ", "").replace("　", "")
+
+
+def _collect_unique_non_blank(values: Iterable[str]) -> List[str]:
+    unique_values: List[str] = []
+    seen = set()
+    for value in values:
+        text = unicodedata.normalize("NFKC", str(value or "")).strip()
+        if not text:
+            continue
+        normalized = _normalize_name_for_compare(text)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_values.append(text)
+    return unique_values
+
+
 def _pick_first_non_blank(values: Iterable[str]) -> str:
     for value in values:
         text = unicodedata.normalize("NFKC", str(value or "")).strip()
         if text:
             return text
     return ""
+
+
+def _resolve_name_warning(vector_name: str, raster_name_candidates: List[str]) -> str:
+    if not raster_name_candidates:
+        return ""
+    if len(raster_name_candidates) >= 2:
+        return "あり"
+    vector_norm = _normalize_name_for_compare(vector_name)
+    raster_norm = _normalize_name_for_compare(raster_name_candidates[0])
+    return "" if vector_norm == raster_norm else "あり"
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -160,6 +198,7 @@ def merge_vector_raster_csv(
         agg = raster_agg.get(key)
         if agg is None:
             agg = {
+                "equipment_ids": [],
                 "names": [],
                 "voltages": [],
                 "capacity_values": [],
@@ -169,6 +208,7 @@ def merge_vector_raster_csv(
             raster_agg[key] = agg
 
         agg["match_count"] = int(agg["match_count"]) + 1
+        agg["equipment_ids"].append(row.get(raster_id_header, ""))  # type: ignore[index]
         agg["names"].append(row.get(raster_name_header, ""))  # type: ignore[index]
         agg["voltages"].append(row.get(raster_voltage_header, ""))  # type: ignore[index]
         capacity_raw = row.get(raster_capacity_header, "")
@@ -177,22 +217,34 @@ def merge_vector_raster_csv(
             agg["drawing_numbers"].append(row.get(raster_drawing_number_header, ""))  # type: ignore[index]
 
     out_rows: List[Dict[str, str]] = []
+    vector_keys: set[str] = set()
     for vector_row in vector_rows:
         equipment_id = vector_row.get(vector_id_header, "")
         key = _normalize_key(equipment_id)
+        if key:
+            vector_keys.add(key)
         agg = raster_agg.get(key)
 
         power_per_unit_raw = vector_row.get(vector_power_header, "")
         vector_count = _parse_number(vector_row.get(vector_count_header, ""))
-        vector_name = vector_row.get(vector_name_header, "") if vector_name_header else ""
+        vector_name = _normalize_name_for_output(
+            vector_row.get(vector_name_header, "") if vector_name_header else ""
+        )
 
         raster_match_count = 0
         raster_capacity_variants: List[Tuple[str, Optional[float]]] = []
+        raster_name_candidates: List[str] = []
+        raster_name_candidates_display = ""
+        name_warning = ""
         drawing_number = ""
         if agg:
             raster_match_count = int(agg["match_count"])
             raster_capacity_variants = _collect_capacity_variants(agg["capacity_values"])  # type: ignore[arg-type]
-            drawing_number = _pick_first_non_blank(agg["drawing_numbers"])  # type: ignore[arg-type]
+            raster_name_candidates = _collect_unique_non_blank(agg["names"])  # type: ignore[arg-type]
+            raster_name_candidates_display = ",".join(raster_name_candidates)
+            name_warning = _resolve_name_warning(vector_name, raster_name_candidates)
+            drawing_numbers = _collect_unique_non_blank(agg["drawing_numbers"])  # type: ignore[arg-type]
+            drawing_number = ",".join(drawing_numbers)
 
         vector_capacity_variants = _collect_capacity_variants([power_per_unit_raw])
 
@@ -237,7 +289,9 @@ def merge_vector_raster_csv(
                 "照合結果": "一致" if overall_ok else "不一致",
                 "不一致内容": mismatch_reason,
                 "機器ID": equipment_id,
-                "機器名": vector_name,
+                "機器表記載名": vector_name,
+                "盤表記載名": raster_name_candidates_display,
+                "名称差異": name_warning,
                 "機器表 台数": _format_number(vector_count),
                 "盤表 台数": str(raster_match_count),
                 "台数差（盤表-機器表）": _format_number(count_diff),
@@ -252,6 +306,42 @@ def merge_vector_raster_csv(
                 out_row["機器表 台数"] = ""
                 out_row["盤表 台数"] = ""
                 out_row["台数差（盤表-機器表）"] = ""
+            out_rows.append(out_row)
+
+    for key, agg in raster_agg.items():
+        if key in vector_keys:
+            continue
+
+        equipment_id = _pick_first_non_blank(agg["equipment_ids"]) or key  # type: ignore[arg-type]
+        raster_match_count = int(agg["match_count"])
+        raster_capacity_variants = _collect_capacity_variants(agg["capacity_values"])  # type: ignore[arg-type]
+        raster_name_candidates = _collect_unique_non_blank(agg["names"])  # type: ignore[arg-type]
+        raster_name_candidates_display = ",".join(raster_name_candidates)
+        drawing_numbers = _collect_unique_non_blank(agg["drawing_numbers"])  # type: ignore[arg-type]
+        drawing_number = ",".join(drawing_numbers)
+
+        line_count = max(1, len(raster_capacity_variants))
+        for line_index in range(line_count):
+            raster_capacity_display, _ = _pick_capacity_variant(raster_capacity_variants, line_index)
+            out_row = {
+                "照合結果": "不一致",
+                "不一致内容": "機器表に記載なし",
+                "機器ID": equipment_id,
+                "機器表記載名": "",
+                "盤表記載名": raster_name_candidates_display,
+                "名称差異": "",
+                "機器表 台数": "",
+                "盤表 台数": str(raster_match_count),
+                "台数差（盤表-機器表）": "",
+                "機器表 消費電力(kW)": "",
+                "盤表 容量(kW)": raster_capacity_display,
+                "容量差(kW)": "",
+                "図面番号": drawing_number,
+            }
+            if line_index > 0:
+                out_row["照合結果"] = ""
+                out_row["不一致内容"] = ""
+                out_row["盤表 台数"] = ""
             out_rows.append(out_row)
 
     out_csv_path.parent.mkdir(parents=True, exist_ok=True)

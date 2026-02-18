@@ -157,7 +157,9 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "照合結果" in resp.text
     assert "不一致内容" in resp.text
     assert "機器ID" in resp.text
-    assert "機器名" in resp.text
+    assert "機器表記載名" in resp.text
+    assert "盤表記載名" in resp.text
+    assert "名称差異" in resp.text
     assert "機器表 台数" in resp.text
     assert "盤表 台数" in resp.text
     assert "台数差（盤表-機器表）" in resp.text
@@ -165,6 +167,8 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "盤表 容量(kW)" in resp.text
     assert "容量差(kW)" in resp.text
     assert "図面番号" in resp.text
+    assert "送風機" in resp.text
+    assert "あり" in resp.text
     assert "E-024" in resp.text
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
@@ -172,6 +176,8 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     dl = client.get(f"/jobs/{unified_job_id}/unified.csv")
     assert dl.status_code == 200
     assert "照合結果" in dl.text
+    assert "盤表記載名" in dl.text
+    assert "名称差異" in dl.text
     assert "図面番号" in dl.text
     assert "E-024" in dl.text
 
@@ -323,6 +329,7 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
                 "A-1,送風機,200,1.5",
                 "A-1,送風機,200,2.0",
                 "A-1,予備,100,1.5",
+                "R-9,還気ファン,200,0.75",
             ]
         )
         + "\n",
@@ -353,10 +360,12 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     )
 
     rows = list(csv.DictReader(io.StringIO(dl.text)))
-    assert len(rows) == 2
+    assert len(rows) == 3
     row = rows[0]
     assert row["機器ID"] == "A-1"
-    assert row["機器名"] == "排風機"
+    assert row["機器表記載名"] == "排風機"
+    assert row["盤表記載名"] == "送風機,予備"
+    assert row["名称差異"] == "あり"
     assert float(row["機器表 台数"]) == 2.0
     assert row["盤表 台数"] == "3"
     assert float(row["台数差（盤表-機器表）"]) == 1.0
@@ -369,6 +378,8 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
 
     row_extra = rows[1]
     assert row_extra["機器ID"] == "A-1"
+    assert row_extra["盤表記載名"] == "送風機,予備"
+    assert row_extra["名称差異"] == "あり"
     assert row_extra["照合結果"] == ""
     assert row_extra["不一致内容"] == ""
     assert row_extra["機器表 台数"] == ""
@@ -377,6 +388,20 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert float(row_extra["盤表 容量(kW)"]) == 2.0
     assert float(row_extra["容量差(kW)"]) == 0.5
     assert row_extra["図面番号"] == ""
+
+    raster_only = rows[2]
+    assert raster_only["機器ID"] == "R-9"
+    assert raster_only["照合結果"] == "不一致"
+    assert raster_only["不一致内容"] == "機器表に記載なし"
+    assert raster_only["機器表記載名"] == ""
+    assert raster_only["盤表記載名"] == "還気ファン"
+    assert raster_only["名称差異"] == ""
+    assert raster_only["機器表 台数"] == ""
+    assert raster_only["盤表 台数"] == "1"
+    assert raster_only["機器表 消費電力(kW)"] == ""
+    assert float(raster_only["盤表 容量(kW)"]) == 0.75
+    assert raster_only["容量差(kW)"] == ""
+    assert raster_only["図面番号"] == ""
 
     m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
     assert m
