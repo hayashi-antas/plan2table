@@ -387,6 +387,7 @@ unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUM
 
 お客さん向けの `/me-check` は「2ファイルを一度に送って全部やる」フローであり、Develop は「Raster / Vector / Unified を個別に実行して挙動を確認する」ためのコンソールである。
 
+[![Image from Gyazo](https://i.gyazo.com/c8e65fb9233c4d8f9be622297efe286c.jpg)](https://gyazo.com/c8e65fb9233c4d8f9be622297efe286c)
 ---
 
 <a id="env"></a>
