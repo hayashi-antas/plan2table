@@ -17,9 +17,9 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     vector_csv.write_text(
         "\n".join(
             [
-                "機械番号,名称,動力(50Hz)_消費電力(Kw),台数",
-                "A-1,排風機,1.5,2",
-                "B-1,送風機,2.0,1",
+                "機械番号,名称,動力(50Hz)_消費電力(Kw),台数,図面番号",
+                "A-1,排風機,1.5,2,M-101",
+                "B-1,送風機,2.0,1,M-102",
             ]
         )
         + "\n",
@@ -52,16 +52,17 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
 
     a1 = rows[0]
     assert a1["機器ID"] == "A-1"
-    assert a1["機器表記載名"] == "排風機"
+    assert a1["機器表 記載名"] == "排風機"
     assert float(a1["機器表 台数"]) == 2.0
     assert a1["盤表 台数"] == "3"
-    assert float(a1["台数差（盤表-機器表）"]) == 1.0
-    assert a1["盤表記載名"] == "送風機,予備"
+    assert float(a1["台数差"]) == 1.0
+    assert a1["盤表 記載名"] == "送風機,予備"
     assert a1["名称差異"] == "あり"
     assert float(a1["機器表 消費電力(kW)"]) == 1.5
     assert float(a1["盤表 容量(kW)"]) == 1.5
     assert float(a1["容量差(kW)"]) == 0.0
-    assert a1["図面番号"] == "E-024,E-031"
+    assert a1["機器表 図面番号"] == "M-101"
+    assert a1["盤表 図面番号"] == "E-024,E-031"
     assert a1["照合結果"] == "不一致"
     assert a1["不一致内容"] == "台数差分=1"
 
@@ -71,9 +72,10 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     assert a1_extra["不一致内容"] == ""
     assert a1_extra["機器表 台数"] == ""
     assert a1_extra["盤表 台数"] == ""
-    assert a1_extra["盤表記載名"] == "送風機,予備"
+    assert a1_extra["盤表 記載名"] == "送風機,予備"
     assert a1_extra["名称差異"] == "あり"
-    assert a1_extra["図面番号"] == "E-024,E-031"
+    assert a1_extra["機器表 図面番号"] == "M-101"
+    assert a1_extra["盤表 図面番号"] == "E-024,E-031"
     assert float(a1_extra["機器表 消費電力(kW)"]) == 1.5
     assert float(a1_extra["盤表 容量(kW)"]) == 2.0
     assert float(a1_extra["容量差(kW)"]) == 0.5
@@ -81,10 +83,11 @@ def test_merge_vector_raster_with_aliases_and_order(tmp_path):
     b1 = rows[2]
     assert b1["機器ID"] == "B-1"
     assert b1["盤表 台数"] == "0"
-    assert b1["盤表記載名"] == ""
+    assert b1["盤表 記載名"] == ""
     assert b1["名称差異"] == ""
     assert b1["盤表 容量(kW)"] == ""
-    assert b1["図面番号"] == ""
+    assert b1["機器表 図面番号"] == "M-102"
+    assert b1["盤表 図面番号"] == ""
     assert b1["照合結果"] == "不一致"
     assert b1["不一致内容"] == "盤表に記載なし"
 
@@ -114,8 +117,9 @@ def test_merge_sets_kw_missing_reason_when_capacity_diff_is_empty(tmp_path):
     row = rows[0]
     assert row["照合結果"] == "不一致"
     assert row["不一致内容"] == "容量欠損"
-    assert row["図面番号"] == ""
-    assert row["盤表記載名"] == "送風機"
+    assert row["機器表 図面番号"] == ""
+    assert row["盤表 図面番号"] == ""
+    assert row["盤表 記載名"] == "送風機"
     assert row["名称差異"] == "あり"
 
 
@@ -142,9 +146,10 @@ def test_merge_name_warning_uses_normalized_comparison(tmp_path):
     rows = _read_rows(out_csv)
     assert len(rows) == 1
     row = rows[0]
-    assert row["機器表記載名"] == "送風機"
-    assert row["盤表記載名"] == "送風機"
+    assert row["機器表 記載名"] == "送風機"
+    assert row["盤表 記載名"] == "送風機"
     assert row["名称差異"] == ""
+    assert row["機器表 図面番号"] == ""
 
 
 def test_merge_appends_raster_only_rows(tmp_path):
@@ -181,12 +186,13 @@ def test_merge_appends_raster_only_rows(tmp_path):
     assert raster_only["機器ID"] == "R-9"
     assert raster_only["照合結果"] == "不一致"
     assert raster_only["不一致内容"] == "機器表に記載なし"
-    assert raster_only["機器表記載名"] == ""
-    assert raster_only["盤表記載名"] == "還気ファン"
+    assert raster_only["機器表 記載名"] == ""
+    assert raster_only["盤表 記載名"] == "還気ファン"
     assert raster_only["名称差異"] == ""
     assert raster_only["機器表 台数"] == ""
     assert raster_only["盤表 台数"] == "1"
     assert raster_only["機器表 消費電力(kW)"] == ""
     assert raster_only["盤表 容量(kW)"] == "0.75"
     assert raster_only["容量差(kW)"] == ""
-    assert raster_only["図面番号"] == "E-099"
+    assert raster_only["機器表 図面番号"] == ""
+    assert raster_only["盤表 図面番号"] == "E-099"

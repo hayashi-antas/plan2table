@@ -60,8 +60,8 @@
   - **機器表PDF**（[equipment_file](../main.py#L871)）: 換気機器表など、表形式のPDF。1ページ目に2つの横並び表がある想定。
   - **盤表PDF**（[panel_file](../main.py#L871)）: 電力制御盤表。1ページ目を画像化してOCRする想定。
 - **出力**
-  - **HTML**: 照合結果の主要列（照合結果・不一致内容・機器ID・機器表記載名・機器表 台数・盤表 台数・台数差・容量差など）を簡易表示。
-  - **CSV**（`unified.csv`）: 統合結果の13列（[OUTPUT_COLUMNS](../extractors/unified_csv.py#L23)）。ダウンロード用エンドポイント `GET /jobs/{job_id}/unified.csv` で取得。
+- **HTML**: 照合結果の主要列（照合結果・不一致内容・機器ID・機器表 記載名・機器表 台数・盤表 台数・台数差・容量差など）を簡易表示。
+  - **CSV**（`unified.csv`）: 統合結果の14列（[OUTPUT_COLUMNS](../extractors/unified_csv.py#L23)）。ダウンロード用エンドポイント `GET /jobs/{job_id}/unified.csv` で取得。
 
 ---
 
@@ -93,16 +93,17 @@
 | 照合結果 | 照合結果（値は「一致」「不一致」に正規化） |
 | 不一致内容 | 不一致内容、不一致理由 |
 | 機器ID | 機器ID、機器番号、機械番号 |
-| 機器表記載名 | 機器表記載名、機器名、名称、機器名称 |
-| 盤表記載名 | 盤表記載名 |
+| 機器表 記載名 | 機器表 記載名、機器表記載名、機器名、名称、機器名称 |
+| 盤表 記載名 | 盤表 記載名、盤表記載名 |
 | 名称差異 | 名称差異 |
 | 機器表 台数 | 機器表 台数、台数、vector_台数_numeric |
 | 盤表 台数 | 盤表 台数、raster_match_count、raster_台数_calc |
-| 台数差（盤表-機器表） | 台数差（盤表-機器表）、台数差分 |
+| 台数差 | 台数差、台数差（盤表-機器表）、台数差分 |
 | 機器表 消費電力(kW) | 機器表 消費電力(kW)、機器表 容量合計(kW)、vector_容量(kW)_calc |
 | 盤表 容量(kW) | 盤表 容量(kW)、盤表 容量合計(kW)、raster_容量(kW)_sum |
 | 容量差(kW) | 容量差(kW)、容量差分(kW) |
-| 図面番号 | 図面番号 |
+| 機器表 図面番号 | 機器表 図面番号、機器表図面番号 |
+| 盤表 図面番号 | 盤表 図面番号、図面番号 |
 
 ---
 
@@ -117,7 +118,7 @@
 1. **Panel → Raster**  
    [panel_file](../main.py#L871) のバイト列を [_run_raster_job](../main.py#L625) に渡す。盤表PDFを画像化し、Vision API でOCRして **raster.csv** を生成し、raster ジョブとして保存する。
 2. **Equipment → Vector**  
-   [equipment_file](../main.py#L871) のバイト列を [_run_vector_job](../main.py#L658) に渡す。機器表PDFから pdfplumber で表を抽出し、**vector.csv**（4列）を生成し、vector ジョブとして保存する。
+   [equipment_file](../main.py#L871) のバイト列を [_run_vector_job](../main.py#L658) に渡す。機器表PDFから pdfplumber で表を抽出し、**vector.csv**（5列）を生成し、vector ジョブとして保存する。
 3. **Unified**  
    [_run_unified_job](../main.py#L694)(raster_job_id, vector_job_id) で、既存の raster.csv と vector.csv を読み、[merge_vector_raster_csv](../extractors/unified_csv.py#L104) により **unified.csv** を生成する。結果は unified ジョブとして保存され、その `job_id` で CSV ダウンロードと簡易表の表示に使われる。
 
@@ -254,15 +255,16 @@ pandas を使うと「行のリストができたあと」のフィルタや CSV
    表領域内の単語から、1行目データより上をヘッダーとみなし、グループ行・サブ行・単位行を再構成する（[reconstruct_headers_from_pdf](../extractors/vector_extractor.py#L187)）。「換気機器表」などのタイトルや、最初の機器番号の位置からデータ開始位置を決め、その上をヘッダーとして扱う。
 5. **データ行の抽出**  
    先頭列が機器番号パターン（[looks_like_equipment_code](../extractors/vector_extractor.py#L35)、例: `SF-P-1`, `EF-B2-3`）の行をレコードの開始とし、続く行は同じレコードにマージする（[extract_records](../extractors/vector_extractor.py#L321)）。「記記事」「注記事項」等が出てきたらデータ終端とする。
-6. **4列CSVの生成**  
-   フル表ではなく、**統合用の4列** だけを切り出す（[build_four_column_rows](../extractors/vector_extractor.py#L506)）。  
+6. **5列CSVの生成**  
+   フル表ではなく、**統合用の5列** を切り出す（[build_four_column_rows](../extractors/vector_extractor.py#L506)）。  
    列対応は次のとおり:
    - 機器番号: 元表の 0 列目
    - 名称: 1 列目
    - 動力 (50Hz)_消費電力 (KW): 9 列目
-   - 台数: 15 列目  
+   - 台数: 15 列目
+   - 図面番号: ページ単位で抽出した図面番号を各レコードに付与
 
-   ヘッダーは `["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数"]` である。この4列だけが **vector.csv** として書き出され、unified 統合の「vector 側」入力になる。
+   ヘッダーは `["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]` である。この5列が **vector.csv** として書き出され、unified 統合の「vector 側」入力になる。
 
 <a id="vector-aliases"></a>
 #### 5.2.2 列名のゆれへの対応
@@ -294,6 +296,7 @@ unified 側では、機器番号・消費電力・台数などの列名が PDF �
 | vector_name | 名称, 機器名称 |
 | vector_power_per_unit_kw | 動力 (50Hz)_消費電力 (KW), 動力(50Hz)_消費電力(KW), 動力(50Hz)_消費電力(Kw) 等 |
 | vector_count | 台数 |
+| vector_drawing_number | 図面番号, 図番 |
 | raster_name | 機器名称, 名称 |
 | raster_voltage | 電圧(V), 電圧（V） |
 | raster_capacity_kw | 容量(kW), 容量(KW), 容量(Kw), 容量（kW） 等 |
@@ -307,20 +310,21 @@ Raster CSV では、**同じ機器番号** が複数行にまたがることが�
 
 - マッチした行数: `raster_match_count`（＝盤表にその機器番号が何行あるか）
 - 容量(kW): **数値として解釈できる値のみ合計**（`raster_容量(kW)_sum`）。数値化できない値は合計に含めない。
-- 名称候補: 非空・出現順・重複除去で連結し、`盤表記載名` に出力する。
-- 図面番号: 非空・出現順・重複除去で連結し、`図面番号` に出力する（例: `E-024,E-031`）。
+- 名称候補: 非空・出現順・重複除去で連結し、`盤表 記載名` に出力する。
+- 図面番号: 非空・出現順・重複除去で連結し、`盤表 図面番号` に出力する（例: `E-024,E-031`）。
 
 <a id="unified-merge"></a>
 ### 6.3 結合と判定
 
 - **主軸は Vector** である。vector の各行（機器番号）に対して、同じ機器番号の raster 集約結果を1つ紐づける。
 - **raster のみ機器**: vector に存在しない機器番号が raster にある場合、その行は統合結果の末尾に追加し、`不一致内容=機器表に記載なし` として出力する。
-- **機器表記載名**: unified の `機器表記載名` は vector 側の名称列（`vector_name`）を採用する。
+- **機器表 記載名**: unified の `機器表 記載名` は vector 側の名称列（`vector_name`）を採用する。
+- **機器表 図面番号**: vector 側の図面番号を機器番号単位で集約し、非空・出現順・重複除去で連結して出力する。
 - **存在判定**: その機器番号が raster に1行以上あるか。なければ「盤表に記載なし」。
-- **台数**: vector の「台数」と raster のマッチ行数を比較。一致で ○、不一致で ×。差分は **台数差（盤表-機器表）** として出力する。
+- **台数**: vector の「台数」と raster のマッチ行数を比較。一致で ○、不一致で ×。差分は **台数差** として出力する。
 - **容量**: vector 側は `消費電力(kW)/台 × 台数` で **機器表 容量合計(kW)** を計算。raster 側は集約した容量合計を **盤表 容量合計(kW)** として出力。その差が **容量差(kW)**。  
   **容量判定**: 容量差の絶対値が [EPS_KW](../extractors/unified_csv.py#L36)（0.1 kW）以下なら ○、それ以外は ×。どちらかが欠損している場合は「容量欠損」として **不一致内容** に入れる。
-- **名称差異**: `機器表記載名`（vector）と `盤表記載名`（raster）を NFKC + 空白除去で比較し、差異がある場合は `名称差異=あり` を出力する。**照合結果の判定には使わない**。
+- **名称差異**: `機器表 記載名`（vector）と `盤表 記載名`（raster）を NFKC + 空白除去で比較し、差異がある場合は `名称差異=あり` を出力する。**照合結果の判定には使わない**。
 - **照合結果**: 存在 ○ かつ 台数 ○ かつ 容量 ○ のときのみ「一致」、それ以外は「不一致」。
 - **不一致内容**: 照合が「不一致」のとき、次の優先順で **1つだけ** 設定する。  
   1) `盤表に記載なし`  
@@ -332,23 +336,24 @@ Raster CSV では、**同じ機器番号** が複数行にまたがることが�
 <a id="unified-output"></a>
 ### 6.4 出力列（unified CSV）
 
-unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUMNS](../extractors/unified_csv.py#L23) の13列だけを出力する。
+unified CSV は **vector の生データ列は含めず**、次の [OUTPUT_COLUMNS](../extractors/unified_csv.py#L23) の14列だけを出力する。
 
 | 列名 |
 |------|
 | 照合結果 |
 | 不一致内容 |
 | 機器ID |
-| 機器表記載名 |
-| 盤表記載名 |
+| 機器表 記載名 |
+| 盤表 記載名 |
 | 名称差異 |
 | 機器表 台数 |
 | 盤表 台数 |
-| 台数差（盤表-機器表） |
+| 台数差 |
 | 機器表 消費電力(kW) |
 | 盤表 容量(kW) |
 | 容量差(kW) |
-| 図面番号 |
+| 機器表 図面番号 |
+| 盤表 図面番号 |
 
 ---
 

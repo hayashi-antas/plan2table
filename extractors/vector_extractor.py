@@ -22,6 +22,8 @@ import pdfplumber
 
 CELL_COUNT = 19
 SPLIT_SUFFIX_PATTERN = re.compile(r"^-\d+$")
+DRAWING_NO_PATTERN = re.compile(r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$")
+DRAWING_NO_SEARCH_PATTERN = re.compile(r"[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*")
 
 
 def normalize_cell(value: str | None) -> str:
@@ -40,6 +42,66 @@ def normalize_equipment_code(value: str | None) -> str:
     text = text.replace("~", "～")
     text = text.replace("〜", "～")
     return text
+
+
+def normalize_drawing_number_candidate(value: str | None) -> str:
+    text = unicodedata.normalize("NFKC", normalize_cell(value or "")).upper()
+    text = text.replace(" ", "").replace("　", "")
+    text = re.sub(r"[‐‑‒–—―ー−－]", "-", text)
+    return text if DRAWING_NO_PATTERN.fullmatch(text) else ""
+
+
+def _extract_drawing_candidates_from_text(text: str) -> List[str]:
+    normalized = unicodedata.normalize("NFKC", text or "").upper()
+    normalized = re.sub(r"[‐‑‒–—―ー−－]", "-", normalized)
+    candidates: List[str] = []
+    for matched in DRAWING_NO_SEARCH_PATTERN.findall(normalized):
+        candidate = normalize_drawing_number_candidate(matched)
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def extract_drawing_number_from_page(page: pdfplumber.page.Page) -> str:
+    page_text = ""
+    if hasattr(page, "extract_text"):
+        page_text = str(page.extract_text() or "")
+    if not page_text and hasattr(page, "crop"):
+        page_text = str(page.crop((0, 0, page.width, page.height)).extract_text() or "")
+
+    if page_text:
+        for line in page_text.splitlines():
+            line_norm = unicodedata.normalize("NFKC", line or "").replace(" ", "").replace("　", "")
+            if "図面番号" not in line_norm and ("図面" not in line_norm or "番号" not in line_norm):
+                continue
+            candidates = _extract_drawing_candidates_from_text(line)
+            if candidates:
+                return candidates[0]
+
+    if not hasattr(page, "extract_words"):
+        return ""
+
+    words = page.extract_words(
+        x_tolerance=1,
+        y_tolerance=1,
+        keep_blank_chars=False,
+        use_text_flow=True,
+    )
+    if not words:
+        return ""
+
+    bottom_right_candidates: List[str] = []
+    for word in words:
+        x0 = float(word.get("x0", 0.0))
+        top = float(word.get("top", 0.0))
+        if x0 < page.width * 0.65 or top < page.height * 0.65:
+            continue
+        candidate = normalize_drawing_number_candidate(str(word.get("text", "")))
+        if candidate and candidate not in bottom_right_candidates:
+            bottom_right_candidates.append(candidate)
+    if bottom_right_candidates:
+        return bottom_right_candidates[0]
+    return ""
 
 
 def looks_like_equipment_code(text: str) -> bool:
@@ -923,14 +985,26 @@ def build_single_header_csv_rows(rows: Sequence[Sequence[str]]) -> List[List[str
     return [flat_header] + data_rows
 
 
-def build_four_column_rows(rows: Sequence[Sequence[str]]) -> List[List[str]]:
+def build_four_column_rows(
+    rows: Sequence[Sequence[str]], drawing_numbers: Sequence[str] | None = None
+) -> List[List[str]]:
     if len(rows) < 3:
         raise ValueError("Need at least 2 header rows and 1 data row for 4-column CSV.")
     data_rows = [list(r[:CELL_COUNT]) for r in rows[2:]]
+    if drawing_numbers is not None and len(drawing_numbers) != len(data_rows):
+        raise ValueError(
+            "Length mismatch: drawing_numbers must align with data rows "
+            f"({len(drawing_numbers)} != {len(data_rows)})."
+        )
     header = ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数"]
+    if drawing_numbers is not None:
+        header.append("図面番号")
     out = [header]
-    for r in data_rows:
-        out.append([r[0], r[1], r[9], r[15]])
+    for index, r in enumerate(data_rows):
+        row = [r[0], r[1], r[9], r[15]]
+        if drawing_numbers is not None:
+            row.append(drawing_numbers[index])
+        out.append(row)
     return out
 
 
@@ -1015,7 +1089,9 @@ def validate_headers(actual_header: Sequence[Sequence[str]], expected_xlsx: Path
     return False
 
 
-def extract_pdf_to_rows(pdf_path: Path) -> Tuple[List[List[str]], int, List[List[str]]]:
+def extract_pdf_to_rows(
+    pdf_path: Path, *, include_record_page_indexes: bool = False
+) -> Tuple[List[List[str]], int, List[List[str]]] | Tuple[List[List[str]], int, List[List[str]], List[int]]:
     with pdfplumber.open(str(pdf_path)) as pdf:
         if not pdf.pages:
             raise ValueError("PDF has no pages.")
@@ -1023,8 +1099,9 @@ def extract_pdf_to_rows(pdf_path: Path) -> Tuple[List[List[str]], int, List[List
         merged_records: List[List[str]] = []
         note_rows_total = 0
         header_rows: List[List[str]] | None = None
+        record_page_indexes: List[int] = []
 
-        for page in pdf.pages:
+        for page_index, page in enumerate(pdf.pages):
             target_tables = pick_target_tables(page)
             if target_tables:
                 tables_to_process = target_tables
@@ -1057,20 +1134,41 @@ def extract_pdf_to_rows(pdf_path: Path) -> Tuple[List[List[str]], int, List[List
                 records, note_rows = extract_records(rows)
                 note_rows_total += note_rows
                 merged_records.extend(records)
+                if include_record_page_indexes:
+                    record_page_indexes.extend([page_index] * len(records))
 
         if header_rows is None:
             raise ValueError("No target tables found in any PDF page.")
         final_rows = header_rows + merged_records
+        if include_record_page_indexes:
+            return final_rows, note_rows_total, header_rows, record_page_indexes
         return final_rows, note_rows_total, header_rows
 
 
+def _resolve_record_drawing_numbers(pdf_path: Path, record_page_indexes: Sequence[int]) -> List[str]:
+    if not record_page_indexes:
+        return []
+    page_indexes = sorted(set(record_page_indexes))
+    drawing_by_page: Dict[int, str] = {}
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        for page_index in page_indexes:
+            if page_index < 0 or page_index >= len(pdf.pages):
+                drawing_by_page[page_index] = ""
+                continue
+            drawing_by_page[page_index] = extract_drawing_number_from_page(pdf.pages[page_index])
+    return [drawing_by_page.get(page_index, "") for page_index in record_page_indexes]
+
+
 def extract_vector_pdf_four_columns(pdf_path: Path, out_csv_path: Path) -> Dict[str, object]:
-    """Extract vector PDF table and write a fixed 4-column CSV."""
+    """Extract vector PDF table and write a fixed CSV for unified merge."""
     if not pdf_path.exists():
         raise FileNotFoundError(f"Input PDF not found: {pdf_path}")
 
-    rows, note_rows, _ = extract_pdf_to_rows(pdf_path)
-    four_rows = build_four_column_rows(rows)
+    rows, note_rows, _, record_page_indexes = extract_pdf_to_rows(
+        pdf_path, include_record_page_indexes=True
+    )
+    drawing_numbers = _resolve_record_drawing_numbers(pdf_path, record_page_indexes)
+    four_rows = build_four_column_rows(rows, drawing_numbers=drawing_numbers)
     write_csv(out_csv_path, four_rows)
 
     columns = four_rows[0] if four_rows else []
@@ -1114,7 +1212,7 @@ def main() -> None:
     parser.add_argument(
         "--four-column",
         action="store_true",
-        help="Also output a 4-column CSV (機器番号, 名称, 動力(50Hz)_消費電力, 台数).",
+        help="Also output a unified CSV (機器番号, 名称, 動力(50Hz)_消費電力, 台数, 図面番号).",
     )
     parser.add_argument(
         "--output-csv-four",

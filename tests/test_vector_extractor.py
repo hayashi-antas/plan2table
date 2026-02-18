@@ -38,15 +38,23 @@ class _FakePage:
         width=1000.0,
         height=1000.0,
         tables=None,
+        words=None,
     ):
         self.name = name
         self._crop_text = crop_text
         self.width = width
         self.height = height
         self._tables = tables or []
+        self._words = words or []
 
     def crop(self, bbox):
         return _FakeCrop(self._crop_text)
+
+    def extract_text(self):
+        return self._crop_text
+
+    def extract_words(self, **kwargs):
+        return self._words
 
     def find_tables(self):
         return self._tables
@@ -463,3 +471,19 @@ def test_extract_pdf_to_rows_raises_when_no_target_tables_in_any_page(tmp_path, 
 
     with pytest.raises(ValueError, match="No target tables found in any PDF page."):
         ve.extract_pdf_to_rows(pdf_path)
+
+
+def test_extract_drawing_number_from_page_prefers_label_line():
+    page = _FakePage(crop_text="図面番号 E-024\n")
+    assert ve.extract_drawing_number_from_page(page) == "E-024"
+
+
+def test_build_four_column_rows_includes_drawing_number_when_provided():
+    rows = [
+        ["h1"] * ve.CELL_COUNT,
+        ["h2"] * ve.CELL_COUNT,
+        _row("A-1", "排風機", "1.5", "1"),
+    ]
+    four_rows = ve.build_four_column_rows(rows, drawing_numbers=["M-001"])
+    assert four_rows[0] == ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]
+    assert four_rows[1] == ["A-1", "排風機", "1.5", "1", "M-001"]

@@ -15,26 +15,28 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
         "動力 (50Hz)_消費電力 (Kw)",
     ],
     "vector_count": ["台数"],
+    "vector_drawing_number": ["図面番号", "図番", "機器表 図面番号"],
     "raster_name": ["機器名称", "名称"],
     "raster_voltage": ["電圧(V)", "電圧（V）"],
     "raster_capacity_kw": ["容量(kW)", "容量(KW)", "容量(Kw)", "容量（kW）"],
-    "raster_drawing_number": ["図面番号"],
+    "raster_drawing_number": ["図面番号", "盤表 図面番号"],
 }
 
 OUTPUT_COLUMNS = [
     "照合結果",
     "不一致内容",
     "機器ID",
-    "機器表記載名",
-    "盤表記載名",
+    "機器表 記載名",
+    "盤表 記載名",
     "名称差異",
     "機器表 台数",
     "盤表 台数",
-    "台数差（盤表-機器表）",
+    "台数差",
     "機器表 消費電力(kW)",
     "盤表 容量(kW)",
     "容量差(kW)",
-    "図面番号",
+    "機器表 図面番号",
+    "盤表 図面番号",
 ]
 
 EPS_KW = 0.1
@@ -173,8 +175,17 @@ def merge_vector_raster_csv(
     vector_name_header = _resolve_header(vector_headers, "vector_name")
     vector_power_header = _resolve_header(vector_headers, "vector_power_per_unit_kw")
     vector_count_header = _resolve_header(vector_headers, "vector_count")
+    vector_drawing_number_header = _resolve_header(vector_headers, "vector_drawing_number")
     if not vector_id_header or not vector_power_header or not vector_count_header:
         raise ValueError("Vector CSV required headers are missing.")
+
+    vector_drawing_agg: Dict[str, List[str]] = {}
+    if vector_drawing_number_header:
+        for row in vector_rows:
+            key = _normalize_key(row.get(vector_id_header, ""))
+            if not key:
+                continue
+            vector_drawing_agg.setdefault(key, []).append(row.get(vector_drawing_number_header, ""))
 
     raster_id_header = _resolve_header(raster_headers, "equipment_id")
     raster_name_header = _resolve_header(raster_headers, "raster_name")
@@ -237,6 +248,7 @@ def merge_vector_raster_csv(
         raster_name_candidates_display = ""
         name_warning = ""
         drawing_number = ""
+        vector_drawing_number = ""
         if agg:
             raster_match_count = int(agg["match_count"])
             raster_capacity_variants = _collect_capacity_variants(agg["capacity_values"])  # type: ignore[arg-type]
@@ -245,6 +257,9 @@ def merge_vector_raster_csv(
             name_warning = _resolve_name_warning(vector_name, raster_name_candidates)
             drawing_numbers = _collect_unique_non_blank(agg["drawing_numbers"])  # type: ignore[arg-type]
             drawing_number = ",".join(drawing_numbers)
+        if key in vector_drawing_agg:
+            vector_drawing_numbers = _collect_unique_non_blank(vector_drawing_agg[key])
+            vector_drawing_number = ",".join(vector_drawing_numbers)
 
         vector_capacity_variants = _collect_capacity_variants([power_per_unit_raw])
 
@@ -289,23 +304,24 @@ def merge_vector_raster_csv(
                 "照合結果": "一致" if overall_ok else "不一致",
                 "不一致内容": mismatch_reason,
                 "機器ID": equipment_id,
-                "機器表記載名": vector_name,
-                "盤表記載名": raster_name_candidates_display,
+                "機器表 記載名": vector_name,
+                "盤表 記載名": raster_name_candidates_display,
                 "名称差異": name_warning,
                 "機器表 台数": _format_number(vector_count),
                 "盤表 台数": str(raster_match_count),
-                "台数差（盤表-機器表）": _format_number(count_diff),
+                "台数差": _format_number(count_diff),
                 "機器表 消費電力(kW)": vector_power_display,
                 "盤表 容量(kW)": raster_capacity_display,
                 "容量差(kW)": _format_number(capacity_diff),
-                "図面番号": drawing_number,
+                "機器表 図面番号": vector_drawing_number,
+                "盤表 図面番号": drawing_number,
             }
             if line_index > 0:
                 out_row["照合結果"] = ""
                 out_row["不一致内容"] = ""
                 out_row["機器表 台数"] = ""
                 out_row["盤表 台数"] = ""
-                out_row["台数差（盤表-機器表）"] = ""
+                out_row["台数差"] = ""
             out_rows.append(out_row)
 
     for key, agg in raster_agg.items():
@@ -327,16 +343,17 @@ def merge_vector_raster_csv(
                 "照合結果": "不一致",
                 "不一致内容": "機器表に記載なし",
                 "機器ID": equipment_id,
-                "機器表記載名": "",
-                "盤表記載名": raster_name_candidates_display,
+                "機器表 記載名": "",
+                "盤表 記載名": raster_name_candidates_display,
                 "名称差異": "",
                 "機器表 台数": "",
                 "盤表 台数": str(raster_match_count),
-                "台数差（盤表-機器表）": "",
+                "台数差": "",
                 "機器表 消費電力(kW)": "",
                 "盤表 容量(kW)": raster_capacity_display,
                 "容量差(kW)": "",
-                "図面番号": drawing_number,
+                "機器表 図面番号": "",
+                "盤表 図面番号": drawing_number,
             }
             if line_index > 0:
                 out_row["照合結果"] = ""
