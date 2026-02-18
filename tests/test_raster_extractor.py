@@ -5,6 +5,7 @@ from PIL import Image
 
 from extractors.raster_extractor import (
     ColumnBounds,
+    RowsFromWordsResult,
     TableCandidate,
     WordBox,
     detect_table_candidates_from_page_words,
@@ -500,6 +501,89 @@ def test_parse_table_candidate_does_not_expand_after_footer_stop(tmp_path, monke
     assert ocr_calls["count"] == 1
 
 
+def test_parse_table_candidate_expands_when_trailing_non_data_exceeds_gap(tmp_path, monkeypatch):
+    page_image = Image.new("RGB", (420, 320), color=(255, 255, 255))
+    candidate = TableCandidate(
+        bbox=(20.0, 20.0, 390.0, 120.0),
+        header_y=24.0,
+        header_text="機器番号 名称 電圧 容量",
+        categories=("code", "name", "power", "voltage"),
+    )
+
+    monkeypatch.setattr(
+        "extractors.raster_extractor.ocr_table_crop",
+        lambda client, crop_image: [_wb("F-EV-1", 70, 70, w=44)],
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_column_bounds",
+        lambda words, side_width: ColumnBounds(
+            x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+        ),
+    )
+    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
+    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+
+    call_index = {"n": 0}
+
+    def fake_rows_with_meta(words, bounds, y_cluster, start_y=None, trailing_non_data_gap=1):
+        call_index["n"] += 1
+        if call_index["n"] == 1:
+            return RowsFromWordsResult(
+                rows=[
+                    {
+                        "row_index": 1,
+                        "row_y": 60.0,
+                        "機器番号": "F-EV-1",
+                        "機器名称": "排風機",
+                        "電圧(V)": "200",
+                        "容量(kW)": "0.425",
+                    }
+                ],
+                saw_data=True,
+                last_data_cluster_bottom=20.0,
+                trailing_non_data_count=trailing_non_data_gap + 1,
+                stopped_by_footer=False,
+            )
+        return RowsFromWordsResult(
+            rows=[
+                {
+                    "row_index": 1,
+                    "row_y": 60.0,
+                    "機器番号": "F-EV-1",
+                    "機器名称": "排風機",
+                    "電圧(V)": "200",
+                    "容量(kW)": "0.425",
+                },
+                {
+                    "row_index": 2,
+                    "row_y": 92.0,
+                    "機器番号": "F-EV-2",
+                    "機器名称": "排風機",
+                    "電圧(V)": "200",
+                    "容量(kW)": "0.55",
+                },
+            ],
+            saw_data=True,
+            last_data_cluster_bottom=20.0,
+            trailing_non_data_count=0,
+            stopped_by_footer=False,
+        )
+
+    monkeypatch.setattr("extractors.raster_extractor._rows_from_words_with_meta", fake_rows_with_meta)
+
+    parsed = parse_table_candidate(
+        client=object(),
+        page_image=page_image,
+        candidate=candidate,
+        table_index=1,
+        y_cluster=8.0,
+        debug_dir=tmp_path,
+        page_number=1,
+    )
+    assert parsed.expand_attempts >= 1
+    assert "F-EV-2" in [row["機器番号"] for row in parsed.rows]
+
+
 def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
     input_pdf = tmp_path / "input.pdf"
     input_pdf.write_bytes(b"%PDF-1.4\n")
@@ -526,7 +610,7 @@ def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
 
     call_index = {"n": 0}
 
-    def fake_rows_from_words(words, bounds, y_cluster):
+    def fake_rows_from_words(words, bounds, y_cluster, trailing_non_data_gap=1):
         call_index["n"] += 1
         idx = call_index["n"]
         return [

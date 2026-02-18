@@ -1342,7 +1342,7 @@ def parse_table_candidate(
         if rows_result.last_data_cluster_bottom is not None:
             last_data_bottom_on_page = float(crop_bbox[1]) + rows_result.last_data_cluster_bottom
             near_bottom_edge = (float(crop_bbox[3]) - last_data_bottom_on_page) <= near_edge_threshold
-        unstable_tail = rows_result.trailing_non_data_count == TABLE_TRAILING_NON_DATA_GAP
+        unstable_tail = rows_result.trailing_non_data_count >= TABLE_TRAILING_NON_DATA_GAP
         should_expand = rows_result.saw_data and (near_bottom_edge or unstable_tail)
         if not should_expand:
             break
