@@ -478,6 +478,22 @@ def test_extract_drawing_number_from_page_prefers_label_line():
     assert ve.extract_drawing_number_from_page(page) == "E-024"
 
 
+def test_normalize_drawing_number_candidate_strips_trailing_punctuation():
+    assert ve.normalize_drawing_number_candidate("E-024,") == "E-024"
+    assert ve.normalize_drawing_number_candidate("E-024)") == "E-024"
+
+
+def test_extract_drawing_number_from_page_bottom_right_word_with_punctuation():
+    page = _FakePage(
+        crop_text="",
+        words=[
+            {"text": "機器番号", "x0": 120.0, "top": 120.0},
+            {"text": "E-024,", "x0": 800.0, "top": 760.0},
+        ],
+    )
+    assert ve.extract_drawing_number_from_page(page) == "E-024"
+
+
 def test_extract_pdf_to_rows_returns_drawing_cache_without_reopening_pdf(tmp_path, monkeypatch):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")

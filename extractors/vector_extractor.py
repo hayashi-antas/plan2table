@@ -48,6 +48,7 @@ def normalize_drawing_number_candidate(value: str | None) -> str:
     text = unicodedata.normalize("NFKC", normalize_cell(value or "")).upper()
     text = text.replace(" ", "").replace("　", "")
     text = re.sub(r"[‐‑‒–—―ー−－]", "-", text)
+    text = text.strip("|,:;[](){}<>「」『』…。．，")
     return text if DRAWING_NO_PATTERN.fullmatch(text) else ""
 
 
