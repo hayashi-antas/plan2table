@@ -144,6 +144,12 @@ def _pick_first_non_blank(values: Iterable[str]) -> str:
     return ""
 
 
+def _normalize_text_for_group_key(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(text or "")).strip()
+    normalized = normalized.replace(" ", "").replace("　", "")
+    return normalized.lower()
+
+
 def _resolve_name_warning(vector_name: str, raster_name_candidates: List[str]) -> str:
     if not raster_name_candidates:
         return ""
@@ -201,9 +207,47 @@ def merge_vector_raster_csv(
         raise ValueError("Raster CSV required headers are missing.")
 
     raster_agg: Dict[str, Dict[str, object]] = {}
+    raster_missing_id_agg: Dict[str, Dict[str, object]] = {}
     for row in raster_rows:
         key = _normalize_key(row.get(raster_id_header, ""))
         if not key:
+            raster_name_raw = row.get(raster_name_header, "")
+            raster_voltage_raw = row.get(raster_voltage_header, "")
+            raster_capacity_raw = row.get(raster_capacity_header, "")
+            raster_drawing_raw = (
+                row.get(raster_drawing_number_header, "") if raster_drawing_number_header else ""
+            )
+            if not _pick_first_non_blank(
+                [raster_name_raw, raster_voltage_raw, raster_capacity_raw, raster_drawing_raw]
+            ):
+                continue
+
+            raster_capacity_display = unicodedata.normalize(
+                "NFKC", str(raster_capacity_raw or "")
+            ).strip()
+            missing_key = "|".join(
+                [
+                    _normalize_name_for_compare(raster_name_raw),
+                    _normalize_text_for_group_key(raster_voltage_raw),
+                    _normalize_text_for_group_key(raster_capacity_display),
+                    _normalize_text_for_group_key(raster_drawing_raw),
+                ]
+            )
+            missing_agg = raster_missing_id_agg.get(missing_key)
+            if missing_agg is None:
+                missing_agg = {
+                    "name": _pick_first_non_blank([raster_name_raw]),
+                    "capacity_display": raster_capacity_display,
+                    "drawing_number": _pick_first_non_blank([raster_drawing_raw]),
+                    "count": 0,
+                }
+                raster_missing_id_agg[missing_key] = missing_agg
+
+            missing_agg["count"] = int(missing_agg["count"]) + 1
+            if not missing_agg["name"]:
+                missing_agg["name"] = _pick_first_non_blank([raster_name_raw])
+            if not missing_agg["drawing_number"]:
+                missing_agg["drawing_number"] = _pick_first_non_blank([raster_drawing_raw])
             continue
 
         agg = raster_agg.get(key)
@@ -360,6 +404,26 @@ def merge_vector_raster_csv(
                 out_row["不一致内容"] = ""
                 out_row["盤表 台数"] = ""
             out_rows.append(out_row)
+
+    for agg in raster_missing_id_agg.values():
+        out_rows.append(
+            {
+                "照合結果": "要確認",
+                "不一致内容": "機器ID未記載（盤表）",
+                "機器ID": "",
+                "機器表 記載名": "",
+                "盤表 記載名": str(agg["name"]),
+                "名称差異": "",
+                "機器表 台数": "",
+                "盤表 台数": str(int(agg["count"])),
+                "台数差": "",
+                "機器表 消費電力(kW)": "",
+                "盤表 容量(kW)": str(agg["capacity_display"]),
+                "容量差(kW)": "",
+                "機器表 図面番号": "",
+                "盤表 図面番号": str(agg["drawing_number"]),
+            }
+        )
 
     out_csv_path.parent.mkdir(parents=True, exist_ok=True)
     out_columns = OUTPUT_COLUMNS

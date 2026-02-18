@@ -196,3 +196,55 @@ def test_merge_appends_raster_only_rows(tmp_path):
     assert raster_only["容量差(kW)"] == ""
     assert raster_only["機器表 図面番号"] == ""
     assert raster_only["盤表 図面番号"] == "E-099"
+
+
+def test_merge_appends_raster_missing_id_rows_for_review(tmp_path):
+    vector_csv = tmp_path / "vector.csv"
+    raster_csv = tmp_path / "raster.csv"
+    out_csv = tmp_path / "unified.csv"
+
+    vector_csv.write_text(
+        "機器番号,名称,動力 (50Hz)_消費電力 (KW),台数\nA-1,排風機,1.5,1\n",
+        encoding="utf-8",
+    )
+    raster_csv.write_text(
+        "\n".join(
+            [
+                "機器番号,機器名称,電圧(V),容量(kW),図面番号",
+                "A-1,排風機,200,1.5,E-024",
+                ",全自動砂濾過装置,200,2.0,E-024",
+                ",全自動砂濾過装置,200,2.0,E-024",
+                ",同上用フロートスイッチ,,,E-024",
+                ",同上用フロートスイッチ,,,E-024",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    merge_vector_raster_csv(
+        vector_csv_path=vector_csv,
+        raster_csv_path=raster_csv,
+        out_csv_path=out_csv,
+    )
+
+    rows = _read_rows(out_csv)
+    assert len(rows) == 3
+
+    missing_id_main = rows[1]
+    assert missing_id_main["照合結果"] == "要確認"
+    assert missing_id_main["不一致内容"] == "機器ID未記載（盤表）"
+    assert missing_id_main["機器ID"] == ""
+    assert missing_id_main["盤表 記載名"] == "全自動砂濾過装置"
+    assert missing_id_main["盤表 台数"] == "2"
+    assert missing_id_main["盤表 容量(kW)"] == "2.0"
+    assert missing_id_main["盤表 図面番号"] == "E-024"
+
+    missing_id_sub = rows[2]
+    assert missing_id_sub["照合結果"] == "要確認"
+    assert missing_id_sub["不一致内容"] == "機器ID未記載（盤表）"
+    assert missing_id_sub["機器ID"] == ""
+    assert missing_id_sub["盤表 記載名"] == "同上用フロートスイッチ"
+    assert missing_id_sub["盤表 台数"] == "2"
+    assert missing_id_sub["盤表 容量(kW)"] == ""
+    assert missing_id_sub["盤表 図面番号"] == "E-024"
