@@ -1,4 +1,5 @@
 import os
+import asyncio
 import csv
 import json
 import html
@@ -586,6 +587,11 @@ def _exception_message(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
+def _is_parallel_extract_enabled() -> bool:
+    raw = str(os.getenv("ME_CHECK_PARALLEL_EXTRACT", "1") or "").strip().lower()
+    return raw not in {"0", "false"}
+
+
 def _render_customer_success_html(unified_job_id: str, table_html: str) -> str:
     safe_job_id = html.escape(unified_job_id, quote=True)
     download_url = f"/jobs/{unified_job_id}/unified.csv"
@@ -891,34 +897,78 @@ async def handle_customer_run(
             message="Please upload a valid PDF file for equipment_file.",
         )
 
-    try:
-        panel_file_bytes = await panel_file.read()
-        raster_job, _ = _run_raster_job(
-            file_bytes=panel_file_bytes,
-            source_filename=panel_file.filename or "panel.pdf",
+    panel_file_bytes = await panel_file.read()
+    equipment_file_bytes = await equipment_file.read()
+    parallel_extract_enabled = _is_parallel_extract_enabled()
+
+    if parallel_extract_enabled:
+        raster_result, vector_result = await asyncio.gather(
+            asyncio.to_thread(
+                _run_raster_job,
+                file_bytes=panel_file_bytes,
+                source_filename=panel_file.filename or "panel.pdf",
+            ),
+            asyncio.to_thread(
+                _run_vector_job,
+                file_bytes=equipment_file_bytes,
+                source_filename=equipment_file.filename or "equipment.pdf",
+            ),
+            return_exceptions=True,
         )
-    except Exception as exc:
-        print(f"Customer flow failed at panel->raster: {exc}")
-        return _render_customer_error_html(
-            stage="panel->raster",
-            message=_exception_message(exc),
-        )
+        raster_exc = raster_result if isinstance(raster_result, Exception) else None
+        vector_exc = vector_result if isinstance(vector_result, Exception) else None
+
+        if raster_exc and vector_exc:
+            print(f"Customer flow failed at panel->raster: {raster_exc}")
+            print(f"Customer flow failed at equipment->vector: {vector_exc}")
+            return _render_customer_error_html(
+                stage="panel->raster",
+                message=_exception_message(raster_exc),
+            )
+        if raster_exc:
+            print(f"Customer flow failed at panel->raster: {raster_exc}")
+            return _render_customer_error_html(
+                stage="panel->raster",
+                message=_exception_message(raster_exc),
+            )
+        if vector_exc:
+            print(f"Customer flow failed at equipment->vector: {vector_exc}")
+            return _render_customer_error_html(
+                stage="equipment->vector",
+                message=_exception_message(vector_exc),
+            )
+        raster_job, _ = raster_result
+        vector_job, _ = vector_result
+    else:
+        try:
+            raster_job, _ = await asyncio.to_thread(
+                _run_raster_job,
+                file_bytes=panel_file_bytes,
+                source_filename=panel_file.filename or "panel.pdf",
+            )
+        except Exception as exc:
+            print(f"Customer flow failed at panel->raster: {exc}")
+            return _render_customer_error_html(
+                stage="panel->raster",
+                message=_exception_message(exc),
+            )
+
+        try:
+            vector_job, _ = await asyncio.to_thread(
+                _run_vector_job,
+                file_bytes=equipment_file_bytes,
+                source_filename=equipment_file.filename or "equipment.pdf",
+            )
+        except Exception as exc:
+            print(f"Customer flow failed at equipment->vector: {exc}")
+            return _render_customer_error_html(
+                stage="equipment->vector",
+                message=_exception_message(exc),
+            )
 
     try:
-        equipment_file_bytes = await equipment_file.read()
-        vector_job, _ = _run_vector_job(
-            file_bytes=equipment_file_bytes,
-            source_filename=equipment_file.filename or "equipment.pdf",
-        )
-    except Exception as exc:
-        print(f"Customer flow failed at equipment->vector: {exc}")
-        return _render_customer_error_html(
-            stage="equipment->vector",
-            message=_exception_message(exc),
-        )
-
-    try:
-        unified_job, _ = _run_unified_job(
+        unified_job, _ = await asyncio.to_thread(
+            _run_unified_job,
             raster_job_id=raster_job.job_id,
             vector_job_id=vector_job.job_id,
         )
