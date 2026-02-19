@@ -61,9 +61,11 @@
 3. **「実行する」** をクリック
 4. 処理後、画面上に **判定結果の表** が表示され、**CSVダウンロード** のリンクが表示される
 
-[![Image from Gyazo](https://i.gyazo.com/a50257df6615efee6be846cd8a93a522.png)](https://gyazo.com/a50257df6615efee6be846cd8a93a522)
+[![Image from Gyazo](https://i.gyazo.com/90ec70f42deef486f8265e8f974222bc.png)](https://gyazo.com/90ec70f42deef486f8265e8f974222bc)
 
-[![Image from Gyazo](https://i.gyazo.com/c5cd46494476a9628fa6cc1da20ae952.png)](https://gyazo.com/c5cd46494476a9628fa6cc1da20ae952)
+[![Image from Gyazo](https://i.gyazo.com/8479422c23f580227969bdd8c299be14.png)](https://gyazo.com/8479422c23f580227969bdd8c299be14)
+
+[![Image from Gyazo](https://i.gyazo.com/eb2ed7e36991b09e4f6fe5ff1bbba765.png)](https://gyazo.com/eb2ed7e36991b09e4f6fe5ff1bbba765)
 
 ---
 
