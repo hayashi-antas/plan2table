@@ -67,6 +67,8 @@
 
 [![Image from Gyazo](https://i.gyazo.com/eb2ed7e36991b09e4f6fe5ff1bbba765.png)](https://gyazo.com/eb2ed7e36991b09e4f6fe5ff1bbba765)
 
+[CSVのサンプル](https://github.com/hayashi-antas/m-e-check-data/blob/main/me-check_%E7%85%A7%E5%90%88%E7%B5%90%E6%9E%9C_20260219_0734.csv)
+
 ---
 
 ## 画面に表示される列（CSVも同様）
