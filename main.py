@@ -479,20 +479,22 @@ def _is_pdf_upload(file: UploadFile) -> bool:
 
 
 CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
-    "照合結果",
     "総合判定",
+    "照合結果",
     "総合判定(◯/✗)",
     "総合判定(○/×)",
 ]
 DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 盤表 - 機器表"
 
 CUSTOMER_TABLE_COLUMNS = [
-    ("照合結果", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
-    ("不一致内容", ["不一致内容", "不一致理由"]),
+    ("総合判定", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
+    ("判定理由", ["判定理由", "不一致内容", "確認理由", "不一致理由"]),
+    ("台数判定", ["台数判定"]),
+    ("容量判定", ["容量判定"]),
+    ("名称判定", ["名称判定"]),
     ("機器ID", ["機器ID", "機器番号", "機械番号"]),
     ("機器表 記載名", ["機器表 記載名", "機器表記載名", "機器名", "名称", "機器名称"]),
     ("盤表 記載名", ["盤表 記載名", "盤表記載名"]),
-    ("名称差異", ["名称差異"]),
     ("機器表 台数", ["機器表 台数", "台数", "vector_台数_numeric"]),
     ("盤表 台数", ["盤表 台数", "raster_match_count", "raster_台数_calc"]),
     ("台数差", ["台数差", "台数差（盤表-機器表）", "台数差分"]),
@@ -501,6 +503,7 @@ CUSTOMER_TABLE_COLUMNS = [
     ("容量差(kW)", ["容量差(kW)", "容量差分(kW)"]),
     ("機器表 図面番号", ["機器表 図面番号", "機器表図面番号"]),
     ("盤表 図面番号", ["盤表 図面番号", "図面番号", "図番"]),
+    ("盤表 記載トレース", ["盤表 記載トレース"]),
 ]
 
 
@@ -524,10 +527,12 @@ def _pick_first_column_value(row: dict[str, str], candidates: list[str]) -> str:
 
 def _normalize_judgment(value: str) -> str:
     text = str(value or "").strip()
-    if text in {"一致", "○", "◯"}:
-        return "一致"
-    if text in {"不一致", "×", "✗"}:
-        return "不一致"
+    if text in {"一致", "○", "◯", "match"}:
+        return "◯"
+    if text in {"不一致", "×", "✗", "mismatch"}:
+        return "✗"
+    if text in {"判定不可", "要確認", "review"}:
+        return "要確認"
     return text
 
 
@@ -559,7 +564,7 @@ def _build_customer_table_html(unified_csv_path: Path) -> str:
         mapped_cells = []
         for label, candidates in CUSTOMER_TABLE_COLUMNS:
             value = _pick_first_column_value(row, candidates)
-            if label == "照合結果":
+            if label in {"総合判定", "台数判定", "容量判定", "名称判定"}:
                 value = _normalize_judgment(value)
             mapped_cells.append(
                 f"<td class=\"border border-stone-300 px-3 py-2 text-sm\">{html.escape(value)}</td>"
