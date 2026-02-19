@@ -159,6 +159,7 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
 
     assert f'data-download-url="/jobs/{unified_job_id}/unified.csv"' in resp.text
     assert f'/jobs/{unified_job_id}/unified.csv' in resp.text
+    assert 'data-action="expand-customer-table"' in resp.text
 
     assert "総合判定" in resp.text
     assert "判定理由" in resp.text
@@ -184,6 +185,11 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
     assert "台数差 / 容量差は 盤表 - 機器表" in resp.text
+    assert "機器表記載：1件" in resp.text
+    assert "盤表記載：1件" in resp.text
+    assert "完全一致：0件" in resp.text
+    assert "不一致：1件" in resp.text
+    assert "要確認：0件" in resp.text
 
     dl = client.get(f"/jobs/{unified_job_id}/unified.csv")
     assert dl.status_code == 200
@@ -196,6 +202,48 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "盤表 図面番号" in dl.text
     assert "M-001" in dl.text
     assert "E-024" in dl.text
+
+
+def test_customer_run_summary_uses_vector_raster_row_counts(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+
+    def fake_extract_raster_pdf(**kwargs):
+        out_csv = kwargs["out_csv"]
+        out_csv.write_text(
+            "\n".join(
+                [
+                    "機器番号,機器名称,電圧(V),容量(kW),図面番号",
+                    "A-1,送風機,200,1.5,E-024",
+                    "A-1,送風機,200,1.5,E-031",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return {"rows": 2, "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"]}
+
+    def fake_extract_vector_pdf_four_columns(pdf_path, out_csv_path):
+        out_csv_path.write_text(
+            "機器番号,名称,動力 (50Hz)_消費電力 (KW),台数,図面番号\nA-1,排風機,1.5,1,M-001\n",
+            encoding="utf-8",
+        )
+        return {"rows": 1, "columns": ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]}
+
+    monkeypatch.setattr(app_main, "extract_raster_pdf", fake_extract_raster_pdf)
+    monkeypatch.setattr(app_main, "extract_vector_pdf_four_columns", fake_extract_vector_pdf_four_columns)
+
+    resp = client.post(
+        "/customer/run",
+        files={
+            "panel_file": ("panel.pdf", b"%PDF-1.4\n", "application/pdf"),
+            "equipment_file": ("equipment.pdf", b"%PDF-1.4\n", "application/pdf"),
+        },
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+    assert "機器表記載：1件" in resp.text
+    assert "盤表記載：2件" in resp.text
 
 
 @pytest.mark.parametrize(

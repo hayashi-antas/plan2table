@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -38,6 +40,10 @@ OUTPUT_COLUMNS = [
     "盤表 台数",
     "台数差",
     "機器表 消費電力(kW)",
+    "機器表 モード容量(kW)",
+    "機器表 判定モード",
+    "機器表 判定採用容量(kW)",
+    "容量判定補足",
     "盤表 容量(kW)",
     "容量差(kW)",
     "機器表 図面番号",
@@ -48,6 +54,16 @@ OUTPUT_COLUMNS = [
 EPS_KW = 0.1
 BLANK_TOKENS = {"", "-", "－", "—"}
 THOUSANDS_PATTERN = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
+MODE_CAPACITY_PATTERN = re.compile(r"\((冷|暖|低温)\)\s*([+-]?\d+(?:,\d{3})*(?:\.\d+)?)")
+CAPACITY_MODE_HINTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("冷", ("冷房専用",)),
+    ("暖", ("暖房専用",)),
+    ("低温", ("低温専用",)),
+)
+MODE_ORDER = ("冷", "暖", "低温")
+MAX_MODE_TIE_EPS = 1e-9
+CAPACITY_FALLBACK_MAX = "max"
+CAPACITY_FALLBACK_STRICT = "strict"
 CapacityVariant = Tuple[str, Optional[float], str]
 
 
@@ -145,6 +161,199 @@ def _pick_capacity_variant(variants: List[CapacityVariant], index: int) -> Capac
 
 def _join_capacity_variants(variants: List[CapacityVariant]) -> str:
     return ",".join(display for display, _, _ in variants if display)
+
+
+@dataclass(frozen=True)
+class VectorCapacityResolution:
+    raw_display: str
+    mode_values_display: str
+    selected_mode: str
+    selected_display: str
+    selected_value: Optional[float]
+    selected_kind: str
+    note: str
+    reason_code: str
+
+
+def _extract_mode_capacity_values(raw: str) -> Dict[str, float]:
+    text = _normalize_text(raw)
+    values: Dict[str, float] = {}
+    for mode, number_text in MODE_CAPACITY_PATTERN.findall(text):
+        parsed = _parse_number(number_text)
+        if parsed is None:
+            continue
+        values[mode] = parsed
+    return values
+
+
+def _format_mode_capacity_values(values: Dict[str, float]) -> str:
+    if not values:
+        return ""
+    ordered_modes: List[str] = [mode for mode in MODE_ORDER if mode in values]
+    ordered_modes.extend(mode for mode in values.keys() if mode not in MODE_ORDER)
+    return ",".join(f"{mode}={_format_number(values[mode])}" for mode in ordered_modes)
+
+
+def _infer_capacity_mode_from_name(name: str) -> Tuple[Optional[str], str, bool]:
+    normalized = _normalize_text(name)
+    matches: List[Tuple[str, str]] = []
+    for mode, keywords in CAPACITY_MODE_HINTS:
+        for keyword in keywords:
+            if keyword in normalized:
+                matches.append((mode, keyword))
+                break
+    if len(matches) == 1:
+        mode, keyword = matches[0]
+        return mode, keyword, False
+    if len(matches) >= 2:
+        return None, ",".join(keyword for _, keyword in matches), True
+    return None, "", False
+
+
+def _capacity_fallback_mode() -> str:
+    mode = os.getenv("ME_CHECK_CAPACITY_FALLBACK", CAPACITY_FALLBACK_MAX).strip().lower()
+    if mode == CAPACITY_FALLBACK_STRICT:
+        return CAPACITY_FALLBACK_STRICT
+    return CAPACITY_FALLBACK_MAX
+
+
+def _pick_unique_max_mode(mode_values: Dict[str, float]) -> Tuple[Optional[str], Optional[float], List[str]]:
+    if not mode_values:
+        return None, None, []
+    max_value = max(mode_values.values())
+    max_modes = [mode for mode, value in mode_values.items() if abs(value - max_value) <= MAX_MODE_TIE_EPS]
+    if len(max_modes) == 1:
+        return max_modes[0], max_value, max_modes
+    return None, max_value, max_modes
+
+
+def _resolve_vector_capacity(raw: str, vector_name: str) -> VectorCapacityResolution:
+    raw_display = _normalize_text(raw)
+    variants = _collect_capacity_variants([raw])
+    display, parsed, kind = _pick_capacity_variant(variants, 0)
+    mode_values = _extract_mode_capacity_values(raw)
+    mode_values_display = _format_mode_capacity_values(mode_values)
+    fallback_mode = _capacity_fallback_mode()
+
+    if kind == "blank":
+        return VectorCapacityResolution(
+            raw_display=raw_display,
+            mode_values_display=mode_values_display,
+            selected_mode="",
+            selected_display="",
+            selected_value=None,
+            selected_kind="blank",
+            note="",
+            reason_code="BLANK",
+        )
+    if kind == "numeric":
+        return VectorCapacityResolution(
+            raw_display=raw_display,
+            mode_values_display=mode_values_display,
+            selected_mode="単一値",
+            selected_display=display,
+            selected_value=parsed,
+            selected_kind=kind,
+            note="単一数値を採用",
+            reason_code="SINGLE_NUMERIC",
+        )
+    if kind == "multi":
+        return VectorCapacityResolution(
+            raw_display=raw_display,
+            mode_values_display=mode_values_display,
+            selected_mode="未確定",
+            selected_display=display,
+            selected_value=parsed,
+            selected_kind=kind,
+            note="カンマ区切りの複数候補",
+            reason_code="MULTI_CANDIDATE_COMMA",
+        )
+    if not mode_values:
+        return VectorCapacityResolution(
+            raw_display=raw_display,
+            mode_values_display=mode_values_display,
+            selected_mode="未確定",
+            selected_display=display,
+            selected_value=parsed,
+            selected_kind=kind,
+            note="数値化できない表記",
+            reason_code="NON_NUMERIC_TEXT",
+        )
+    if len(mode_values) == 1:
+        mode = next(iter(mode_values.keys()))
+        value = mode_values[mode]
+        return VectorCapacityResolution(
+            raw_display=raw_display,
+            mode_values_display=mode_values_display,
+            selected_mode=mode,
+            selected_display=_format_number(value),
+            selected_value=value,
+            selected_kind="numeric",
+            note=f"モード容量1候補のため({mode})を採用",
+            reason_code="MODE_SINGLE_CANDIDATE",
+        )
+
+    hinted_mode, hinted_keyword, hint_ambiguous = _infer_capacity_mode_from_name(vector_name)
+    if hinted_mode:
+        hinted_value = mode_values.get(hinted_mode)
+        if hinted_value is not None:
+            return VectorCapacityResolution(
+                raw_display=raw_display,
+                mode_values_display=mode_values_display,
+                selected_mode=hinted_mode,
+                selected_display=_format_number(hinted_value),
+                selected_value=hinted_value,
+                selected_kind="numeric",
+                note=f"機器名称ヒント({hinted_keyword})で({hinted_mode})を採用",
+                reason_code="MODE_BY_NAME_HINT",
+            )
+
+    if not hint_ambiguous and fallback_mode == CAPACITY_FALLBACK_MAX:
+        max_mode, max_value, max_modes = _pick_unique_max_mode(mode_values)
+        if max_mode is not None and max_value is not None:
+            return VectorCapacityResolution(
+                raw_display=raw_display,
+                mode_values_display=mode_values_display,
+                selected_mode=f"最大値({max_mode})",
+                selected_display=_format_number(max_value),
+                selected_value=max_value,
+                selected_kind="numeric",
+                note="機器名称からモード特定不可のため最大値を採用",
+                reason_code="MODE_BY_MAX_FALLBACK",
+            )
+        if max_modes:
+            joined_modes = ",".join(mode for mode in MODE_ORDER if mode in max_modes)
+            return VectorCapacityResolution(
+                raw_display=raw_display,
+                mode_values_display=mode_values_display,
+                selected_mode="未確定",
+                selected_display=display,
+                selected_value=parsed,
+                selected_kind=kind,
+                note=f"機器名称からモード特定不可かつ最大値が複数({joined_modes})",
+                reason_code="MODE_MAX_TIE_UNRESOLVED",
+            )
+
+    if hint_ambiguous:
+        unresolved_note = f"機器名称ヒントが複数({hinted_keyword})でモード未確定"
+        unresolved_code = "MODE_HINT_AMBIGUOUS"
+    elif fallback_mode == CAPACITY_FALLBACK_STRICT:
+        unresolved_note = "機器名称からモード特定不可(strict設定)"
+        unresolved_code = "MODE_UNKNOWN_STRICT"
+    else:
+        unresolved_note = "機器名称からモード特定不可"
+        unresolved_code = "MODE_UNKNOWN"
+
+    return VectorCapacityResolution(
+        raw_display=raw_display,
+        mode_values_display=mode_values_display,
+        selected_mode="未確定",
+        selected_display=display,
+        selected_value=parsed,
+        selected_kind=kind,
+        note=unresolved_note,
+        reason_code=unresolved_code,
+    )
 
 
 def _normalize_trace_value(value: str) -> str:
@@ -513,14 +722,12 @@ def merge_vector_raster_csv(
         agg = raster_agg.get(key)
 
         power_per_unit_raw = vector_row.get(vector_power_header, "")
-        vector_capacity_variants = _collect_capacity_variants([power_per_unit_raw])
-        vector_power_display, vector_power_value, vector_power_kind = _pick_capacity_variant(
-            vector_capacity_variants, 0
-        )
-
         vector_count = _parse_number(vector_row.get(vector_count_header, ""))
-        vector_name = _normalize_name_for_output(
-            vector_row.get(vector_name_header, "") if vector_name_header else ""
+        vector_name_raw = vector_row.get(vector_name_header, "") if vector_name_header else ""
+        vector_name = _normalize_name_for_output(vector_name_raw)
+        vector_capacity = _resolve_vector_capacity(
+            power_per_unit_raw,
+            vector_name_raw,
         )
 
         exists_code: JudgmentCode = "match" if agg else "mismatch"
@@ -550,7 +757,11 @@ def merge_vector_raster_csv(
             exists_code=exists_code,
         )
         capacity_code, capacity_diff, capacity_reason = _evaluate_capacity(
-            vector_variant=(vector_power_display, vector_power_value, vector_power_kind),
+            vector_variant=(
+                vector_capacity.selected_display,
+                vector_capacity.selected_value,
+                vector_capacity.selected_kind,
+            ),
             raster_variants=raster_capacity_variants,
             exists_code=exists_code,
         )
@@ -591,7 +802,13 @@ def merge_vector_raster_csv(
                 "機器表 台数": _format_number(vector_count),
                 "盤表 台数": str(raster_match_count),
                 "台数差": _format_number(count_diff),
-                "機器表 消費電力(kW)": vector_power_display,
+                "機器表 消費電力(kW)": vector_capacity.raw_display,
+                "機器表 モード容量(kW)": vector_capacity.mode_values_display,
+                "機器表 判定モード": vector_capacity.selected_mode,
+                "機器表 判定採用容量(kW)": _format_number(vector_capacity.selected_value)
+                if vector_capacity.selected_kind == "numeric"
+                else "",
+                "容量判定補足": vector_capacity.note,
                 "盤表 容量(kW)": _join_capacity_variants(raster_capacity_variants),
                 "容量差(kW)": _format_number(capacity_diff),
                 "機器表 図面番号": vector_drawing_number,
@@ -627,6 +844,10 @@ def merge_vector_raster_csv(
                 "盤表 台数": str(raster_match_count),
                 "台数差": "",
                 "機器表 消費電力(kW)": "",
+                "機器表 モード容量(kW)": "",
+                "機器表 判定モード": "",
+                "機器表 判定採用容量(kW)": "",
+                "容量判定補足": "",
                 "盤表 容量(kW)": _join_capacity_variants(raster_capacity_variants),
                 "容量差(kW)": "",
                 "機器表 図面番号": "",
@@ -651,6 +872,10 @@ def merge_vector_raster_csv(
                 "盤表 台数": str(int(agg["count"])),
                 "台数差": "",
                 "機器表 消費電力(kW)": "",
+                "機器表 モード容量(kW)": "",
+                "機器表 判定モード": "",
+                "機器表 判定採用容量(kW)": "",
+                "容量判定補足": "",
                 "盤表 容量(kW)": str(agg["capacity_display"]),
                 "容量差(kW)": "",
                 "機器表 図面番号": "",

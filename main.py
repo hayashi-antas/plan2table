@@ -6,6 +6,7 @@ import html
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from uuid import UUID
 from google import genai
 from google.genai import types
@@ -542,7 +543,95 @@ def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
         return [dict(row) for row in reader]
 
 
-def _build_customer_table_html(unified_csv_path: Path) -> str:
+def _parse_float_or_none(value: str) -> Optional[float]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _compute_customer_summary(
+    mapped_rows: list[dict[str, str]],
+    *,
+    vector_row_count: Optional[int] = None,
+    raster_row_count: Optional[int] = None,
+) -> dict[str, int]:
+    equipment_count = 0
+    panel_count = 0
+    perfect_match_count = 0
+    mismatch_count = 0
+    review_count = 0
+
+    for row in mapped_rows:
+        judgment = _normalize_judgment(row.get("総合判定", ""))
+        reason = str(row.get("判定理由", "") or "").strip()
+        equipment_id = str(row.get("機器ID", "") or "").strip()
+        panel_units = _parse_float_or_none(row.get("盤表 台数", ""))
+
+        panel_has_detail = any(
+            str(row.get(key, "") or "").strip()
+            for key in ["盤表 記載名", "盤表 容量(kW)", "盤表 図面番号", "盤表 記載トレース"]
+        )
+
+        if vector_row_count is None and equipment_id and reason != "機器表に記載なし":
+            equipment_count += 1
+
+        if raster_row_count is None and (panel_has_detail or (panel_units is not None and panel_units > 0)):
+            panel_count += 1
+
+        if judgment == "◯":
+            perfect_match_count += 1
+        elif judgment == "✗":
+            mismatch_count += 1
+        elif judgment == "要確認":
+            review_count += 1
+
+    if vector_row_count is not None:
+        equipment_count = max(0, int(vector_row_count))
+    if raster_row_count is not None:
+        panel_count = max(0, int(raster_row_count))
+
+    return {
+        "機器表記載": equipment_count,
+        "盤表記載": panel_count,
+        "完全一致": perfect_match_count,
+        "不一致": mismatch_count,
+        "要確認": review_count,
+    }
+
+
+def _build_customer_summary_html(
+    mapped_rows: list[dict[str, str]],
+    *,
+    vector_row_count: Optional[int] = None,
+    raster_row_count: Optional[int] = None,
+) -> str:
+    summary = _compute_customer_summary(
+        mapped_rows,
+        vector_row_count=vector_row_count,
+        raster_row_count=raster_row_count,
+    )
+    parts = [
+        f"{label}：{summary[label]}件"
+        for label in ["機器表記載", "盤表記載", "完全一致", "不一致", "要確認"]
+    ]
+    summary_cells = "".join(
+        f"<div class=\"rounded border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-900\">"
+        f"{html.escape(part)}</div>"
+        for part in parts
+    )
+    return f"<div class=\"mb-3 grid grid-cols-2 gap-2 md:grid-cols-5\">{summary_cells}</div>"
+
+
+def _build_customer_table_html(
+    unified_csv_path: Path,
+    *,
+    vector_row_count: Optional[int] = None,
+    raster_row_count: Optional[int] = None,
+) -> str:
     rows = _read_csv_dict_rows(unified_csv_path)
     diff_note_html = f'<p class="mt-2 text-xs text-stone-600">{html.escape(DIFF_NOTE_TEXT)}</p>'
     header_cells = "".join(
@@ -551,28 +640,49 @@ def _build_customer_table_html(unified_csv_path: Path) -> str:
     )
 
     if not rows:
+        summary_html = _build_customer_summary_html(
+            [],
+            vector_row_count=vector_row_count,
+            raster_row_count=raster_row_count,
+        )
         return (
-            "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
+            summary_html
+            + "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
             f"<thead><tr>{header_cells}</tr></thead>"
             "<tbody><tr><td class=\"border border-stone-300 px-3 py-6 text-center text-stone-500\""
             f" colspan=\"{len(CUSTOMER_TABLE_COLUMNS)}\">データがありません</td></tr></tbody></table>"
             f"{diff_note_html}"
         )
 
+    mapped_rows: list[dict[str, str]] = []
     body_rows = []
     for row in rows:
-        mapped_cells = []
+        mapped_row: dict[str, str] = {}
         for label, candidates in CUSTOMER_TABLE_COLUMNS:
             value = _pick_first_column_value(row, candidates)
             if label in {"総合判定", "台数判定", "容量判定", "名称判定"}:
                 value = _normalize_judgment(value)
+            mapped_row[label] = value
+        mapped_rows.append(mapped_row)
+
+    summary_html = _build_customer_summary_html(
+        mapped_rows,
+        vector_row_count=vector_row_count,
+        raster_row_count=raster_row_count,
+    )
+
+    for mapped_row in mapped_rows:
+        mapped_cells = []
+        for label, _candidates in CUSTOMER_TABLE_COLUMNS:
+            value = mapped_row[label]
             mapped_cells.append(
                 f"<td class=\"border border-stone-300 px-3 py-2 text-sm\">{html.escape(value)}</td>"
             )
         body_rows.append("<tr>" + "".join(mapped_cells) + "</tr>")
 
     return (
-        "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
+        summary_html
+        + "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
         f"<thead><tr>{header_cells}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody></table>"
         f"{diff_note_html}"
@@ -606,6 +716,23 @@ def _render_customer_success_html(unified_job_id: str, table_html: str) -> str:
       data-status="success"
       data-unified-job-id="{safe_job_id}"
       data-download-url="{safe_download_url}">
+      <button
+        type="button"
+        title="表を拡大表示"
+        aria-label="表を拡大表示"
+        data-action="expand-customer-table"
+        class="group absolute right-12 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
+          <path d="M8 3H3v5"></path>
+          <path d="M16 3h5v5"></path>
+          <path d="M8 21H3v-5"></path>
+          <path d="M16 21h5v-5"></path>
+        </svg>
+        <span class="pointer-events-none absolute right-10 top-1/2 hidden -translate-y-1/2 whitespace-nowrap rounded bg-stone-900 px-2 py-1 text-xs text-white group-hover:block">
+          表を拡大表示
+        </span>
+      </button>
       <a
         href="{safe_download_url}"
         title="CSVをダウンロード"
@@ -622,7 +749,7 @@ def _render_customer_success_html(unified_job_id: str, table_html: str) -> str:
         </span>
       </a>
       <div class="text-sm font-semibold text-emerald-800">処理が完了しました</div>
-      <div class="mt-4 overflow-x-auto">{table_html}</div>
+      <div class="mt-4 overflow-x-auto" data-role="customer-table-container">{table_html}</div>
     </section>
     """
 
@@ -905,6 +1032,8 @@ async def handle_customer_run(
     panel_file_bytes = await panel_file.read()
     equipment_file_bytes = await equipment_file.read()
     parallel_extract_enabled = _is_parallel_extract_enabled()
+    raster_profile: Optional[dict] = None
+    vector_profile: Optional[dict] = None
 
     if parallel_extract_enabled:
         raster_result, vector_result = await asyncio.gather(
@@ -947,11 +1076,11 @@ async def handle_customer_run(
                 stage="equipment->vector",
                 message=_exception_message(vector_exc),
             )
-        raster_job, _ = raster_result
-        vector_job, _ = vector_result
+        raster_job, raster_profile = raster_result
+        vector_job, vector_profile = vector_result
     else:
         try:
-            raster_job, _ = await asyncio.to_thread(
+            raster_job, raster_profile = await asyncio.to_thread(
                 _run_raster_job,
                 file_bytes=panel_file_bytes,
                 source_filename=panel_file.filename or "panel.pdf",
@@ -964,7 +1093,7 @@ async def handle_customer_run(
             )
 
         try:
-            vector_job, _ = await asyncio.to_thread(
+            vector_job, vector_profile = await asyncio.to_thread(
                 _run_vector_job,
                 file_bytes=equipment_file_bytes,
                 source_filename=equipment_file.filename or "equipment.pdf",
@@ -983,7 +1112,11 @@ async def handle_customer_run(
             vector_job_id=vector_job.job_id,
         )
         unified_csv_path = unified_job.job_dir / "unified.csv"
-        table_html = _build_customer_table_html(unified_csv_path)
+        table_html = _build_customer_table_html(
+            unified_csv_path,
+            vector_row_count=int((vector_profile or {}).get("rows", 0)),
+            raster_row_count=int((raster_profile or {}).get("rows", 0)),
+        )
         return _render_customer_success_html(
             unified_job_id=unified_job.job_id,
             table_html=table_html,
