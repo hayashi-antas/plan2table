@@ -283,7 +283,12 @@
         return;
       }
 
-      if (event.target === tableModalBackdrop || event.target === tableModalClose) {
+      var closeBtnClicked =
+        tableModalClose &&
+        event.target &&
+        event.target.closest &&
+        event.target.closest('#customer-table-modal-close');
+      if (event.target === tableModalBackdrop || closeBtnClicked) {
         closeCustomerTableModal();
       }
     });
