@@ -32,6 +32,7 @@ OUTPUT_COLUMNS = [
     "台数判定",
     "容量判定",
     "名称判定",
+    "機器ID照合",
     "判定理由",
     "機器ID",
     "機器表 記載名",
@@ -715,11 +716,12 @@ def merge_vector_raster_csv(
     out_rows: List[Dict[str, str]] = []
     vector_keys: set[str] = set()
     for vector_row in vector_rows:
-        equipment_id = vector_row.get(vector_id_header, "")
-        key = _normalize_key(equipment_id)
+        vector_equipment_id = vector_row.get(vector_id_header, "")
+        key = _normalize_key(vector_equipment_id)
         if key:
             vector_keys.add(key)
         agg = raster_agg.get(key)
+        id_match_mark = "◯" if agg is not None else "✗"
 
         power_per_unit_raw = vector_row.get(vector_power_header, "")
         vector_count = _parse_number(vector_row.get(vector_count_header, ""))
@@ -795,8 +797,9 @@ def merge_vector_raster_csv(
                 "台数判定": to_mark(qty_code),
                 "容量判定": to_mark(capacity_code),
                 "名称判定": to_mark(name_code),
+                "機器ID照合": id_match_mark,
                 "判定理由": judgment_reason,
-                "機器ID": equipment_id,
+                "機器ID": vector_equipment_id,
                 "機器表 記載名": vector_name,
                 "盤表 記載名": raster_name_candidates_display,
                 "機器表 台数": _format_number(vector_count),
@@ -836,6 +839,7 @@ def merge_vector_raster_csv(
                 "台数判定": to_mark("mismatch"),
                 "容量判定": to_mark("mismatch"),
                 "名称判定": to_mark("mismatch"),
+                "機器ID照合": "✗",
                 "判定理由": "機器表に記載なし",
                 "機器ID": equipment_id,
                 "機器表 記載名": "",
@@ -864,6 +868,7 @@ def merge_vector_raster_csv(
                 "台数判定": to_mark("review"),
                 "容量判定": to_mark("review"),
                 "名称判定": to_mark("review"),
+                "機器ID照合": "✗",
                 "判定理由": "盤表ID未記載",
                 "機器ID": "",
                 "機器表 記載名": "",
