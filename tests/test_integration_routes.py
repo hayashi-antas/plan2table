@@ -164,6 +164,7 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "総合判定" in resp.text
     assert "判定理由" in resp.text
     assert "名称判定" in resp.text
+    assert "機器ID照合" in resp.text
     assert "機器ID" in resp.text
     assert "機器表 記載名" in resp.text
     assert "盤表 記載名" in resp.text
@@ -195,6 +196,7 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert dl.status_code == 200
     assert "総合判定" in dl.text
     assert "判定理由" in dl.text
+    assert "機器ID照合" in dl.text
     assert "機器表 図面番号" in dl.text
     assert "盤表 記載名" in dl.text
     assert "名称差異" not in dl.text
@@ -605,6 +607,7 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert row["総合判定"] == "要確認"
     assert row["判定理由"] == "容量が複数候補"
     assert row["名称判定"] == "✗"
+    assert row["機器ID照合"] == "◯"
     assert row["機器ID"] == "A-1"
     assert row["機器表 記載名"] == "排風機"
     assert row["盤表 記載名"] == "送風機,予備"
@@ -640,6 +643,7 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert raster_only["台数判定"] == "✗"
     assert raster_only["容量判定"] == "✗"
     assert raster_only["名称判定"] == "✗"
+    assert raster_only["機器ID照合"] == "✗"
     assert raster_only["盤表 記載トレース"] == ""
     assert raster_only["容量差(kW)"] == ""
     assert raster_only["機器表 図面番号"] == ""

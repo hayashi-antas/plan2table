@@ -51,7 +51,7 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert len(rows) == 2
 
     header = list(rows[0].keys())
-    assert header[:5] == ["総合判定", "台数判定", "容量判定", "名称判定", "判定理由"]
+    assert header[:6] == ["総合判定", "台数判定", "容量判定", "名称判定", "機器ID照合", "判定理由"]
     assert "照合結果" not in header
     assert "不一致内容" not in header
     assert "確認理由" not in header
@@ -67,6 +67,7 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert a1["台数判定"] == "✗"
     assert a1["容量判定"] == "要確認"
     assert a1["名称判定"] == "✗"
+    assert a1["機器ID照合"] == "◯"
     assert a1["判定理由"] == "容量が複数候補"
     assert a1["機器ID"] == "A-1"
     assert a1["盤表 記載名"] == "送風機,予備"
@@ -89,6 +90,7 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert b1["台数判定"] == "✗"
     assert b1["容量判定"] == "✗"
     assert b1["名称判定"] == "✗"
+    assert b1["機器ID照合"] == "✗"
     assert b1["判定理由"] == "盤表に記載なし"
     assert b1["機器ID"] == "B-1"
     assert b1["盤表 台数"] == "0"
@@ -340,6 +342,7 @@ def test_merge_appends_raster_only_and_missing_id_rows(tmp_path):
     raster_only = rows[1]
     assert raster_only["機器ID"] == "R-9"
     assert raster_only["総合判定"] == "✗"
+    assert raster_only["機器ID照合"] == "✗"
     assert raster_only["判定理由"] == "機器表に記載なし"
 
     missing_id = rows[2]
@@ -348,6 +351,7 @@ def test_merge_appends_raster_only_and_missing_id_rows(tmp_path):
     assert missing_id["台数判定"] == "要確認"
     assert missing_id["容量判定"] == "要確認"
     assert missing_id["名称判定"] == "要確認"
+    assert missing_id["機器ID照合"] == "✗"
     assert missing_id["判定理由"] == "盤表ID未記載"
 
 
@@ -443,7 +447,7 @@ def test_merge_outputs_only_display_marks_for_judgments(tmp_path):
 
     rows = _read_rows(out_csv)
     for row in rows:
-        for col in ["総合判定", "台数判定", "容量判定", "名称判定"]:
+        for col in ["総合判定", "台数判定", "容量判定", "名称判定", "機器ID照合"]:
             assert row[col] in {"◯", "✗", "要確認"}
 
     raw = out_csv.read_text(encoding="utf-8-sig")

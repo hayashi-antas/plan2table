@@ -493,6 +493,7 @@ CUSTOMER_TABLE_COLUMNS = [
     ("台数判定", ["台数判定"]),
     ("容量判定", ["容量判定"]),
     ("名称判定", ["名称判定"]),
+    ("機器ID照合", ["機器ID照合"]),
     ("機器ID", ["機器ID", "機器番号", "機械番号"]),
     ("機器表 記載名", ["機器表 記載名", "機器表記載名", "機器名", "名称", "機器名称"]),
     ("盤表 記載名", ["盤表 記載名", "盤表記載名"]),
@@ -660,7 +661,7 @@ def _build_customer_table_html(
         mapped_row: dict[str, str] = {}
         for label, candidates in CUSTOMER_TABLE_COLUMNS:
             value = _pick_first_column_value(row, candidates)
-            if label in {"総合判定", "台数判定", "容量判定", "名称判定"}:
+            if label in {"総合判定", "台数判定", "容量判定", "名称判定", "機器ID照合"}:
                 value = _normalize_judgment(value)
             mapped_row[label] = value
         mapped_rows.append(mapped_row)
