@@ -42,6 +42,15 @@ def _fake_vector_extract_success(pdf_path, out_csv_path):
     return {"rows": 1, "columns": ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]}
 
 
+def _fake_e055_extract_success(**kwargs):
+    out_csv = kwargs["out_csv"]
+    out_csv.write_text(
+        "機器器具,メーカー,型番\n直付LED,Panasonic,NNN111\n直付LED,ODELIC,OD222\n",
+        encoding="utf-8-sig",
+    )
+    return {"rows": 2, "columns": ["機器器具", "メーカー", "型番"]}
+
+
 def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
@@ -92,14 +101,51 @@ def test_vector_upload_and_download_fixed_path(tmp_path, monkeypatch):
     assert "V-1" in dl.text
 
 
+def test_e055_upload_and_download_fixed_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_e055_pdf", _fake_e055_extract_success)
+
+    resp = client.post(
+        "/e-055/upload",
+        files={"file": ("e055.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+    assert re.search(r'data-kind="e055"\s+data-job-id="[0-9a-f\-]+"', resp.text)
+    path = _extract_download_path(resp.text, "e055")
+
+    dl = client.get(path)
+    assert dl.status_code == 200
+    csv_text = dl.content.decode("utf-8-sig")
+    assert "機器器具,メーカー,型番" in csv_text
+    assert "Panasonic,NNN111" in csv_text
+    assert "ODELIC,OD222" in csv_text
+
+
+def test_e055_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "")
+
+    resp = client.post(
+        "/e-055/upload",
+        files={"file": ("e055.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
+
+
 def test_fixed_download_returns_404_when_missing():
     missing_job = str(uuid4())
     assert client.get(f"/jobs/{missing_job}/raster.csv").status_code == 404
     assert client.get(f"/jobs/{missing_job}/vector.csv").status_code == 404
+    assert client.get(f"/jobs/{missing_job}/e055.csv").status_code == 404
 
 
 def test_fixed_download_rejects_invalid_job_id_format():
     assert client.get("/jobs/not-a-uuid/raster.csv").status_code == 422
+    assert client.get("/jobs/not-a-uuid/e055.csv").status_code == 422
 
 
 def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
@@ -122,6 +168,7 @@ def test_root_and_develop_routes_are_split():
     assert "Plan2Table Portal" in root.text
     assert 'href="/area"' in root.text
     assert 'href="/me-check"' in root.text
+    assert 'href="/e-055"' in root.text
     assert 'hx-post="/customer/run"' not in root.text
 
     me_check = client.get("/me-check")
@@ -135,6 +182,10 @@ def test_root_and_develop_routes_are_split():
     assert 'hx-post="/raster/upload"' in develop.text
     assert 'hx-post="/vector/upload"' in develop.text
     assert 'hx-post="/unified/merge"' in develop.text
+
+    e055 = client.get("/e-055")
+    assert e055.status_code == 200
+    assert 'hx-post="/e-055/upload"' in e055.text
 
 
 def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatch):
