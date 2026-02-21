@@ -11,6 +11,7 @@ JOBS_ROOT = Path("/tmp/plan2table/jobs")
 RASTER_CSV_NAME = "raster.csv"
 VECTOR_CSV_NAME = "vector.csv"
 UNIFIED_CSV_NAME = "unified.csv"
+E055_CSV_NAME = "e055.csv"
 METADATA_NAME = "metadata.json"
 
 
@@ -53,6 +54,8 @@ def fixed_csv_name(kind: str) -> str:
         return VECTOR_CSV_NAME
     if kind == "unified":
         return UNIFIED_CSV_NAME
+    if kind == "e055":
+        return E055_CSV_NAME
     raise ValueError(f"Unsupported job kind: {kind}")
 
 
