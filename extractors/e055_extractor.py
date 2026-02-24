@@ -20,6 +20,8 @@ from extractors.raster_extractor import (
 )
 
 OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
+MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
+MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")
 
 
 @dataclass
@@ -46,10 +48,6 @@ def compact_text(value: str) -> str:
 
 def strip_times_marker_from_model(value: str) -> str:
     normalized = normalize_text(value)
-    normalized = normalized.replace("✕", "×")
-    normalized = re.sub(r"\(\s*[xX×]\s*\d+\s*\)", "", normalized)
-    normalized = re.sub(r"(?:(?<=^)|(?<=[\s,、/／|]))[xX×]\s*\d+\b", "", normalized)
-    normalized = re.sub(r"[xX×]\s*\d+\s*$", "", normalized)
     normalized = re.sub(r"\s{2,}", " ", normalized)
     normalized = re.sub(r"\s*([,、/／|])\s*", r" \1 ", normalized)
     normalized = re.sub(r"\s{2,}", " ", normalized)
@@ -203,6 +201,12 @@ def _cleanup_model_text(value: str) -> str:
     return text.strip()
 
 
+def _append_multiplier_suffix(text: str, model: str, model_end: int) -> str:
+    suffix_match = MODEL_MULTIPLIER_SUFFIX_PATTERN.match(text[model_end:])
+    suffix = suffix_match.group(0) if suffix_match else ""
+    return _cleanup_model_text(f"{model}{suffix}")
+
+
 def _extract_maker_and_model(segment_text: str) -> Tuple[str, str]:
     matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
     if not matched:
@@ -214,9 +218,9 @@ def _extract_maker_and_model(segment_text: str) -> Tuple[str, str]:
 
 def _extract_model_without_colon(segment_text: str) -> str:
     text = _cleanup_model_text(segment_text)
-    hyphen_model = re.search(r"([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)", text)
+    hyphen_model = MODEL_PATTERN.search(text)
     if hyphen_model:
-        return _cleanup_model_text(hyphen_model.group(1))
+        return _append_multiplier_suffix(text, hyphen_model.group(1), hyphen_model.end(1))
     return ""
 
 
@@ -251,11 +255,10 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
     row_text = " ".join(tokens)
     if not re.search(r"\d+(?:\.\d+)?\s*W", row_text, flags=re.IGNORECASE):
         return []
-    pattern = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
     candidates: List[Dict[str, object]] = []
     seen: set[tuple[int, str]] = set()
-    for match in pattern.finditer(row_text):
-        model = _cleanup_model_text(match.group(1))
+    for match in MODEL_PATTERN.finditer(row_text):
+        model = _append_multiplier_suffix(row_text, match.group(1), match.end(1))
         if not model:
             continue
 

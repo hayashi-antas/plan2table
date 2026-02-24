@@ -29,10 +29,28 @@ def test_split_equivalent_model_without_colon_fallback():
     assert model == "NNN111"
 
 
-def test_strip_times_marker_removes_only_multiplier_markers():
-    assert strip_times_marker_from_model("NNN111 ×2") == "NNN111"
-    assert strip_times_marker_from_model("NNN111 x3") == "NNN111"
-    assert strip_times_marker_from_model("NNN111 / OD222 ×4") == "NNN111 / OD222"
+def test_strip_times_marker_keeps_multiplier_markers():
+    assert strip_times_marker_from_model("NNN111 ×2") == "NNN111 ×2"
+    assert strip_times_marker_from_model("NNN111 x3") == "NNN111 x3"
+    assert strip_times_marker_from_model("NNN111 / OD222 ×4") == "NNN111 / OD222 ×4"
+
+
+def test_split_equivalent_model_keeps_multiplier_variants():
+    maker, model = split_equivalent_model("Panasonic:NNN111×2")
+    assert maker == "Panasonic"
+    assert model == "NNN111×2"
+
+    maker, model = split_equivalent_model("Panasonic:NNN111 x3")
+    assert maker == "Panasonic"
+    assert model == "NNN111 x3"
+
+    maker, model = split_equivalent_model("Panasonic:NNN111 ✕4")
+    assert maker == "Panasonic"
+    assert model == "NNN111 ✕4"
+
+    maker, model = split_equivalent_model("Panasonic:NNN111 (x2)")
+    assert maker == "Panasonic"
+    assert model == "NNN111 (x2)"
 
 
 def test_split_equivalent_model_keeps_multi_pair_in_single_cell():
@@ -152,9 +170,26 @@ def test_extract_candidates_from_cluster_handles_model_only_continuation_row():
     rows = _extract_candidates_from_cluster(cluster)
     assert len(rows) == 2
     assert rows[0]["機器器具"] == ""
-    assert rows[0]["相当型番"] == "TAD-ELT7W1-122J27-24A"
+    assert rows[0]["相当型番"] == "TAD-ELT7W1-122J27-24A × 1"
     assert rows[1]["機器器具"] == ""
-    assert rows[1]["相当型番"] == "TAD-ELT7W1-026J27-24A"
+    assert rows[1]["相当型番"] == "TAD-ELT7W1-026J27-24A × 1"
+
+
+def test_extract_candidates_from_cluster_keeps_multiplier_suffix_without_colon():
+    cluster = RowCluster(
+        row_y=100.0,
+        words=[
+            _word("TP1", 100.0),
+            _word("TAD", 180.0),
+            _word("-", 220.0),
+            _word("ELT7W1-146J27-24A", 320.0),
+            _word("(x2)", 430.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == "TP1"
+    assert rows[0]["相当型番"] == "TAD-ELT7W1-146J27-24A (x2)"
 
 
 def test_propagate_equipment_in_section_assigns_previous_equipment_in_same_block():
