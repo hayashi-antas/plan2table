@@ -250,6 +250,24 @@ def test_extract_candidates_from_cluster_handles_colon_model_only_continuation_r
     assert rows[0]["相当型番"] == "DAIKO:LZA-93039"
 
 
+def test_extract_candidates_from_cluster_prioritizes_colon_model_with_wattage_row():
+    cluster = RowCluster(
+        row_y=120.0,
+        words=[
+            _word("9.8W×3", 120.0, cy=120.0),
+            _word("DAIKO", 240.0, cy=120.0),
+            _word(":", 300.0, cy=120.0),
+            _word("LZD-93548ABB", 380.0, cy=120.0),
+            _word("×", 500.0, cy=120.0),
+            _word("3", 520.0, cy=120.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == ""
+    assert rows[0]["相当型番"] == "DAIKO:LZD-93548ABB × 3"
+
+
 def test_extract_candidates_from_cluster_sets_model_x_to_model_column_for_colon_row():
     cluster = RowCluster(
         row_y=100.0,

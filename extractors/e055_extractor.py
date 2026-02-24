@@ -211,7 +211,7 @@ def _append_multiplier_suffix(text: str, model: str, model_end: int) -> str:
 
 def _normalize_for_model_matching(value: str) -> str:
     normalized = normalize_text(value).upper()
-    return re.sub(r"[\s\-_ー―−–—‐ｰ]+", "", normalized)
+    return re.sub(r"[\s\-_ー―−–—‐ｰ]+", "", normalized)  # noqa: RUF001
 
 
 def _is_emergency_certification_model(model: str) -> bool:
@@ -243,7 +243,7 @@ def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
 
 
 def _extract_maker_and_model(segment_text: str) -> Tuple[str, str, int]:
-    matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
+    matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)  # noqa: RUF001
     if not matched:
         return "", "", -1
     maker = matched.group(1).strip()
@@ -418,6 +418,11 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     tokens = [normalize_text(word.text).strip() for word in words]
     code_indexes = [idx for idx, token in enumerate(tokens) if _is_equipment_code_token(token)]
     if not code_indexes:
+        has_colon_token = any(":" in token or "：" in token for token in tokens)
+        if has_colon_token:
+            colon_candidates = _extract_colon_model_only_candidates(words)
+            if colon_candidates:
+                return colon_candidates
         model_only_candidates = _extract_model_only_candidates(words)
         if model_only_candidates:
             return model_only_candidates
@@ -435,7 +440,7 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
         equivalent_model = ""
         row_x = round(float(words[code_start].bbox[0]), 2)
         model_x = row_x
-        if ":" in segment_text or "：" in segment_text:
+        if ":" in segment_text or "：" in segment_text:  # noqa: RUF001
             maker, model, maker_start = _extract_maker_and_model(segment_text)
             if maker and model:
                 equivalent_model = f"{maker}:{model}"
