@@ -23,7 +23,7 @@ OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
 MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
 MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
 COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
-EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}  # noqa: RUF001
+EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
 
 
 @dataclass
@@ -251,6 +251,15 @@ def _extract_maker_and_model(segment_text: str) -> Tuple[str, str, int]:
     return maker, model, matched.start(1)
 
 
+def _resolve_model_x(source: Dict[str, object], fallback: Dict[str, object] | None = None) -> float:
+    fallback = fallback or {}
+    value = source.get("model_x", source.get("row_x", fallback.get("model_x", fallback.get("row_x", 0.0))))
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _extract_model_without_colon(segment_text: str) -> str:
     text = _cleanup_model_text(segment_text)
     hyphen_model = MODEL_PATTERN.search(text)
@@ -376,21 +385,21 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
                 source = source_rows[row_index]
                 row["機器器具"] = source.get("機器器具", "")
                 row["block_index"] = source.get("block_index", row.get("block_index", 0))
-                row["model_x"] = source.get("model_x", source.get("row_x", row.get("model_x", row.get("row_x", 0.0))))
+                row["model_x"] = _resolve_model_x(source, row)
         else:
             available_sources = list(source_rows)
             for row in current_rows:
-                row_model_x = float(row.get("model_x", row.get("row_x", 0.0)))
+                row_model_x = _resolve_model_x(row)
                 source_pool = available_sources or source_rows
                 source = min(
                     source_pool,
                     key=lambda source_row: abs(
-                        float(source_row.get("model_x", source_row.get("row_x", 0.0))) - row_model_x
+                        _resolve_model_x(source_row) - row_model_x
                     ),
                 )
                 row["機器器具"] = source.get("機器器具", "")
                 row["block_index"] = source.get("block_index", row.get("block_index", 0))
-                row["model_x"] = source.get("model_x", source.get("row_x", row.get("model_x", row.get("row_x", 0.0))))
+                row["model_x"] = _resolve_model_x(source, row)
                 if source in available_sources:
                     available_sources.remove(source)
 
@@ -426,7 +435,7 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
         model_only_candidates = _extract_model_only_candidates(words)
         if model_only_candidates:
             return model_only_candidates
-        return _extract_colon_model_only_candidates(words)
+        return []
 
     candidates: List[Dict[str, object]] = []
     for index, code_start in enumerate(code_indexes):
