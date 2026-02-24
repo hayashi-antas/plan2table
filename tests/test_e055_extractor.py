@@ -188,6 +188,24 @@ def test_extract_candidates_from_cluster_normalizes_ocr_guard_variant():
     assert rows[0]["相当型番"] == "同上ガード付"
 
 
+def test_extract_candidates_from_cluster_normalizes_ocr_katakana_confusion_guard_variant():
+    cluster = RowCluster(
+        row_y=100.0,
+        words=[
+            _word("CT2g", 100.0),
+            _word("同上", 180.0),
+            _word("力", 260.0),
+            _word("一", 290.0),
+            _word("ľ", 320.0),
+            _word("付", 350.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == "CT2g"
+    assert rows[0]["相当型番"] == "同上ガード付"
+
+
 def test_cleanup_model_text_keeps_decimal_power_text():
     text = _cleanup_model_text("11.6W×6 TAD - ELT7W1-146J27-24A ×6")
     assert text == "11.6W×6 TAD-ELT7W1-146J27-24A ×6"
@@ -286,6 +304,28 @@ def test_extract_candidates_from_cluster_sets_model_x_to_model_column_for_colon_
     assert rows[0]["相当型番"] == "DAIKO:LZD-93548ABB × 3"
     assert rows[0]["row_x"] == 95.0
     assert rows[0]["model_x"] == 235.0
+
+
+def test_extract_candidates_from_cluster_sets_model_x_to_model_column_for_non_colon_row():
+    cluster = RowCluster(
+        row_y=100.0,
+        words=[
+            _word("TP1", 100.0),
+            _word("LED", 200.0),
+            _word("11.6W×6", 280.0),
+            _word("TAD", 380.0),
+            _word("-", 420.0),
+            _word("ELT7W1-146J27-24A", 520.0),
+            _word("×", 640.0),
+            _word("6", 660.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == "TP1"
+    assert rows[0]["相当型番"] == "TAD-ELT7W1-146J27-24A × 6"
+    assert rows[0]["row_x"] == 95.0
+    assert rows[0]["model_x"] == 375.0
 
 
 def test_build_output_rows_assigns_dl9_to_colon_model_only_continuation_row():

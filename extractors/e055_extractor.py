@@ -260,19 +260,24 @@ def _resolve_model_x(source: Dict[str, object], fallback: Dict[str, object] | No
         return 0.0
 
 
-def _extract_model_without_colon(segment_text: str) -> str:
+def _extract_model_without_colon_with_start(segment_text: str) -> Tuple[str, int]:
     text = _cleanup_model_text(segment_text)
     hyphen_model = MODEL_PATTERN.search(text)
     if hyphen_model:
-        return _append_multiplier_suffix(text, hyphen_model.group(1), hyphen_model.end(1))
-    return ""
+        return _append_multiplier_suffix(text, hyphen_model.group(1), hyphen_model.end(1)), hyphen_model.start(1)
+    return "", -1
+
+
+def _extract_model_without_colon(segment_text: str) -> str:
+    model, _ = _extract_model_without_colon_with_start(segment_text)
+    return model
 
 
 def _normalize_doujou_model(segment_text: str) -> str:
     compact = compact_text(segment_text).lower()
     if "同上" not in compact:
         return ""
-    if re.search(r"(ガ[ー-]?ド|犬[-ー]?f|一卡付|卡付|カード)", compact):
+    if re.search(r"(ガ[ー-]?ド|犬[-ー]?f|一卡付|卡付|カード|力[ー一-]?[f\u013e\u0142]?付)", compact):
         return "同上ガード付"
     return "同上"
 
@@ -463,7 +468,10 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
             remainder = " ".join(segment_tokens[1:])
             equivalent_model = _normalize_doujou_model(remainder)
             if not equivalent_model:
-                equivalent_model = _extract_model_without_colon(remainder)
+                equivalent_model, model_start = _extract_model_without_colon_with_start(remainder)
+                if model_start >= 0:
+                    model_token_index = 1 + _char_pos_to_token_index(segment_tokens[1:], model_start)
+                    model_x = round(float(words[code_start + model_token_index].bbox[0]), 2)
 
         if not equivalent_model:
             continue
