@@ -22,6 +22,8 @@ from extractors.raster_extractor import (
 OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
 MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
 MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")
+COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")
+EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
 
 
 @dataclass
@@ -207,6 +209,37 @@ def _append_multiplier_suffix(text: str, model: str, model_end: int) -> str:
     return _cleanup_model_text(f"{model}{suffix}")
 
 
+def _normalize_for_model_matching(value: str) -> str:
+    normalized = normalize_text(value).upper()
+    return re.sub(r"[\s\-_ー―−–—‐ｰ]+", "", normalized)
+
+
+def _is_emergency_certification_model(model: str) -> bool:
+    normalized = _normalize_for_model_matching(model)
+    if not normalized:
+        return False
+    return normalized.startswith("LALE") and bool(re.search(r"\d", normalized))
+
+
+def _should_skip_output_row(equipment: str, model: str) -> bool:
+    compact_equipment = compact_text(equipment).upper()
+    if not model:
+        return True
+    if compact_equipment in EXCLUDED_EMERGENCY_CODES:
+        return True
+    return _is_emergency_certification_model(model)
+
+
+def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
+    cursor = 0
+    for idx, token in enumerate(tokens):
+        next_cursor = cursor + len(token)
+        if cursor <= char_pos < next_cursor:
+            return idx
+        cursor = next_cursor + 1
+    return 0
+
+
 def _extract_maker_and_model(segment_text: str) -> Tuple[str, str]:
     matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
     if not matched:
@@ -262,14 +295,7 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
         if not model:
             continue
 
-        cursor = 0
-        token_index = 0
-        for idx, token in enumerate(tokens):
-            next_cursor = cursor + len(token)
-            if cursor <= match.start() < next_cursor:
-                token_index = idx
-                break
-            cursor = next_cursor + 1
+        token_index = _char_pos_to_token_index(tokens, match.start())
         key = (token_index, model)
         if key in seen:
             continue
@@ -277,8 +303,41 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
         candidates.append(
             {
                 "row_x": round(float(sorted_words[token_index].bbox[0]), 2),
+                "model_x": round(float(sorted_words[token_index].bbox[0]), 2),
                 "機器器具": "",
                 "相当型番": model,
+            }
+        )
+    return candidates
+
+
+def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str, object]]:
+    sorted_words = sorted(words, key=lambda item: item.cx)
+    if len(sorted_words) < 2:
+        return []
+
+    tokens = [normalize_text(word.text).strip() for word in sorted_words]
+    row_text = " ".join(tokens)
+    candidates: List[Dict[str, object]] = []
+    seen: set[tuple[int, str]] = set()
+    for match in COLON_MODEL_PATTERN.finditer(row_text):
+        maker = match.group(1).strip()
+        model = _append_multiplier_suffix(row_text, match.group(2), match.end(2))
+        if not maker or not model:
+            continue
+
+        equivalent_model = f"{maker}:{model}"
+        token_index = _char_pos_to_token_index(tokens, match.start(1))
+        key = (token_index, equivalent_model)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                "row_x": round(float(sorted_words[token_index].bbox[0]), 2),
+                "model_x": round(float(sorted_words[token_index].bbox[0]), 2),
+                "機器器具": "",
+                "相当型番": equivalent_model,
             }
         )
     return candidates
@@ -310,10 +369,24 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
         if abs(y - source_y) > 120.0:
             continue
 
-        for row_index, row in enumerate(current_rows):
-            source = source_rows[min(row_index, len(source_rows) - 1)]
-            row["機器器具"] = source.get("機器器具", "")
-            row["block_index"] = source.get("block_index", row.get("block_index", 0))
+        if len(current_rows) == len(source_rows):
+            for row_index, row in enumerate(current_rows):
+                source = source_rows[row_index]
+                row["機器器具"] = source.get("機器器具", "")
+                row["block_index"] = source.get("block_index", row.get("block_index", 0))
+                row["model_x"] = source.get("model_x", source.get("row_x", row.get("model_x", row.get("row_x", 0.0))))
+        else:
+            for row in current_rows:
+                row_model_x = float(row.get("model_x", row.get("row_x", 0.0)))
+                source = min(
+                    source_rows,
+                    key=lambda source_row: abs(
+                        float(source_row.get("model_x", source_row.get("row_x", 0.0))) - row_model_x
+                    ),
+                )
+                row["機器器具"] = source.get("機器器具", "")
+                row["block_index"] = source.get("block_index", row.get("block_index", 0))
+                row["model_x"] = source.get("model_x", source.get("row_x", row.get("model_x", row.get("row_x", 0.0))))
 
     by_block: Dict[int, List[Dict[str, object]]] = {}
     for row in section_candidates:
@@ -339,7 +412,10 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     tokens = [normalize_text(word.text).strip() for word in words]
     code_indexes = [idx for idx, token in enumerate(tokens) if _is_equipment_code_token(token)]
     if not code_indexes:
-        return _extract_model_only_candidates(words)
+        model_only_candidates = _extract_model_only_candidates(words)
+        if model_only_candidates:
+            return model_only_candidates
+        return _extract_colon_model_only_candidates(words)
 
     candidates: List[Dict[str, object]] = []
     for index, code_start in enumerate(code_indexes):
@@ -351,10 +427,16 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
 
         equipment = _normalize_code_token(segment_tokens[0])
         equivalent_model = ""
+        row_x = round(float(words[code_start].bbox[0]), 2)
+        model_x = row_x
         if ":" in segment_text or "：" in segment_text:
+            maker_matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
             maker, model = _extract_maker_and_model(segment_text)
             if maker and model:
                 equivalent_model = f"{maker}:{model}"
+                if maker_matched:
+                    maker_token_index = _char_pos_to_token_index(segment_tokens, maker_matched.start(1))
+                    model_x = round(float(words[code_start + maker_token_index].bbox[0]), 2)
             elif model:
                 equivalent_model = model
         else:
@@ -366,10 +448,10 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
         if not equivalent_model:
             continue
 
-        row_x = round(float(words[code_start].bbox[0]), 2)
         candidates.append(
             {
                 "row_x": row_x,
+                "model_x": model_x,
                 "機器器具": equipment,
                 "相当型番": equivalent_model,
             }
@@ -392,9 +474,12 @@ def build_output_rows(candidates: List[Dict[str, object]]) -> List[Dict[str, str
     for item in sorted_candidates:
         equivalent_model = str(item.get("相当型番", "")).strip()
         manufacturer, model = split_equivalent_model(equivalent_model)
+        equipment = str(item.get("機器器具", "")).strip()
+        if _should_skip_output_row(equipment, model):
+            continue
         rows.append(
             {
-                "機器器具": str(item.get("機器器具", "")).strip(),
+                "機器器具": equipment,
                 "メーカー": manufacturer,
                 "型番": model,
             }
