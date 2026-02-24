@@ -177,7 +177,7 @@ def _is_equipment_code_token(value: str) -> bool:
     if not token:
         return False
     upper = token.upper()
-    if upper in {"EDL", "ECL", "EDM", "ECM", "ECH"}:
+    if upper in EXCLUDED_EMERGENCY_CODES:
         return True
     allowed_prefixes = ("CD", "CR", "CT", "UK", "WL", "CL", "XC", "X'C", "YC", "Y'C", "DL", "LL", "L", "TP", "GL", "SP", "ES", "EC")
     for prefix in allowed_prefixes:
@@ -331,6 +331,8 @@ def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str,
     row_text = " ".join(tokens)
     candidates: List[Dict[str, object]] = []
     seen: set[tuple[int, str]] = set()
+    # Intentionally no wattage guard here: continuation rows may contain only
+    # maker:model text (e.g. "DAIKO:LZA-93039") and still need extraction.
     for match in COLON_MODEL_PATTERN.finditer(row_text):
         maker = match.group(1).strip()
         model = _append_multiplier_suffix(row_text, match.group(2), match.end(2))
@@ -453,9 +455,8 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
             maker, model, maker_start = _extract_maker_and_model(segment_text)
             if maker and model:
                 equivalent_model = f"{maker}:{model}"
-                if maker_start >= 0:
-                    maker_token_index = _char_pos_to_token_index(segment_tokens, maker_start)
-                    model_x = round(float(words[code_start + maker_token_index].bbox[0]), 2)
+                maker_token_index = _char_pos_to_token_index(segment_tokens, maker_start)
+                model_x = round(float(words[code_start + maker_token_index].bbox[0]), 2)
             elif model:
                 equivalent_model = model
         else:
