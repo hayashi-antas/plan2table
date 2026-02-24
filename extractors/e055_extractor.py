@@ -418,7 +418,7 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     tokens = [normalize_text(word.text).strip() for word in words]
     code_indexes = [idx for idx, token in enumerate(tokens) if _is_equipment_code_token(token)]
     if not code_indexes:
-        has_colon_token = any(":" in token or "：" in token for token in tokens)
+        has_colon_token = any(":" in token or "\uFF1A" in token for token in tokens)
         if has_colon_token:
             colon_candidates = _extract_colon_model_only_candidates(words)
             if colon_candidates:
