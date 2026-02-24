@@ -20,6 +20,10 @@ from extractors.raster_extractor import (
 )
 
 OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
+MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
+MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
+COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
+EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
 
 
 @dataclass
@@ -46,10 +50,6 @@ def compact_text(value: str) -> str:
 
 def strip_times_marker_from_model(value: str) -> str:
     normalized = normalize_text(value)
-    normalized = normalized.replace("✕", "×")
-    normalized = re.sub(r"\(\s*[xX×]\s*\d+\s*\)", "", normalized)
-    normalized = re.sub(r"(?:(?<=^)|(?<=[\s,、/／|]))[xX×]\s*\d+\b", "", normalized)
-    normalized = re.sub(r"[xX×]\s*\d+\s*$", "", normalized)
     normalized = re.sub(r"\s{2,}", " ", normalized)
     normalized = re.sub(r"\s*([,、/／|])\s*", r" \1 ", normalized)
     normalized = re.sub(r"\s{2,}", " ", normalized)
@@ -177,7 +177,7 @@ def _is_equipment_code_token(value: str) -> bool:
     if not token:
         return False
     upper = token.upper()
-    if upper in {"EDL", "ECL", "EDM", "ECM", "ECH"}:
+    if upper in EXCLUDED_EMERGENCY_CODES:
         return True
     allowed_prefixes = ("CD", "CR", "CT", "UK", "WL", "CL", "XC", "X'C", "YC", "Y'C", "DL", "LL", "L", "TP", "GL", "SP", "ES", "EC")
     for prefix in allowed_prefixes:
@@ -203,20 +203,68 @@ def _cleanup_model_text(value: str) -> str:
     return text.strip()
 
 
-def _extract_maker_and_model(segment_text: str) -> Tuple[str, str]:
-    matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
+def _append_multiplier_suffix(text: str, model: str, model_end: int) -> str:
+    suffix_match = MODEL_MULTIPLIER_SUFFIX_PATTERN.match(text[model_end:])
+    suffix = suffix_match.group(0) if suffix_match else ""
+    return _cleanup_model_text(f"{model}{suffix}")
+
+
+def _normalize_for_model_matching(value: str) -> str:
+    normalized = normalize_text(value).upper()
+    return re.sub(r"[\s\-_ー―−–—‐ｰ]+", "", normalized)  # noqa: RUF001
+
+
+def _is_emergency_certification_model(model: str) -> bool:
+    normalized = _normalize_for_model_matching(model)
+    if not normalized:
+        return False
+    return normalized.startswith("LALE") and bool(re.search(r"\d", normalized))
+
+
+def _should_skip_output_row(equipment: str, model: str) -> bool:
+    compact_equipment = compact_text(equipment).upper()
+    if not model:
+        return True
+    if compact_equipment in EXCLUDED_EMERGENCY_CODES:
+        return True
+    return _is_emergency_certification_model(model)
+
+
+def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
+    cursor = 0
+    for idx, token in enumerate(tokens):
+        next_cursor = cursor + len(token)
+        if cursor <= char_pos < next_cursor:
+            return idx
+        cursor = next_cursor + 1
+    # Empty-token rows should safely map to 0; otherwise prefer the last token
+    # to avoid surprising fallback-to-first behavior on mapping mismatch.
+    return max(len(tokens) - 1, 0)
+
+
+def _extract_maker_and_model(segment_text: str) -> Tuple[str, str, int]:
+    matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)  # noqa: RUF001
     if not matched:
-        return "", ""
+        return "", "", -1
     maker = matched.group(1).strip()
     model = _cleanup_model_text(matched.group(2))
-    return maker, model
+    return maker, model, matched.start(1)
+
+
+def _resolve_model_x(source: Dict[str, object], fallback: Dict[str, object] | None = None) -> float:
+    fallback = fallback or {}
+    value = source.get("model_x", source.get("row_x", fallback.get("model_x", fallback.get("row_x", 0.0))))
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _extract_model_without_colon(segment_text: str) -> str:
     text = _cleanup_model_text(segment_text)
-    hyphen_model = re.search(r"([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)", text)
+    hyphen_model = MODEL_PATTERN.search(text)
     if hyphen_model:
-        return _cleanup_model_text(hyphen_model.group(1))
+        return _append_multiplier_suffix(text, hyphen_model.group(1), hyphen_model.end(1))
     return ""
 
 
@@ -251,22 +299,14 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
     row_text = " ".join(tokens)
     if not re.search(r"\d+(?:\.\d+)?\s*W", row_text, flags=re.IGNORECASE):
         return []
-    pattern = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
     candidates: List[Dict[str, object]] = []
     seen: set[tuple[int, str]] = set()
-    for match in pattern.finditer(row_text):
-        model = _cleanup_model_text(match.group(1))
+    for match in MODEL_PATTERN.finditer(row_text):
+        model = _append_multiplier_suffix(row_text, match.group(1), match.end(1))
         if not model:
             continue
 
-        cursor = 0
-        token_index = 0
-        for idx, token in enumerate(tokens):
-            next_cursor = cursor + len(token)
-            if cursor <= match.start() < next_cursor:
-                token_index = idx
-                break
-            cursor = next_cursor + 1
+        token_index = _char_pos_to_token_index(tokens, match.start())
         key = (token_index, model)
         if key in seen:
             continue
@@ -274,8 +314,43 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
         candidates.append(
             {
                 "row_x": round(float(sorted_words[token_index].bbox[0]), 2),
+                "model_x": round(float(sorted_words[token_index].bbox[0]), 2),
                 "機器器具": "",
                 "相当型番": model,
+            }
+        )
+    return candidates
+
+
+def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str, object]]:
+    sorted_words = sorted(words, key=lambda item: item.cx)
+    if len(sorted_words) < 2:
+        return []
+
+    tokens = [normalize_text(word.text).strip() for word in sorted_words]
+    row_text = " ".join(tokens)
+    candidates: List[Dict[str, object]] = []
+    seen: set[tuple[int, str]] = set()
+    # Intentionally no wattage guard here: continuation rows may contain only
+    # maker:model text (e.g. "DAIKO:LZA-93039") and still need extraction.
+    for match in COLON_MODEL_PATTERN.finditer(row_text):
+        maker = match.group(1).strip()
+        model = _append_multiplier_suffix(row_text, match.group(2), match.end(2))
+        if not maker or not model:
+            continue
+
+        equivalent_model = f"{maker}:{model}"
+        token_index = _char_pos_to_token_index(tokens, match.start(1))
+        key = (token_index, equivalent_model)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                "row_x": round(float(sorted_words[token_index].bbox[0]), 2),
+                "model_x": round(float(sorted_words[token_index].bbox[0]), 2),
+                "機器器具": "",
+                "相当型番": equivalent_model,
             }
         )
     return candidates
@@ -307,10 +382,28 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
         if abs(y - source_y) > 120.0:
             continue
 
-        for row_index, row in enumerate(current_rows):
-            source = source_rows[min(row_index, len(source_rows) - 1)]
-            row["機器器具"] = source.get("機器器具", "")
-            row["block_index"] = source.get("block_index", row.get("block_index", 0))
+        if len(current_rows) == len(source_rows):
+            for row_index, row in enumerate(current_rows):
+                source = source_rows[row_index]
+                row["機器器具"] = source.get("機器器具", "")
+                row["block_index"] = source.get("block_index", row.get("block_index", 0))
+                row["model_x"] = _resolve_model_x(source, row)
+        else:
+            available_sources = list(source_rows)
+            for row in current_rows:
+                row_model_x = _resolve_model_x(row)
+                source_pool = available_sources or source_rows
+                source = min(
+                    source_pool,
+                    key=lambda source_row: abs(
+                        _resolve_model_x(source_row) - row_model_x
+                    ),
+                )
+                row["機器器具"] = source.get("機器器具", "")
+                row["block_index"] = source.get("block_index", row.get("block_index", 0))
+                row["model_x"] = _resolve_model_x(source, row)
+                if source in available_sources:
+                    available_sources.remove(source)
 
     by_block: Dict[int, List[Dict[str, object]]] = {}
     for row in section_candidates:
@@ -336,7 +429,15 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     tokens = [normalize_text(word.text).strip() for word in words]
     code_indexes = [idx for idx, token in enumerate(tokens) if _is_equipment_code_token(token)]
     if not code_indexes:
-        return _extract_model_only_candidates(words)
+        has_colon_token = any(":" in token or "\uFF1A" in token for token in tokens)
+        if has_colon_token:
+            colon_candidates = _extract_colon_model_only_candidates(words)
+            if colon_candidates:
+                return colon_candidates
+        model_only_candidates = _extract_model_only_candidates(words)
+        if model_only_candidates:
+            return model_only_candidates
+        return []
 
     candidates: List[Dict[str, object]] = []
     for index, code_start in enumerate(code_indexes):
@@ -348,10 +449,14 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
 
         equipment = _normalize_code_token(segment_tokens[0])
         equivalent_model = ""
-        if ":" in segment_text or "：" in segment_text:
-            maker, model = _extract_maker_and_model(segment_text)
+        row_x = round(float(words[code_start].bbox[0]), 2)
+        model_x = row_x
+        if ":" in segment_text or "：" in segment_text:  # noqa: RUF001
+            maker, model, maker_start = _extract_maker_and_model(segment_text)
             if maker and model:
                 equivalent_model = f"{maker}:{model}"
+                maker_token_index = _char_pos_to_token_index(segment_tokens, maker_start)
+                model_x = round(float(words[code_start + maker_token_index].bbox[0]), 2)
             elif model:
                 equivalent_model = model
         else:
@@ -363,10 +468,10 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
         if not equivalent_model:
             continue
 
-        row_x = round(float(words[code_start].bbox[0]), 2)
         candidates.append(
             {
                 "row_x": row_x,
+                "model_x": model_x,
                 "機器器具": equipment,
                 "相当型番": equivalent_model,
             }
@@ -389,9 +494,12 @@ def build_output_rows(candidates: List[Dict[str, object]]) -> List[Dict[str, str
     for item in sorted_candidates:
         equivalent_model = str(item.get("相当型番", "")).strip()
         manufacturer, model = split_equivalent_model(equivalent_model)
+        equipment = str(item.get("機器器具", "")).strip()
+        if _should_skip_output_row(equipment, model):
+            continue
         rows.append(
             {
-                "機器器具": str(item.get("機器器具", "")).strip(),
+                "機器器具": equipment,
                 "メーカー": manufacturer,
                 "型番": model,
             }

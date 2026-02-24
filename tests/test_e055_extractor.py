@@ -1,6 +1,9 @@
+# ruff: noqa: RUF001
+
 from extractors.e055_extractor import (
     RowCluster,
     WordBox,
+    _char_pos_to_token_index,
     _cleanup_model_text,
     _cluster_x_positions,
     _extract_candidates_from_cluster,
@@ -29,10 +32,33 @@ def test_split_equivalent_model_without_colon_fallback():
     assert model == "NNN111"
 
 
-def test_strip_times_marker_removes_only_multiplier_markers():
-    assert strip_times_marker_from_model("NNN111 ×2") == "NNN111"
-    assert strip_times_marker_from_model("NNN111 x3") == "NNN111"
-    assert strip_times_marker_from_model("NNN111 / OD222 ×4") == "NNN111 / OD222"
+def test_char_pos_to_token_index_falls_back_to_last_token():
+    assert _char_pos_to_token_index(["DAIKO", ":", "LZA-93039"], 999) == 2
+    assert _char_pos_to_token_index([], 999) == 0
+
+
+def test_strip_times_marker_keeps_multiplier_markers():
+    assert strip_times_marker_from_model("NNN111 ×2") == "NNN111 ×2"
+    assert strip_times_marker_from_model("NNN111 x3") == "NNN111 x3"
+    assert strip_times_marker_from_model("NNN111 / OD222 ×4") == "NNN111 / OD222 ×4"
+
+
+def test_split_equivalent_model_keeps_multiplier_variants():
+    maker, model = split_equivalent_model("Panasonic:NNN111×2")
+    assert maker == "Panasonic"
+    assert model == "NNN111×2"
+
+    maker, model = split_equivalent_model("Panasonic:NNN111 x3")
+    assert maker == "Panasonic"
+    assert model == "NNN111 x3"
+
+    maker, model = split_equivalent_model("Panasonic:NNN111 ✕4")
+    assert maker == "Panasonic"
+    assert model == "NNN111 ✕4"
+
+    maker, model = split_equivalent_model("Panasonic:NNN111 (x2)")
+    assert maker == "Panasonic"
+    assert model == "NNN111 (x2)"
 
 
 def test_split_equivalent_model_keeps_multi_pair_in_single_cell():
@@ -69,6 +95,41 @@ def test_build_output_rows_prioritizes_block_then_row_for_human_reading_order():
     ]
     rows = build_output_rows(input_rows)
     assert [row["機器器具"] for row in rows] == ["CT1", "CT1g", "CT2", "CT2g", "UK1"]
+
+
+def test_build_output_rows_skips_emergency_certification_rows():
+    input_rows = [
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 100.0, "機器器具": "EDL", "相当型番": "LALE-004"},
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 90.0, "row_x": 110.0, "機器器具": "ES1", "相当型番": "LALE-015"},
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 120.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
+    ]
+    rows = build_output_rows(input_rows)
+    assert rows == [
+        {"機器器具": "UK1", "メーカー": "Panasonic", "型番": "XLX420PENT-LE9"},
+    ]
+
+
+def test_build_output_rows_skips_lale_model_even_for_non_excluded_equipment():
+    input_rows = [
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 100.0, "機器器具": "TP1", "相当型番": "LALE-004"},
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 120.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
+    ]
+    rows = build_output_rows(input_rows)
+    assert rows == [
+        {"機器器具": "UK1", "メーカー": "Panasonic", "型番": "XLX420PENT-LE9"},
+    ]
+
+
+def test_build_output_rows_skips_empty_model_rows():
+    input_rows = [
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 100.0, "機器器具": "TP1", "相当型番": ""},
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 90.0, "row_x": 110.0, "機器器具": "TP2", "相当型番": "Panasonic:"},
+        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 120.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
+    ]
+    rows = build_output_rows(input_rows)
+    assert rows == [
+        {"機器器具": "UK1", "メーカー": "Panasonic", "型番": "XLX420PENT-LE9"},
+    ]
 
 
 def test_cluster_x_positions_groups_nearby_values():
@@ -152,9 +213,92 @@ def test_extract_candidates_from_cluster_handles_model_only_continuation_row():
     rows = _extract_candidates_from_cluster(cluster)
     assert len(rows) == 2
     assert rows[0]["機器器具"] == ""
-    assert rows[0]["相当型番"] == "TAD-ELT7W1-122J27-24A"
+    assert rows[0]["相当型番"] == "TAD-ELT7W1-122J27-24A × 1"
     assert rows[1]["機器器具"] == ""
-    assert rows[1]["相当型番"] == "TAD-ELT7W1-026J27-24A"
+    assert rows[1]["相当型番"] == "TAD-ELT7W1-026J27-24A × 1"
+
+
+def test_extract_candidates_from_cluster_keeps_multiplier_suffix_without_colon():
+    cluster = RowCluster(
+        row_y=100.0,
+        words=[
+            _word("TP1", 100.0),
+            _word("TAD", 180.0),
+            _word("-", 220.0),
+            _word("ELT7W1-146J27-24A", 320.0),
+            _word("(x2)", 430.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == "TP1"
+    assert rows[0]["相当型番"] == "TAD-ELT7W1-146J27-24A (x2)"
+
+
+def test_extract_candidates_from_cluster_handles_colon_model_only_continuation_row():
+    cluster = RowCluster(
+        row_y=120.0,
+        words=[
+            _word("DAIKO", 240.0, cy=120.0),
+            _word(":", 300.0, cy=120.0),
+            _word("LZA-93039", 380.0, cy=120.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == ""
+    assert rows[0]["相当型番"] == "DAIKO:LZA-93039"
+
+
+def test_extract_candidates_from_cluster_prioritizes_colon_model_with_wattage_row():
+    cluster = RowCluster(
+        row_y=120.0,
+        words=[
+            _word("9.8W×3", 120.0, cy=120.0),
+            _word("DAIKO", 240.0, cy=120.0),
+            _word(":", 300.0, cy=120.0),
+            _word("LZD-93548ABB", 380.0, cy=120.0),
+            _word("×", 500.0, cy=120.0),
+            _word("3", 520.0, cy=120.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == ""
+    assert rows[0]["相当型番"] == "DAIKO:LZD-93548ABB × 3"
+
+
+def test_extract_candidates_from_cluster_sets_model_x_to_model_column_for_colon_row():
+    cluster = RowCluster(
+        row_y=100.0,
+        words=[
+            _word("DL9", 100.0),
+            _word("DAIKO", 240.0),
+            _word(":", 300.0),
+            _word("LZD-93548ABB", 380.0),
+            _word("×", 500.0),
+            _word("3", 520.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == "DL9"
+    assert rows[0]["相当型番"] == "DAIKO:LZD-93548ABB × 3"
+    assert rows[0]["row_x"] == 95.0
+    assert rows[0]["model_x"] == 235.0
+
+
+def test_build_output_rows_assigns_dl9_to_colon_model_only_continuation_row():
+    section_candidates = [
+        {"row_y": 100.0, "row_x": 100.0, "block_index": 0, "機器器具": "DL9", "相当型番": "DAIKO:LZD-93548ABB × 3"},
+        {"row_y": 120.0, "row_x": 240.0, "block_index": 0, "機器器具": "", "相当型番": "DAIKO:LZA-93039"},
+    ]
+    _propagate_equipment_in_section(section_candidates)
+    rows = build_output_rows(section_candidates)
+    assert rows == [
+        {"機器器具": "DL9", "メーカー": "DAIKO", "型番": "LZD-93548ABB × 3"},
+        {"機器器具": "DL9", "メーカー": "DAIKO", "型番": "LZA-93039"},
+    ]
 
 
 def test_propagate_equipment_in_section_assigns_previous_equipment_in_same_block():
@@ -183,3 +327,31 @@ def test_propagate_equipment_in_section_maps_continuation_row_by_left_to_right_o
     )
     assert continuation_rows[0]["機器器具"] == "TP1"
     assert continuation_rows[1]["機器器具"] == "TP2"
+
+
+def test_propagate_equipment_in_section_maps_single_continuation_row_by_nearest_model_x():
+    section_candidates = [
+        {"row_y": 100.0, "row_x": 273.0, "model_x": 640.0, "block_index": 0, "機器器具": "DL8", "相当型番": "DAIKO:LZD-93561LWM"},
+        {"row_y": 100.0, "row_x": 829.0, "model_x": 1198.0, "block_index": 1, "機器器具": "DL9", "相当型番": "DAIKO:LZD-93548ABB × 3"},
+        {"row_y": 100.0, "row_x": 1389.0, "model_x": 1755.0, "block_index": 2, "機器器具": "DL10", "相当型番": "DAIKO:LLD-7141LUM3"},
+        {"row_y": 120.0, "row_x": 1176.0, "model_x": 1198.0, "block_index": 2, "機器器具": "", "相当型番": "DAIKO:LZA-93039"},
+    ]
+    _propagate_equipment_in_section(section_candidates)
+    continuation = next(row for row in section_candidates if row["row_y"] == 120.0)
+    assert continuation["機器器具"] == "DL9"
+
+
+def test_propagate_equipment_in_section_avoids_duplicate_source_assignment_when_possible():
+    section_candidates = [
+        {"row_y": 100.0, "row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "A1", "相当型番": "A:AA-001"},
+        {"row_y": 100.0, "row_x": 300.0, "model_x": 300.0, "block_index": 1, "機器器具": "A2", "相当型番": "A:AA-002"},
+        {"row_y": 100.0, "row_x": 500.0, "model_x": 500.0, "block_index": 2, "機器器具": "A3", "相当型番": "A:AA-003"},
+        {"row_y": 120.0, "row_x": 320.0, "model_x": 320.0, "block_index": 3, "機器器具": "", "相当型番": "A:AA-101"},
+        {"row_y": 120.0, "row_x": 340.0, "model_x": 340.0, "block_index": 4, "機器器具": "", "相当型番": "A:AA-102"},
+    ]
+    _propagate_equipment_in_section(section_candidates)
+    continuation_rows = sorted(
+        [row for row in section_candidates if row["row_y"] == 120.0],
+        key=lambda item: item["row_x"],
+    )
+    assert [row["機器器具"] for row in continuation_rows] == ["A2", "A3"]
