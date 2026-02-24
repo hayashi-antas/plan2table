@@ -21,9 +21,9 @@ from extractors.raster_extractor import (
 
 OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
 MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
-MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")
-COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")
-EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
+MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
+COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
+EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}  # noqa: RUF001
 
 
 @dataclass
@@ -237,16 +237,18 @@ def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
         if cursor <= char_pos < next_cursor:
             return idx
         cursor = next_cursor + 1
-    return 0
+    # Empty-token rows should safely map to 0; otherwise prefer the last token
+    # to avoid surprising fallback-to-first behavior on mapping mismatch.
+    return max(len(tokens) - 1, 0)
 
 
-def _extract_maker_and_model(segment_text: str) -> Tuple[str, str]:
+def _extract_maker_and_model(segment_text: str) -> Tuple[str, str, int]:
     matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
     if not matched:
-        return "", ""
+        return "", "", -1
     maker = matched.group(1).strip()
     model = _cleanup_model_text(matched.group(2))
-    return maker, model
+    return maker, model, matched.start(1)
 
 
 def _extract_model_without_colon(segment_text: str) -> str:
@@ -376,10 +378,12 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
                 row["block_index"] = source.get("block_index", row.get("block_index", 0))
                 row["model_x"] = source.get("model_x", source.get("row_x", row.get("model_x", row.get("row_x", 0.0))))
         else:
+            available_sources = list(source_rows)
             for row in current_rows:
                 row_model_x = float(row.get("model_x", row.get("row_x", 0.0)))
+                source_pool = available_sources or source_rows
                 source = min(
-                    source_rows,
+                    source_pool,
                     key=lambda source_row: abs(
                         float(source_row.get("model_x", source_row.get("row_x", 0.0))) - row_model_x
                     ),
@@ -387,6 +391,8 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
                 row["機器器具"] = source.get("機器器具", "")
                 row["block_index"] = source.get("block_index", row.get("block_index", 0))
                 row["model_x"] = source.get("model_x", source.get("row_x", row.get("model_x", row.get("row_x", 0.0))))
+                if source in available_sources:
+                    available_sources.remove(source)
 
     by_block: Dict[int, List[Dict[str, object]]] = {}
     for row in section_candidates:
@@ -430,12 +436,11 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
         row_x = round(float(words[code_start].bbox[0]), 2)
         model_x = row_x
         if ":" in segment_text or "：" in segment_text:
-            maker_matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)
-            maker, model = _extract_maker_and_model(segment_text)
+            maker, model, maker_start = _extract_maker_and_model(segment_text)
             if maker and model:
                 equivalent_model = f"{maker}:{model}"
-                if maker_matched:
-                    maker_token_index = _char_pos_to_token_index(segment_tokens, maker_matched.start(1))
+                if maker_start >= 0:
+                    maker_token_index = _char_pos_to_token_index(segment_tokens, maker_start)
                     model_x = round(float(words[code_start + maker_token_index].bbox[0]), 2)
             elif model:
                 equivalent_model = model

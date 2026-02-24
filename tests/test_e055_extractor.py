@@ -1,6 +1,9 @@
+# ruff: noqa: RUF001
+
 from extractors.e055_extractor import (
     RowCluster,
     WordBox,
+    _char_pos_to_token_index,
     _cleanup_model_text,
     _cluster_x_positions,
     _extract_candidates_from_cluster,
@@ -27,6 +30,11 @@ def test_split_equivalent_model_without_colon_fallback():
     maker, model = split_equivalent_model("NNN111")
     assert maker == ""
     assert model == "NNN111"
+
+
+def test_char_pos_to_token_index_falls_back_to_last_token():
+    assert _char_pos_to_token_index(["DAIKO", ":", "LZA-93039"], 999) == 2
+    assert _char_pos_to_token_index([], 999) == 0
 
 
 def test_strip_times_marker_keeps_multiplier_markers():
@@ -242,6 +250,26 @@ def test_extract_candidates_from_cluster_handles_colon_model_only_continuation_r
     assert rows[0]["相当型番"] == "DAIKO:LZA-93039"
 
 
+def test_extract_candidates_from_cluster_sets_model_x_to_model_column_for_colon_row():
+    cluster = RowCluster(
+        row_y=100.0,
+        words=[
+            _word("DL9", 100.0),
+            _word("DAIKO", 240.0),
+            _word(":", 300.0),
+            _word("LZD-93548ABB", 380.0),
+            _word("×", 500.0),
+            _word("3", 520.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 1
+    assert rows[0]["機器器具"] == "DL9"
+    assert rows[0]["相当型番"] == "DAIKO:LZD-93548ABB × 3"
+    assert rows[0]["row_x"] == 95.0
+    assert rows[0]["model_x"] == 235.0
+
+
 def test_build_output_rows_assigns_dl9_to_colon_model_only_continuation_row():
     section_candidates = [
         {"row_y": 100.0, "row_x": 100.0, "block_index": 0, "機器器具": "DL9", "相当型番": "DAIKO:LZD-93548ABB × 3"},
@@ -293,3 +321,19 @@ def test_propagate_equipment_in_section_maps_single_continuation_row_by_nearest_
     _propagate_equipment_in_section(section_candidates)
     continuation = next(row for row in section_candidates if row["row_y"] == 120.0)
     assert continuation["機器器具"] == "DL9"
+
+
+def test_propagate_equipment_in_section_avoids_duplicate_source_assignment_when_possible():
+    section_candidates = [
+        {"row_y": 100.0, "row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "A1", "相当型番": "A:AA-001"},
+        {"row_y": 100.0, "row_x": 300.0, "model_x": 300.0, "block_index": 1, "機器器具": "A2", "相当型番": "A:AA-002"},
+        {"row_y": 100.0, "row_x": 500.0, "model_x": 500.0, "block_index": 2, "機器器具": "A3", "相当型番": "A:AA-003"},
+        {"row_y": 120.0, "row_x": 320.0, "model_x": 320.0, "block_index": 3, "機器器具": "", "相当型番": "A:AA-101"},
+        {"row_y": 120.0, "row_x": 340.0, "model_x": 340.0, "block_index": 4, "機器器具": "", "相当型番": "A:AA-102"},
+    ]
+    _propagate_equipment_in_section(section_candidates)
+    continuation_rows = sorted(
+        [row for row in section_candidates if row["row_y"] == 120.0],
+        key=lambda item: item["row_x"],
+    )
+    assert [row["機器器具"] for row in continuation_rows] == ["A2", "A3"]
