@@ -128,3 +128,15 @@ def test_build_output_rows_keeps_d1_and_l1_and_skips_blank_rows():
         {"器具記号": "D1", "メーカー": "DAIKO", "相当型番": "LZD-93195XW"},
         {"器具記号": "L1", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
     ]
+
+
+def test_build_output_rows_prioritizes_left_to_right_blocks_before_top_to_bottom_rows():
+    rows = build_output_rows(
+        [
+            {"page": 1, "block_index": 1, "row_y": 100.0, "row_x": 400.0, "器具記号": "L1", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
+            {"page": 1, "block_index": 1, "row_y": 120.0, "row_x": 400.0, "器具記号": "L2", "メーカー": "DAIKO", "相当型番": "DSY-4393YWG"},
+            {"page": 1, "block_index": 0, "row_y": 200.0, "row_x": 100.0, "器具記号": "D1", "メーカー": "DAIKO", "相当型番": "LZD-93195XW"},
+            {"page": 1, "block_index": 2, "row_y": 90.0, "row_x": 700.0, "器具記号": "", "メーカー": "Panasonic", "相当型番": "WTF4088CWK"},
+        ]
+    )
+    assert [row["器具記号"] for row in rows] == ["D1", "L1", "L2", ""]

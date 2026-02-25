@@ -364,11 +364,39 @@ def _assign_equipment_from_anchors(
         row["器具記号"] = nearest.equipment if _is_equipment_code(nearest.equipment) else ""
 
 
+def _cluster_x_positions(values: List[float], tolerance: float = 260.0) -> List[float]:
+    if not values:
+        return []
+    sorted_values = sorted(values)
+    clusters: List[List[float]] = [[sorted_values[0]]]
+    for value in sorted_values[1:]:
+        if abs(value - clusters[-1][-1]) <= tolerance:
+            clusters[-1].append(value)
+        else:
+            clusters.append([value])
+    return [sum(cluster) / len(cluster) for cluster in clusters]
+
+
+def _assign_block_indexes(candidates: List[Dict[str, object]]) -> None:
+    if not candidates:
+        return
+    x_values = [float(row.get("row_x", 0.0)) for row in candidates]
+    x_centers = _cluster_x_positions(x_values, tolerance=260.0)
+    if not x_centers:
+        for row in candidates:
+            row["block_index"] = 0
+        return
+    for row in candidates:
+        x = float(row.get("row_x", 0.0))
+        row["block_index"] = min(range(len(x_centers)), key=lambda idx: abs(x - x_centers[idx]))
+
+
 def build_output_rows(candidates: List[Dict[str, object]]) -> List[Dict[str, str]]:
     sorted_candidates = sorted(
         candidates,
         key=lambda item: (
             int(item.get("page", 0)),
+            int(item.get("block_index", 0)),
             float(item.get("row_y", 0.0)),
             float(item.get("row_x", 0.0)),
         ),
@@ -427,6 +455,7 @@ def _extract_page_candidate_rows(
             )
 
     _assign_equipment_from_anchors(candidates, anchors=anchors)
+    _assign_block_indexes(candidates)
     return candidates
 
 
