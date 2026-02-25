@@ -10,3 +10,5 @@ pytest
 markdown
 markupsafe
 Pillow
+numpy
+opencv-python-headless

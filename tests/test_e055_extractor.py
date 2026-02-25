@@ -1,17 +1,22 @@
 # ruff: noqa: RUF001
 
 from extractors.e055_extractor import (
+    LineAssistConfig,
     RowCluster,
     WordBox,
+    _apply_line_assist_if_confident,
     _char_pos_to_token_index,
     _cleanup_model_text,
     _cluster_x_positions,
     _extract_candidates_from_cluster,
     _propagate_equipment_in_section,
+    _should_run_line_assist,
     build_output_rows,
     split_equivalent_model,
     strip_times_marker_from_model,
 )
+from PIL import Image
+from pathlib import Path
 
 
 def test_split_equivalent_model_ascii_colon():
@@ -418,3 +423,90 @@ def test_propagate_equipment_in_section_avoids_duplicate_source_assignment_when_
         key=lambda item: item["row_x"],
     )
     assert [row["機器器具"] for row in continuation_rows] == ["A2", "A3"]
+
+
+def test_should_run_line_assist_when_continuation_ratio_is_high():
+    section_candidates = [
+        {"row_x": 100.0, "model_x": 350.0, "機器器具": "TP1", "相当型番": "TAD-001"},
+        {"row_x": 120.0, "model_x": 360.0, "機器器具": "", "相当型番": "TAD-002"},
+        {"row_x": 640.0, "model_x": 860.0, "機器器具": "", "相当型番": "DAIKO:LZA-93039"},
+    ]
+    should_run, reasons = _should_run_line_assist(
+        section_candidates,
+        x_centers=[110.0, 650.0],
+        section_bounds={"x_min": 80.0, "x_max": 1200.0, "y_min": 60.0, "y_max": 240.0},
+    )
+    assert should_run is True
+    assert "high_continuation_ratio" in reasons
+
+
+def test_should_not_run_line_assist_for_stable_section():
+    section_candidates = [
+        {"row_x": 100.0, "model_x": 320.0, "機器器具": "DL1", "相当型番": "A:AA-001"},
+        {"row_x": 620.0, "model_x": 860.0, "機器器具": "DL2", "相当型番": "A:AA-002"},
+        {"row_x": 1140.0, "model_x": 1380.0, "機器器具": "DL3", "相当型番": "A:AA-003"},
+    ]
+    should_run, reasons = _should_run_line_assist(
+        section_candidates,
+        x_centers=[110.0, 630.0, 1150.0],
+        section_bounds={"x_min": 80.0, "x_max": 1500.0, "y_min": 60.0, "y_max": 240.0},
+    )
+    assert should_run is False
+    assert reasons == []
+
+
+def test_apply_line_assist_if_confident_adopts_when_quality_improves(monkeypatch):
+    section_candidates = [
+        {"row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "TP1", "相当型番": "A:AA-001"},
+        {"row_x": 620.0, "model_x": 620.0, "block_index": 0, "機器器具": "TP2", "相当型番": "A:AA-002"},
+        {"row_x": 610.0, "model_x": 620.0, "block_index": 0, "機器器具": "", "相当型番": "A:AA-101"},
+    ]
+
+    monkeypatch.setattr(
+        "extractors.e055_extractor._collect_vector_vertical_lines",
+        lambda **kwargs: ([80.0, 400.0, 900.0], {"source": "vector", "raw_lines": 3, "error": ""}),
+    )
+    monkeypatch.setattr(
+        "extractors.e055_extractor._collect_image_vertical_lines",
+        lambda **kwargs: ([82.0, 398.0, 902.0], {"source": "image", "raw_lines": 3, "elapsed_ms": 12.0, "timed_out": False, "error": ""}),
+    )
+
+    info = _apply_line_assist_if_confident(
+        section_candidates=section_candidates,
+        section_bounds={"x_min": 60.0, "x_max": 1200.0, "y_min": 40.0, "y_max": 260.0},
+        baseline_x_centers=[360.0],
+        page_image=Image.new("RGB", (1600, 900), "white"),
+        pdf_path=Path("/tmp/non-existent.pdf"),
+        page_number=1,
+        config=LineAssistConfig(mode="auto", latency_budget_ms=300, min_confidence=0.1, debug_enabled=False),
+    )
+    assert info["adopted"] is True
+    assert int(section_candidates[2]["block_index"]) != 0
+
+
+def test_apply_line_assist_if_confident_rejects_when_confidence_low(monkeypatch):
+    section_candidates = [
+        {"row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "TP1", "相当型番": "A:AA-001"},
+        {"row_x": 620.0, "model_x": 620.0, "block_index": 0, "機器器具": "", "相当型番": "A:AA-101"},
+    ]
+
+    monkeypatch.setattr(
+        "extractors.e055_extractor._collect_vector_vertical_lines",
+        lambda **kwargs: ([], {"source": "vector", "raw_lines": 0, "error": ""}),
+    )
+    monkeypatch.setattr(
+        "extractors.e055_extractor._collect_image_vertical_lines",
+        lambda **kwargs: ([], {"source": "image", "raw_lines": 0, "elapsed_ms": 20.0, "timed_out": False, "error": ""}),
+    )
+
+    info = _apply_line_assist_if_confident(
+        section_candidates=section_candidates,
+        section_bounds={"x_min": 60.0, "x_max": 1200.0, "y_min": 40.0, "y_max": 260.0},
+        baseline_x_centers=[110.0, 620.0],
+        page_image=Image.new("RGB", (1600, 900), "white"),
+        pdf_path=Path("/tmp/non-existent.pdf"),
+        page_number=1,
+        config=LineAssistConfig(mode="auto", latency_budget_ms=300, min_confidence=0.9, debug_enabled=False),
+    )
+    assert info["adopted"] is False
+    assert info["rejected_reason"] in {"confidence_below_threshold", "no_line_blocks"}

@@ -145,6 +145,26 @@ def test_e055_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
     assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
 
 
+def test_e055_upload_contract_unchanged_across_line_assist_modes(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_e055_pdf", _fake_e055_extract_success)
+
+    for mode in ("off", "auto", "force"):
+        monkeypatch.setenv("E055_LINE_ASSIST_MODE", mode)
+        resp = client.post(
+            "/e-055/upload",
+            files={"file": ("e055.pdf", b"%PDF-1.4\n", "application/pdf")},
+        )
+        assert resp.status_code == 200
+        assert 'data-status="success"' in resp.text
+        path = _extract_download_path(resp.text, "e055")
+        dl = client.get(path)
+        assert dl.status_code == 200
+        csv_text = dl.content.decode("utf-8-sig")
+        assert "器具記号,メーカー,相当型番" in csv_text
+
+
 def test_e251_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
