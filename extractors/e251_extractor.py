@@ -23,6 +23,7 @@ OUTPUT_COLUMNS = ["器具記号", "メーカー", "相当型番"]
 
 DASH_VARIANTS_PATTERN = re.compile(r"[ー―−–—‐ｰ－]")  # noqa: RUF001
 EQUIPMENT_CODE_PATTERN = re.compile(r"^[A-Z]\d{1,2}$")
+EQUIPMENT_LABEL_PATTERN = re.compile(r"^(?P<code>[A-Z]\d{1,2})(?:\((?P<suffix>[^()]+)\))?$")
 WATTAGE_ONLY_MODEL_PATTERN = re.compile(r"^\d+(?:\.\d+)?W$", flags=re.IGNORECASE)
 DASH_TOKEN_CLASS = r"[-‐‑‒–—―ー−－]"  # noqa: RUF001
 MODEL_TOKEN_PATTERN = (
@@ -34,7 +35,7 @@ MODEL_TOKEN_PATTERN = (
 )
 
 EQ_COLON_MAKER_MODEL_PATTERN = re.compile(
-    r"\b(?P<eq>[A-Z]\d{1,2})\s*(?:\([^)]+\))?\s*[:：]\s*"
+    r"\b(?P<eq>[A-Z]\d{1,2})\s*(?P<eq_suffix>\([^)]+\))?\s*[:：]\s*"
     r"(?P<maker>[A-Za-z][A-Za-z0-9&._-]{1,30})\s+"
     + rf"(?P<model>{MODEL_TOKEN_PATTERN})"
 )
@@ -89,6 +90,19 @@ def _normalize_token(value: str) -> str:
 
 def _is_equipment_code(value: str) -> bool:
     return bool(EQUIPMENT_CODE_PATTERN.fullmatch(_normalize_token(value)))
+
+
+def _normalize_equipment_label(value: str) -> str:
+    text = _normalize_dash(normalize_text(value)).upper()
+    text = re.sub(r"\s+", "", text)
+    matched = EQUIPMENT_LABEL_PATTERN.fullmatch(text)
+    if not matched:
+        return ""
+    code = matched.group("code")
+    suffix = (matched.group("suffix") or "").strip()
+    if suffix:
+        return f"{code}({suffix})"
+    return code
 
 
 def _is_symbol_like(value: str) -> bool:
@@ -289,10 +303,12 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     occupied_spans: List[Tuple[int, int]] = []
 
     for match in EQ_COLON_MAKER_MODEL_PATTERN.finditer(row_text.upper()):
-        equipment = match.group("eq").strip().upper()
+        equipment = _normalize_equipment_label(
+            f"{match.group('eq').strip()}{match.group('eq_suffix') or ''}"
+        )
         maker = match.group("maker").strip()
         model = _cleanup_model(match.group("model").upper())
-        if not _is_likely_maker(maker) or not _is_likely_model(model):
+        if not equipment or not _is_likely_maker(maker) or not _is_likely_model(model):
             continue
         token_index = _char_pos_to_token_index(tokens, match.start("eq"))
         row_x = round(float(words[token_index].bbox[0]), 2)
@@ -351,8 +367,8 @@ def _assign_equipment_from_anchors(
         return
 
     for row in candidates:
-        equipment = _normalize_token(str(row.get("器具記号", "")))
-        if _is_equipment_code(equipment):
+        equipment = _normalize_equipment_label(str(row.get("器具記号", "")))
+        if equipment:
             row["器具記号"] = equipment
             continue
 
@@ -404,12 +420,9 @@ def build_output_rows(candidates: List[Dict[str, object]]) -> List[Dict[str, str
 
     rows: List[Dict[str, str]] = []
     for item in sorted_candidates:
-        equipment = _normalize_token(str(item.get("器具記号", "")))
+        equipment = _normalize_equipment_label(str(item.get("器具記号", "")))
         maker = normalize_text(str(item.get("メーカー", "")).strip())
         model = _cleanup_model(str(item.get("相当型番", "")).strip())
-
-        if equipment and not _is_equipment_code(equipment):
-            equipment = ""
 
         if not maker and not model:
             continue

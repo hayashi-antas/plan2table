@@ -68,7 +68,7 @@ def test_extract_candidates_from_cluster_eq_colon_maker_model():
     rows = _extract_candidates_from_cluster(cluster)
     assert rows == [
         {
-            "器具記号": "L1",
+            "器具記号": "L1(L1500)",
             "メーカー": "DAIKO",
             "相当型番": "DSY-4394YWG",
             "row_x": 95.0,
@@ -119,14 +119,14 @@ def test_build_output_rows_keeps_d1_and_l1_and_skips_blank_rows():
     rows = build_output_rows(
         [
             {"page": 1, "row_y": 300.0, "row_x": 120.0, "器具記号": "", "メーカー": "", "相当型番": ""},
-            {"page": 1, "row_y": 220.0, "row_x": 200.0, "器具記号": "L1", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
+            {"page": 1, "row_y": 220.0, "row_x": 200.0, "器具記号": "L1(L1500)", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
             {"page": 1, "row_y": 200.0, "row_x": 100.0, "器具記号": "D1", "メーカー": "DAIKO", "相当型番": "LZD-93195XW"},
         ]
     )
 
     assert rows == [
         {"器具記号": "D1", "メーカー": "DAIKO", "相当型番": "LZD-93195XW"},
-        {"器具記号": "L1", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
+        {"器具記号": "L1(L1500)", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
     ]
 
 
