@@ -135,6 +135,32 @@ E-055 は図面内の表記揺れが大きく、単純な行抽出では不足�
 - OCR順は読み順と一致しないため、明示的な並び替えが必要
 - E-055の利用者が期待する自然順に一致させるため
 
+### 4.6 線認識サブ信号（低信頼時のみ）
+
+既存ロジックの上に、**低信頼ケース限定**で線認識を補助的に実行します。  
+実装は `_extract_page_candidate_rows()` 内で以下順です。
+
+1. 既存ロジックで `section_candidates` と初期 `block_index` を作る
+2. `_should_run_line_assist(...)` で低信頼判定（`auto`時）
+3. 必要時のみ `_apply_line_assist_if_confident(...)` を実行
+4. 信頼度が閾値以上かつ品質改善がある場合のみ `block_index` を置換
+5. 既存 `_propagate_equipment_in_section()` を実行
+
+線認識ソース:
+
+- vector線: `_collect_vector_vertical_lines(...)`（pdfplumber）
+- image線: `_collect_image_vertical_lines(...)`（OpenCV Hough）
+- 統合: `_merge_vertical_lines(...)` + `_build_line_based_blocks(...)`
+
+採用判定:
+
+- `_line_assist_confidence(...) >= E055_LINE_ASSIST_MIN_CONFIDENCE`
+- かつ、以下のいずれかが改善
+  - 継続行の未解決件数
+  - `model_x` と block 整合の平均距離
+
+このため、線認識が不安定でも既存結果へ保守的にフォールバックします。
+
 ---
 
 ## 5. 正規化とフィルタの仕様
@@ -201,6 +227,7 @@ E-055 は図面内の表記揺れが大きく、単純な行抽出では不足�
 - `E055_DEBUG_LOG_SUMMARY`
 - `E055_DEBUG_LOG_ROW_LIMIT`
 - `E055_DEBUG_LOG_CANDIDATE_LIMIT`
+- `E055_LINE_ASSIST_DEBUG`
 
 採用理由:
 
@@ -225,6 +252,9 @@ E-055 は図面内の表記揺れが大きく、単純な行抽出では不足�
 - `y_cluster`（既定18.0）
 - Xクラスタ許容幅（既定220.0）
 - 継続行のY距離許容（120.0）
+- `E055_LINE_ASSIST_MODE`（`auto/off/force`）
+- `E055_LINE_ASSIST_LATENCY_BUDGET_MS`（既定300ms）
+- `E055_LINE_ASSIST_MIN_CONFIDENCE`（既定0.70）
 
 ---
 
@@ -241,6 +271,10 @@ E-055 は図面内の表記揺れが大きく、単純な行抽出では不足�
 
 4. ルール競合の余地
 - 同一行に配線系文字列と型番が密集すると、稀に誤候補生成が起こりうる
+
+5. 線認識依存の追加リスク
+- OpenCV未導入環境では image線は無効（vector線または既存経路へフォールバック）
+- スキャン品質が悪い場合、線認識は採用されず既存ロジックに戻る設計
 
 ---
 
@@ -295,3 +329,32 @@ E-055機能は「抽出精度だけ」でなく、以下3点を同時に満た�
 3. 人が読む順で並ぶ（セクション/ブロック/行順）
 
 この3点を崩す変更は、テスト追加と診断ログで根拠を明示してから導入してください。
+
+---
+
+## 12. 線認識サブ信号の実測結果（2026-02-25）
+
+対象:
+
+- 実データ: `E-055.pdf`（1ページ）
+- 比較条件:
+  - `E055_LINE_ASSIST_MODE=auto`
+  - `E055_LINE_ASSIST_MODE=force`
+
+結果サマリ:
+
+- `auto`: 30行、`invoked=0`、`adopted=0`
+- `force`: 30行、`invoked=5`、`adopted=0`
+- `force` 側の主な不採用理由: `no_quality_gain`
+- 出力CSVは `auto` / `force` で完全一致
+
+解釈:
+
+- 既存OCR座標ロジックだけで十分安定しているページでは、線認識を使っても品質改善が出ない。
+- そのため、常時ONは不要だが「低信頼ケースだけ使う保険」として残す価値がある。
+
+運用方針:
+
+1. 既定は `auto` のまま維持
+2. 誤紐付けが疑われる案件のみ `force` で診断
+3. 長期運用で有効事例がなければ削除可否を再評価
