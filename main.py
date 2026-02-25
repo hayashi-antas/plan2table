@@ -23,6 +23,7 @@ from extractors.tool_definitions import TOOLS, SKILL_REGISTRY
 from extractors.raster_extractor import extract_raster_pdf
 from extractors.vector_extractor import extract_vector_pdf_four_columns
 from extractors.e055_extractor import extract_e055_pdf
+from extractors.e251_extractor import extract_e251_pdf
 from extractors.job_store import create_job, resolve_job_csv_path, save_metadata
 from extractors.unified_csv import merge_vector_raster_csv
 
@@ -459,6 +460,7 @@ def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str
         "vector": "Vector",
         "unified": "Unified",
         "e055": "E-055",
+        "e251": "E-251",
     }
     label = label_map.get(kind, kind.capitalize())
     download_path = f"/jobs/{job_id}/{kind}.csv"
@@ -777,6 +779,12 @@ E055_TABLE_COLUMN_SOURCE_KEYS = {
     "メーカー": ("メーカー",),
     "相当型番": ("相当型番", "型番"),
 }
+E251_TABLE_COLUMNS = ["器具記号", "メーカー", "相当型番"]
+E251_TABLE_COLUMN_SOURCE_KEYS = {
+    "器具記号": ("器具記号", "機器器具"),
+    "メーカー": ("メーカー",),
+    "相当型番": ("相当型番", "型番"),
+}
 
 
 def _build_e055_table_html(e055_csv_path: Path) -> str:
@@ -791,6 +799,26 @@ def _build_e055_table_html(e055_csv_path: Path) -> str:
         for column in E055_TABLE_COLUMNS:
             value = ""
             for source_key in E055_TABLE_COLUMN_SOURCE_KEYS[column]:
+                if source_key in row:
+                    value = str(row.get(source_key, "") or "")
+                    break
+            normalized_row[column] = value
+        normalized_rows.append(normalized_row)
+    return _build_table_html(columns, normalized_rows)
+
+
+def _build_e251_table_html(e251_csv_path: Path) -> str:
+    rows = _read_csv_dict_rows(e251_csv_path)
+    columns = [
+        {"key": column, "label": column, "hint": ""}
+        for column in E251_TABLE_COLUMNS
+    ]
+    normalized_rows = []
+    for row in rows:
+        normalized_row = {}
+        for column in E251_TABLE_COLUMNS:
+            value = ""
+            for source_key in E251_TABLE_COLUMN_SOURCE_KEYS[column]:
                 if source_key in row:
                     value = str(row.get(source_key, "") or "")
                     break
@@ -837,6 +865,44 @@ def _render_e055_error_html(message: str) -> str:
     """
 
 
+def _render_e251_success_html(job_id: str, table_html: str, row_count: int) -> str:
+    safe_job_id = html.escape(job_id, quote=True)
+    download_url = f"/jobs/{job_id}/e251.csv"
+    safe_download_url = html.escape(download_url, quote=True)
+    return f"""
+    <section class="relative rounded-lg border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
+      data-status="success"
+      data-kind="e251"
+      data-job-id="{safe_job_id}">
+      <a
+        href="{safe_download_url}"
+        title="CSVをダウンロード"
+        aria-label="CSVをダウンロード"
+        class="group absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
+          <path d="M12 3v11"></path>
+          <path d="m8 10 4 4 4-4"></path>
+          <path d="M4 20h16"></path>
+        </svg>
+      </a>
+      <div class="text-sm font-semibold text-emerald-800">抽出が完了しました</div>
+      <div class="mt-1 text-sm text-emerald-900">Rows: {int(row_count)}</div>
+      <div class="mt-4 overflow-x-auto">{table_html}</div>
+    </section>
+    """
+
+
+def _render_e251_error_html(message: str) -> str:
+    safe_message = html.escape(_single_line_message(message), quote=True)
+    return f"""
+    <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm" data-status="error" data-kind="e251">
+      <div class="text-sm font-semibold text-red-800">処理に失敗しました</div>
+      <div class="mt-1 text-sm">message: {safe_message}</div>
+    </section>
+    """
+
+
 def _run_e055_job(file_bytes: bytes, source_filename: str):
     if not vision_service_account_json:
         raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not configured.")
@@ -863,6 +929,38 @@ def _run_e055_job(file_bytes: bytes, source_filename: str):
             "row_count": profile["rows"],
             "columns": profile["columns"],
             "extractor_version": "e055-v1",
+            "extract_result": extract_result,
+        },
+    )
+    return job, profile
+
+
+def _run_e251_job(file_bytes: bytes, source_filename: str):
+    if not vision_service_account_json:
+        raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+
+    job = create_job(kind="e251", source_filename=source_filename)
+    input_pdf_path = job.job_dir / "input.pdf"
+    input_pdf_path.write_bytes(file_bytes)
+    csv_path = job.job_dir / "e251.csv"
+    debug_dir = Path("/tmp") / "plan2table" / "debug" / job.job_id
+    extract_result = extract_e251_pdf(
+        pdf_path=input_pdf_path,
+        out_csv=csv_path,
+        debug_dir=debug_dir,
+        vision_service_account_json=vision_service_account_json,
+        page=0,
+        dpi=300,
+        y_cluster=14.0,
+    )
+    profile = _csv_profile(csv_path)
+    save_metadata(
+        job,
+        {
+            "csv_files": ["e251.csv"],
+            "row_count": profile["rows"],
+            "columns": profile["columns"],
+            "extractor_version": "e251-v1",
             "extract_result": extract_result,
         },
     )
@@ -987,6 +1085,11 @@ async def read_develop(request: Request):
 @app.get("/e-055", response_class=HTMLResponse)
 async def read_e055(request: Request):
     return templates.TemplateResponse("e-055.html", {"request": request})
+
+
+@app.get("/e-251", response_class=HTMLResponse)
+async def read_e251(request: Request):
+    return templates.TemplateResponse("e-251.html", {"request": request})
 
 
 @app.get("/area", response_class=HTMLResponse)
@@ -1141,6 +1244,30 @@ async def handle_e055_upload(file: UploadFile = File(...)):
     except Exception as exc:
         print(f"E-055 extraction failed: {exc}")
         return _render_e055_error_html(str(exc))
+
+
+@app.post("/e-251/upload", response_class=HTMLResponse)
+async def handle_e251_upload(file: UploadFile = File(...)):
+    if not _is_pdf_upload(file):
+        return _render_e251_error_html("Please upload a valid PDF file.")
+    if not vision_service_account_json:
+        return _render_e251_error_html("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+
+    try:
+        file_bytes = await file.read()
+        job, profile = _run_e251_job(
+            file_bytes=file_bytes,
+            source_filename=file.filename or "upload.pdf",
+        )
+        table_html = _build_e251_table_html(job.job_dir / "e251.csv")
+        return _render_e251_success_html(
+            job_id=job.job_id,
+            table_html=table_html,
+            row_count=int(profile["rows"]),
+        )
+    except Exception as exc:
+        print(f"E-251 extraction failed: {exc}")
+        return _render_e251_error_html(str(exc))
 
 
 @app.post("/customer/run", response_class=HTMLResponse)
@@ -1390,6 +1517,11 @@ async def download_raster_csv(job_id: UUID):
 @app.get("/jobs/{job_id}/e055.csv")
 async def download_e055_csv(job_id: UUID):
     return _download_job_csv(job_id=job_id, kind="e055")
+
+
+@app.get("/jobs/{job_id}/e251.csv")
+async def download_e251_csv(job_id: UUID):
+    return _download_job_csv(job_id=job_id, kind="e251")
 
 
 @app.get("/jobs/{job_id}/vector.csv")

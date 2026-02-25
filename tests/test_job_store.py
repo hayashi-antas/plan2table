@@ -42,3 +42,10 @@ def test_job_store_supports_e055_kind(tmp_path, monkeypatch):
     job = job_store.create_job(kind="e055", source_filename="e055.pdf")
     csv_path = job_store.save_csv(job, b"a,b\n1,2\n")
     assert csv_path.name == "e055.csv"
+
+
+def test_job_store_supports_e251_kind(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    job = job_store.create_job(kind="e251", source_filename="e251.pdf")
+    csv_path = job_store.save_csv(job, b"a,b\n1,2\n")
+    assert csv_path.name == "e251.csv"

@@ -4,6 +4,16 @@
 - For non-sensitive temporary artifacts (debug CSV, debug images, ad-hoc logs), use `/tmp`.
 - Do not create or use a repo-local temp folder unless explicitly requested.
 
+## Local E2E fixtures
+- When the user asks for E2E validation, use local fixtures under:
+  - input PDFs: `.local/e2e-fixtures/input`
+  - expected outputs (CSV/JSON): `.local/e2e-fixtures/expected`
+- Treat `.local/` as local-only data. Do not commit any files from `.local/`.
+- E2E reports should compare actual output vs expected output and explicitly list:
+  - matched cases
+  - mismatches (row/column/value-level where possible)
+  - missing/extra rows
+
 ## Secrets and credentials
 - Never write secrets to files (including `/tmp` and this repository).
 - When using 1Password CLI, read secrets directly into an environment variable for the current command only.

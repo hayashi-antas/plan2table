@@ -1527,26 +1527,40 @@ def extract_raster_pdf(
         tmp_dir = Path(tmp)
         for target_page in target_pages:
             png_path = run_pdftoppm(pdf_path, target_page, dpi, tmp_dir)
-            page_image = Image.open(png_path).convert("RGB")
+            with Image.open(png_path) as source_image:
+                page_image = source_image.convert("RGB")
             right_side_words: List[WordBox] = []
             right_side_size = page_image.size
             page_rows: List[Dict[str, object]] = []
-
-            if target_page in LEGACY_FIRST_PAGES:
-                tables_detected_by_page[target_page] = 0
-                table_count_by_page[target_page] = 0
-                legacy_result = legacy_side_split_extract_page(
-                    client=client,
-                    page_image=page_image,
-                    y_cluster=y_cluster,
-                    debug_dir=debug_dir,
-                    page_number=target_page,
-                )
-                page_rows = list(legacy_result["rows"])
-                right_side_words = list(legacy_result["right_side_words"])
-                right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
-                if not page_rows:
-                    fallback_pages.append(target_page)
+            try:
+                if target_page in LEGACY_FIRST_PAGES:
+                    tables_detected_by_page[target_page] = 0
+                    table_count_by_page[target_page] = 0
+                    legacy_result = legacy_side_split_extract_page(
+                        client=client,
+                        page_image=page_image,
+                        y_cluster=y_cluster,
+                        debug_dir=debug_dir,
+                        page_number=target_page,
+                    )
+                    page_rows = list(legacy_result["rows"])
+                    right_side_words = list(legacy_result["right_side_words"])
+                    right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
+                    if not page_rows:
+                        fallback_pages.append(target_page)
+                        v3_result = extract_page_rows_v3(
+                            client=client,
+                            page_image=page_image,
+                            y_cluster=y_cluster,
+                            debug_dir=debug_dir,
+                            page_number=target_page,
+                        )
+                        page_rows = list(v3_result["rows"])
+                        right_side_words = list(v3_result["page_words"])
+                        candidates = list(v3_result["candidates"])
+                        tables_detected_by_page[target_page] = len(candidates)
+                        table_count_by_page[target_page] = len(candidates)
+                else:
                     v3_result = extract_page_rows_v3(
                         client=client,
                         page_image=page_image,
@@ -1559,45 +1573,34 @@ def extract_raster_pdf(
                     candidates = list(v3_result["candidates"])
                     tables_detected_by_page[target_page] = len(candidates)
                     table_count_by_page[target_page] = len(candidates)
-            else:
-                v3_result = extract_page_rows_v3(
-                    client=client,
-                    page_image=page_image,
-                    y_cluster=y_cluster,
-                    debug_dir=debug_dir,
-                    page_number=target_page,
-                )
-                page_rows = list(v3_result["rows"])
-                right_side_words = list(v3_result["page_words"])
-                candidates = list(v3_result["candidates"])
-                tables_detected_by_page[target_page] = len(candidates)
-                table_count_by_page[target_page] = len(candidates)
-                if not page_rows:
-                    fallback_pages.append(target_page)
-                    legacy_result = legacy_side_split_extract_page(
-                        client=client,
-                        page_image=page_image,
-                        y_cluster=y_cluster,
-                        debug_dir=debug_dir,
-                        page_number=target_page,
-                    )
-                    page_rows = list(legacy_result["rows"])
-                    right_side_words = list(legacy_result["right_side_words"])
-                    right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
+                    if not page_rows:
+                        fallback_pages.append(target_page)
+                        legacy_result = legacy_side_split_extract_page(
+                            client=client,
+                            page_image=page_image,
+                            y_cluster=y_cluster,
+                            debug_dir=debug_dir,
+                            page_number=target_page,
+                        )
+                        page_rows = list(legacy_result["rows"])
+                        right_side_words = list(legacy_result["right_side_words"])
+                        right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
 
-            drawing_number, drawing_number_source = resolve_drawing_number(
-                pdf_path=pdf_path,
-                page=target_page,
-                right_side_words=right_side_words,
-                right_side_size=right_side_size,
-            )
-            drawing_number_by_page[target_page] = drawing_number
-            drawing_number_source_by_page[target_page] = drawing_number_source
-            rows_by_page[target_page] = len(page_rows)
-            for row in page_rows:
-                row[DRAWING_NUMBER_COLUMN] = drawing_number
-                row["page"] = target_page
-                all_rows.append(row)
+                drawing_number, drawing_number_source = resolve_drawing_number(
+                    pdf_path=pdf_path,
+                    page=target_page,
+                    right_side_words=right_side_words,
+                    right_side_size=right_side_size,
+                )
+                drawing_number_by_page[target_page] = drawing_number
+                drawing_number_source_by_page[target_page] = drawing_number_source
+                rows_by_page[target_page] = len(page_rows)
+                for row in page_rows:
+                    row[DRAWING_NUMBER_COLUMN] = drawing_number
+                    row["page"] = target_page
+                    all_rows.append(row)
+            finally:
+                page_image.close()
 
     summary_drawing_number = ""
     summary_drawing_source = "none"
@@ -1646,42 +1649,13 @@ def main() -> int:
         tmp_dir = Path(tmp)
         for target_page in target_pages:
             png_path = run_pdftoppm(pdf_path, target_page, args.dpi, tmp_dir)
-            page_image = Image.open(png_path).convert("RGB")
+            with Image.open(png_path) as source_image:
+                page_image = source_image.convert("RGB")
             right_side_words: List[WordBox] = []
             right_side_size = page_image.size
             page_rows: List[Dict[str, object]] = []
-            if target_page in LEGACY_FIRST_PAGES:
-                legacy_result = legacy_side_split_extract_page(
-                    client=client,
-                    page_image=page_image,
-                    y_cluster=y_cluster,
-                    debug_dir=debug_dir,
-                    page_number=target_page,
-                )
-                page_rows = list(legacy_result["rows"])
-                right_side_words = list(legacy_result["right_side_words"])
-                right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
-                if not page_rows:
-                    v3_result = extract_page_rows_v3(
-                        client=client,
-                        page_image=page_image,
-                        y_cluster=y_cluster,
-                        debug_dir=debug_dir,
-                        page_number=target_page,
-                    )
-                    page_rows = list(v3_result["rows"])
-                    right_side_words = list(v3_result["page_words"])
-            else:
-                v3_result = extract_page_rows_v3(
-                    client=client,
-                    page_image=page_image,
-                    y_cluster=y_cluster,
-                    debug_dir=debug_dir,
-                    page_number=target_page,
-                )
-                page_rows = list(v3_result["rows"])
-                right_side_words = list(v3_result["page_words"])
-                if not page_rows:
+            try:
+                if target_page in LEGACY_FIRST_PAGES:
                     legacy_result = legacy_side_split_extract_page(
                         client=client,
                         page_image=page_image,
@@ -1692,17 +1666,50 @@ def main() -> int:
                     page_rows = list(legacy_result["rows"])
                     right_side_words = list(legacy_result["right_side_words"])
                     right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
+                    if not page_rows:
+                        v3_result = extract_page_rows_v3(
+                            client=client,
+                            page_image=page_image,
+                            y_cluster=y_cluster,
+                            debug_dir=debug_dir,
+                            page_number=target_page,
+                        )
+                        page_rows = list(v3_result["rows"])
+                        right_side_words = list(v3_result["page_words"])
+                else:
+                    v3_result = extract_page_rows_v3(
+                        client=client,
+                        page_image=page_image,
+                        y_cluster=y_cluster,
+                        debug_dir=debug_dir,
+                        page_number=target_page,
+                    )
+                    page_rows = list(v3_result["rows"])
+                    right_side_words = list(v3_result["page_words"])
+                    if not page_rows:
+                        legacy_result = legacy_side_split_extract_page(
+                            client=client,
+                            page_image=page_image,
+                            y_cluster=y_cluster,
+                            debug_dir=debug_dir,
+                            page_number=target_page,
+                        )
+                        page_rows = list(legacy_result["rows"])
+                        right_side_words = list(legacy_result["right_side_words"])
+                        right_side_size = tuple(legacy_result["right_side_size"])  # type: ignore[arg-type]
 
-            drawing_number, _ = resolve_drawing_number(
-                pdf_path=pdf_path,
-                page=target_page,
-                right_side_words=right_side_words,
-                right_side_size=right_side_size,
-            )
-            for row in page_rows:
-                row[DRAWING_NUMBER_COLUMN] = drawing_number
-                row["page"] = target_page
-                all_rows.append(row)
+                drawing_number, _ = resolve_drawing_number(
+                    pdf_path=pdf_path,
+                    page=target_page,
+                    right_side_words=right_side_words,
+                    right_side_size=right_side_size,
+                )
+                for row in page_rows:
+                    row[DRAWING_NUMBER_COLUMN] = drawing_number
+                    row["page"] = target_page
+                    all_rows.append(row)
+            finally:
+                page_image.close()
     all_rows.sort(key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"])))
     write_csv(all_rows, out_csv)
     return 0

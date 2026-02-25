@@ -12,6 +12,7 @@ RASTER_CSV_NAME = "raster.csv"
 VECTOR_CSV_NAME = "vector.csv"
 UNIFIED_CSV_NAME = "unified.csv"
 E055_CSV_NAME = "e055.csv"
+E251_CSV_NAME = "e251.csv"
 METADATA_NAME = "metadata.json"
 
 
@@ -56,6 +57,8 @@ def fixed_csv_name(kind: str) -> str:
         return UNIFIED_CSV_NAME
     if kind == "e055":
         return E055_CSV_NAME
+    if kind == "e251":
+        return E251_CSV_NAME
     raise ValueError(f"Unsupported job kind: {kind}")
 
 

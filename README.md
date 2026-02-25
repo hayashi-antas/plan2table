@@ -19,6 +19,8 @@ license: mit
 寸法線がある詳細図面と面積が記載されている簡易図面の両方に対応し、AIエージェント（Function Calling）で高精度な抽出・検証を行います。
 
 📄 **[Plan2Table 詳細ドキュメント](docs/plan2table.md)**
+  
+📄 **[How To Parse（境界信号ベース）](docs/how-to-parse.md)**
 
 ## M-E-Check
 
@@ -26,6 +28,8 @@ license: mit
 機器番号・台数・容量(kW)の一致/不一致を一覧表で確認でき、結果はCSVでダウンロードできます。
 
 📄 **[M-E-Check 詳細ドキュメント](docs/m-e-check.md)**
+  
+📄 **[M-E-Check FAQ（実装準拠）](docs/m-e-check-faq.md)**
 
 ## E-055 OCR
 
@@ -33,4 +37,14 @@ license: mit
 `機器器具 / メーカー / 型番` の3列で表示・CSV出力します。
 
 📄 **[E-055 OCR 詳細ドキュメント](docs/e-055.md)**
+  
+📄 **[E-055 OCR FAQ](docs/e-055-faq.md)**
 
+## E-251 OCR
+
+住戸内照明器具姿図PDF（E-251 など）をアップロードすると、器具記号・メーカー・相当型番を抽出し、  
+`器具記号 / メーカー / 相当型番` の3列で表示・CSV出力します。
+
+📄 **[E-251 OCR 詳細ドキュメント](docs/e-251.md)**
+  
+📄 **[E-251 OCR FAQ（実装準拠）](docs/e-251-faq.md)**
