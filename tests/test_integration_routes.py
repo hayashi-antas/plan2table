@@ -150,6 +150,7 @@ def test_e055_upload_contract_unchanged_across_line_assist_modes(tmp_path, monke
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
     monkeypatch.setattr(app_main, "extract_e055_pdf", _fake_e055_extract_success)
 
+    baseline_csv_text = ""
     for mode in ("off", "auto", "force"):
         monkeypatch.setenv("E055_LINE_ASSIST_MODE", mode)
         resp = client.post(
@@ -162,7 +163,11 @@ def test_e055_upload_contract_unchanged_across_line_assist_modes(tmp_path, monke
         dl = client.get(path)
         assert dl.status_code == 200
         csv_text = dl.content.decode("utf-8-sig")
-        assert "器具記号,メーカー,相当型番" in csv_text
+        if mode == "off":
+            baseline_csv_text = csv_text
+            assert "器具記号,メーカー,相当型番" in csv_text
+        else:
+            assert csv_text == baseline_csv_text
 
 
 def test_e251_upload_and_download_fixed_path(tmp_path, monkeypatch):

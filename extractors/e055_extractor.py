@@ -673,12 +673,12 @@ def _collect_image_vertical_lines(
                 continue
             x_positions.append(round(float((x0 + x1) / 2.0 + x_min), 2))
 
+    clustered_x_positions = _cluster_x_positions(x_positions, tolerance=10.0)
     diagnostics["raw_lines"] = len(x_positions)
     diagnostics["elapsed_ms"] = (perf_counter() - start_time) * 1000.0
     if diagnostics["elapsed_ms"] > float(time_budget_ms):
         diagnostics["timed_out"] = True
-        return [], diagnostics
-    return _cluster_x_positions(x_positions, tolerance=10.0), diagnostics
+    return clustered_x_positions, diagnostics
 
 
 def _merge_vertical_lines(

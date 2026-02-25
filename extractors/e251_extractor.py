@@ -302,7 +302,7 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     seen: set[tuple[str, str, str, float]] = set()
     occupied_spans: List[Tuple[int, int]] = []
 
-    for match in EQ_COLON_MAKER_MODEL_PATTERN.finditer(row_text.upper()):
+    for match in EQ_COLON_MAKER_MODEL_PATTERN.finditer(row_text):
         equipment = _normalize_equipment_label(
             f"{match.group('eq').strip()}{match.group('eq_suffix') or ''}"
         )
@@ -446,7 +446,7 @@ def _extract_page_candidate_rows(
     y_cluster: float,
 ) -> List[Dict[str, object]]:
     words = _extract_words(client, page_image)
-    section_words, title_y = _extract_section_words(words, y_cluster=14.0)
+    section_words, title_y = _extract_section_words(words, y_cluster=y_cluster)
     if not section_words:
         return []
 

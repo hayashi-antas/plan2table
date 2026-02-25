@@ -225,7 +225,7 @@
 
 ## 9. 現時点の期待出力（基準）
 
-基準PDF: `/Users/akira_hayashi/Downloads/E-251.pdf`
+基準PDF: `<PDF_PATH>`
 
 期待9行:
 
