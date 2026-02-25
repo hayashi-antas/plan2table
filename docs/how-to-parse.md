@@ -185,9 +185,45 @@ E-251も罫線を直接読む主設計ではなく、
 
 ---
 
-## 9. 社内説明テンプレート（短文）
+## 9. まとめ
 
 「本アプリは、表の境界信号を復元して読み取る方式です。  
 境界信号は実線（罫線）と疑似線（座標クラスタ）の2系統で、  
 機器表vectorは実線優先、raster/E-251/E-055は疑似線優先、  
 E-055のみ低信頼時に線認識補助を併用します。」
+
+
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant MainApp as Main App<br/>(e251 route)
+    participant E251Extract as E251 Extractor
+    participant VisionAPI as Google Vision API
+    participant PDFProc as PDF/Image<br/>Processing
+    participant Output as CSV Output
+
+    Client->>MainApp: POST /e-251/upload (PDF)
+    MainApp->>E251Extract: extract_e251_pdf(pdf_path, out_csv)
+    
+    E251Extract->>VisionAPI: Initialize Vision Client
+    E251Extract->>PDFProc: Paginate PDF to images
+    
+    loop For each page
+        PDFProc->>PDFProc: Render page to image (DPI 300)
+        E251Extract->>VisionAPI: Document.text_detection(image)
+        VisionAPI-->>E251Extract: words + bboxes
+        E251Extract->>E251Extract: Y-cluster words by row
+        E251Extract->>E251Extract: Detect section titles & anchors
+        E251Extract->>E251Extract: Extract candidates (器具記号/メーカー/型番)
+        E251Extract->>E251Extract: Assign equipment from anchors
+        E251Extract->>E251Extract: Group by X-position (block indexing)
+    end
+    
+    E251Extract->>E251Extract: Merge all pages
+    E251Extract->>E251Extract: Sort rows (block → top-to-bottom)
+    E251Extract->>Output: build_output_rows()
+    E251Extract->>Output: write_csv(rows, out_csv)
+    
+    Output-->>Client: CSV with 3 columns<br/>(器具記号, メーカー, 相当型番)
+```
