@@ -24,7 +24,12 @@ from extractors.raster_extractor import (
     vision,
 )
 
-OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
+OUTPUT_COLUMNS = ["器具記号", "メーカー", "相当型番"]
+OUTPUT_COLUMN_SOURCE_KEYS = {
+    "器具記号": ("器具記号", "機器器具"),
+    "メーカー": ("メーカー",),
+    "相当型番": ("相当型番", "型番"),
+}
 MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
 MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
 COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
@@ -134,7 +139,15 @@ def write_csv(rows: List[Dict[str, str]], out_csv: Path) -> None:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
         writer.writeheader()
         for row in rows:
-            writer.writerow(row)
+            normalized_row = {}
+            for column in OUTPUT_COLUMNS:
+                value = ""
+                for source_key in OUTPUT_COLUMN_SOURCE_KEYS[column]:
+                    if source_key in row:
+                        value = str(row.get(source_key, "") or "")
+                        break
+                normalized_row[column] = value
+            writer.writerow(normalized_row)
 
 
 def _extract_words(client: vision.ImageAnnotatorClient, page_image: Image.Image) -> List[WordBox]:

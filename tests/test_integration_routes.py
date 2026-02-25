@@ -45,10 +45,10 @@ def _fake_vector_extract_success(pdf_path, out_csv_path):
 def _fake_e055_extract_success(**kwargs):
     out_csv = kwargs["out_csv"]
     out_csv.write_text(
-        "機器器具,メーカー,型番\n直付LED,Panasonic,NNN111\n直付LED,ODELIC,OD222\n",
+        "器具記号,メーカー,相当型番\n直付LED,Panasonic,NNN111\n直付LED,ODELIC,OD222\n",
         encoding="utf-8-sig",
     )
-    return {"rows": 2, "columns": ["機器器具", "メーカー", "型番"]}
+    return {"rows": 2, "columns": ["器具記号", "メーカー", "相当型番"]}
 
 
 def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
@@ -118,7 +118,7 @@ def test_e055_upload_and_download_fixed_path(tmp_path, monkeypatch):
     dl = client.get(path)
     assert dl.status_code == 200
     csv_text = dl.content.decode("utf-8-sig")
-    assert "機器器具,メーカー,型番" in csv_text
+    assert "器具記号,メーカー,相当型番" in csv_text
     assert "Panasonic,NNN111" in csv_text
     assert "ODELIC,OD222" in csv_text
 

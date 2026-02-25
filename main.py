@@ -771,7 +771,12 @@ def _render_customer_error_html(stage: str, message: str) -> str:
     """
 
 
-E055_TABLE_COLUMNS = ["機器器具", "メーカー", "型番"]
+E055_TABLE_COLUMNS = ["器具記号", "メーカー", "相当型番"]
+E055_TABLE_COLUMN_SOURCE_KEYS = {
+    "器具記号": ("器具記号", "機器器具"),
+    "メーカー": ("メーカー",),
+    "相当型番": ("相当型番", "型番"),
+}
 
 
 def _build_e055_table_html(e055_csv_path: Path) -> str:
@@ -782,7 +787,15 @@ def _build_e055_table_html(e055_csv_path: Path) -> str:
     ]
     normalized_rows = []
     for row in rows:
-        normalized_rows.append({column: str(row.get(column, "") or "") for column in E055_TABLE_COLUMNS})
+        normalized_row = {}
+        for column in E055_TABLE_COLUMNS:
+            value = ""
+            for source_key in E055_TABLE_COLUMN_SOURCE_KEYS[column]:
+                if source_key in row:
+                    value = str(row.get(source_key, "") or "")
+                    break
+            normalized_row[column] = value
+        normalized_rows.append(normalized_row)
     return _build_table_html(columns, normalized_rows)
 
 
