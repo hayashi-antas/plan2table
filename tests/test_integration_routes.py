@@ -51,6 +51,15 @@ def _fake_e055_extract_success(**kwargs):
     return {"rows": 2, "columns": ["器具記号", "メーカー", "相当型番"]}
 
 
+def _fake_e251_extract_success(**kwargs):
+    out_csv = kwargs["out_csv"]
+    out_csv.write_text(
+        "器具記号,メーカー,相当型番\nD1,DAIKO,LZD-93195XW\nD2,DNL,D-EX12\nL1,DAIKO,DSY-4394YWG\n,Panasonic,WTF4088CWK\n",
+        encoding="utf-8-sig",
+    )
+    return {"rows": 4, "columns": ["器具記号", "メーカー", "相当型番"]}
+
+
 def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
@@ -136,16 +145,53 @@ def test_e055_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
     assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
 
 
+def test_e251_upload_and_download_fixed_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_e251_pdf", _fake_e251_extract_success)
+
+    resp = client.post(
+        "/e-251/upload",
+        files={"file": ("e251.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+    assert re.search(r'data-kind="e251"\s+data-job-id="[0-9a-f\-]+"', resp.text)
+    path = _extract_download_path(resp.text, "e251")
+
+    dl = client.get(path)
+    assert dl.status_code == 200
+    csv_text = dl.content.decode("utf-8-sig")
+    assert "器具記号,メーカー,相当型番" in csv_text
+    assert "D1,DAIKO,LZD-93195XW" in csv_text
+    assert "D2,DNL,D-EX12" in csv_text
+
+
+def test_e251_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "")
+
+    resp = client.post(
+        "/e-251/upload",
+        files={"file": ("e251.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
+
+
 def test_fixed_download_returns_404_when_missing():
     missing_job = str(uuid4())
     assert client.get(f"/jobs/{missing_job}/raster.csv").status_code == 404
     assert client.get(f"/jobs/{missing_job}/vector.csv").status_code == 404
     assert client.get(f"/jobs/{missing_job}/e055.csv").status_code == 404
+    assert client.get(f"/jobs/{missing_job}/e251.csv").status_code == 404
 
 
 def test_fixed_download_rejects_invalid_job_id_format():
     assert client.get("/jobs/not-a-uuid/raster.csv").status_code == 422
     assert client.get("/jobs/not-a-uuid/e055.csv").status_code == 422
+    assert client.get("/jobs/not-a-uuid/e251.csv").status_code == 422
 
 
 def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
@@ -169,6 +215,7 @@ def test_root_and_develop_routes_are_split():
     assert 'href="/area"' in root.text
     assert 'href="/me-check"' in root.text
     assert 'href="/e-055"' in root.text
+    assert 'href="/e-251"' in root.text
     assert 'hx-post="/customer/run"' not in root.text
 
     me_check = client.get("/me-check")
@@ -186,6 +233,10 @@ def test_root_and_develop_routes_are_split():
     e055 = client.get("/e-055")
     assert e055.status_code == 200
     assert 'hx-post="/e-055/upload"' in e055.text
+
+    e251 = client.get("/e-251")
+    assert e251.status_code == 200
+    assert 'hx-post="/e-251/upload"' in e251.text
 
 
 def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatch):

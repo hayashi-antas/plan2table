@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-251 抽出 | 住戸内照明器具姿図OCR</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Noto+Serif+JP:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            serif: ['Cormorant Garamond', 'Noto Serif JP', 'serif'],
+            sans: ['Source Sans 3', 'sans-serif'],
+          },
+          colors: {
+            paper: '#f7f3ed',
+            'paper-dark': '#ebe5db',
+            ink: '#2c2416',
+            'ink-light': '#5c5243',
+            'ink-muted': '#8a8072',
+            wood: '#8b5a2b',
+            'wood-dark': '#6b4423',
+            copper: '#b87333',
+            'copper-light': '#d4956a',
+            blueprint: '#1e3a5f',
+            'blueprint-light': '#2d5a8a',
+            stone: '#9c9486',
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/static/shared-ui.css">
+</head>
+<body class="min-h-screen blueprint-grid">
+  <div class="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative z-10">
+    <div class="w-full max-w-4xl">
+      <header class="text-center mb-10">
+        <div class="flex justify-center mb-6">
+          <a href="/" aria-label="トップページへ" class="inline-block">
+            <div class="seal">
+              <svg class="w-6 h-6 text-wood" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+              </svg>
+            </div>
+          </a>
+        </div>
+        <h1 class="heading-serif text-3xl md:text-4xl font-semibold text-ink mb-3">E-251 住戸内照明器具姿図抽出</h1>
+        <div class="divider-ornament text-sm mb-4">
+          <span class="font-medium tracking-widest uppercase text-stone">Equipment Symbol + Maker + Model OCR</span>
+        </div>
+        <p class="text-ink-muted text-sm md:text-base max-w-2xl mx-auto leading-relaxed">
+          PDFをアップロードすると「器具記号」「メーカー」「相当型番」を抽出し、<br class="hidden md:block">
+          3列CSVを出力します
+        </p>
+      </header>
+
+      <div class="paper-card border border-stone/30 rounded-sm p-6 md:p-8 relative corner-marks">
+        <form
+          id="e251-form"
+          hx-encoding="multipart/form-data"
+          hx-post="/e-251/upload"
+          hx-target="#e251-result"
+          hx-indicator="#e251-loading"
+        >
+          <div class="flex items-center gap-3 mb-5">
+            <span class="text-xs font-semibold tracking-widest uppercase text-stone">File Upload</span>
+            <div class="flex-1 h-px bg-gradient-to-r from-stone/40 to-transparent"></div>
+          </div>
+
+          <label id="e251-dropzone" for="e251-file" class="dropzone block rounded-sm p-8 md:p-12 cursor-pointer mb-6">
+            <div class="flex flex-col items-center text-center">
+              <div class="w-16 h-16 rounded-full border-2 border-dashed border-wood/50 flex items-center justify-center mb-5 bg-paper-dark/50">
+                <svg class="w-7 h-7 text-wood" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+              </div>
+              <p class="heading-serif text-xl text-ink font-medium mb-2">ファイルをドロップ</p>
+              <p class="text-ink-muted text-sm mb-1">またはクリックして選択</p>
+              <p class="text-xs text-stone mt-2">対応形式: PDF</p>
+              <div id="e251-file-name-display" class="hidden mt-5 px-4 py-2.5 bg-paper-dark border border-wood/30 rounded-sm">
+                <span id="e251-file-name" class="file-name text-sm text-wood font-medium"></span>
+              </div>
+            </div>
+            <input id="e251-file" type="file" name="file" accept=".pdf" required>
+          </label>
+
+          <button
+            type="submit"
+            id="e251-submit-btn"
+            class="btn-architectural w-full text-white font-medium py-3.5 px-6 rounded-sm flex items-center justify-center gap-2 tracking-wide"
+          >
+            <span class="hide-on-request">抽出を開始する</span>
+            <svg class="w-4 h-4 hide-on-request" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+            </svg>
+          </button>
+
+          <div id="e251-loading" class="htmx-indicator flex items-center justify-center gap-3 text-wood mt-4 py-3" style="display: flex;">
+            <div class="loader"></div>
+            <span class="text-sm font-medium animate-pulse">PDFを処理中です…少しお待ちください。</span>
+          </div>
+        </form>
+
+        <div id="e251-result" class="mt-6 overflow-x-auto prose"></div>
+      </div>
+
+      <footer class="mt-8 text-center">
+        <div class="divider-ornament text-xs mb-3">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+          </svg>
+        </div>
+        <p class="text-stone text-xs tracking-wide">Powered by Google Vision API</p>
+      </footer>
+    </div>
+  </div>
+
+  <div id="formulas-container" class="fixed inset-0 pointer-events-none overflow-hidden z-0"></div>
+
+  <script src="/static/shared-ui.js"></script>
+  <script>
+    window.initFormulaAnimation("formulas-container");
+
+    var fileInput = document.getElementById("e251-file");
+    var fileNameDisplay = document.getElementById("e251-file-name-display");
+    var fileNameSpan = document.getElementById("e251-file-name");
+    var dropzone = document.getElementById("e251-dropzone");
+    var submitBtn = document.getElementById("e251-submit-btn");
+    var form = document.getElementById("e251-form");
+
+    function isPdf(file) {
+      if (!file) return false;
+      if (file.type === "application/pdf") return true;
+      return (file.name || "").toLowerCase().endsWith(".pdf");
+    }
+
+    fileInput.addEventListener("change", function () {
+      if (this.files && this.files[0]) {
+        fileNameSpan.textContent = this.files[0].name;
+        fileNameDisplay.classList.remove("hidden");
+      } else {
+        fileNameDisplay.classList.add("hidden");
+      }
+    });
+
+    ["dragenter", "dragover"].forEach(function (eventName) {
+      dropzone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach(function (eventName) {
+      dropzone.addEventListener(eventName, function (event) {
+        event.preventDefault();
+        dropzone.classList.remove("dragover");
+      });
+    });
+
+    dropzone.addEventListener("drop", function (event) {
+      var files = event.dataTransfer.files;
+      if (!files || !files.length || !isPdf(files[0])) return;
+      fileInput.files = files;
+      fileNameSpan.textContent = files[0].name;
+      fileNameDisplay.classList.remove("hidden");
+    });
+
+    document.body.addEventListener("htmx:beforeRequest", function (event) {
+      if (event.target === form || event.detail.elt === form) {
+        submitBtn.disabled = true;
+        submitBtn.classList.add("opacity-70", "cursor-not-allowed");
+      }
+    });
+
+    document.body.addEventListener("htmx:afterRequest", function (event) {
+      if (event.target === form || event.detail.elt === form) {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
+      }
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+      if (event.detail.target && event.detail.target.id === "e251-result") {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
+      }
+    });
+  </script>
+</body>
+</html>
