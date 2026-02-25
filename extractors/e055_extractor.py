@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import os
 import re
+import subprocess
+import sys
 import unicodedata
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, List, Tuple
@@ -24,6 +29,7 @@ MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
 MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
 COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
 EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
+DEFAULT_DEBUG_FOCUS_TERMS = ("TP1", "TP2", "CT2G", "DL9", "同上", "TAD-", "LZD-")
 
 
 @dataclass
@@ -46,6 +52,62 @@ def normalize_text(value: str) -> str:
 
 def compact_text(value: str) -> str:
     return normalize_text(value).replace(" ", "").replace("　", "")
+
+
+def _is_truthy_env(name: str, default: str = "0") -> bool:
+    raw = os.getenv(name, default).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _package_version(name: str) -> str:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _command_output(command: List[str]) -> str:
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True)
+    except FileNotFoundError:
+        return "not_found"
+    output = (proc.stdout or proc.stderr or "").strip()
+    if proc.returncode != 0:
+        return f"error({proc.returncode}): {output or 'unknown'}"
+    return output or "ok"
+
+
+def _git_sha() -> str:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = _command_output(["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"])
+    if result.startswith("error(") or result == "not_found":
+        return "unknown"
+    return result.splitlines()[0].strip()
+
+
+def _debug_focus_terms() -> List[str]:
+    raw = os.getenv("E055_DEBUG_FOCUS_TERMS", "").strip()
+    if raw:
+        terms = [compact_text(item).upper() for item in raw.split(",") if compact_text(item)]
+        return terms
+    return [compact_text(item).upper() for item in DEFAULT_DEBUG_FOCUS_TERMS]
+
+
+def _row_matches_focus(row_text: str, focus_terms: List[str]) -> bool:
+    if not focus_terms:
+        return True
+    compact = compact_text(row_text).upper()
+    return any(term in compact for term in focus_terms)
 
 
 def strip_times_marker_from_model(value: str) -> str:
@@ -515,17 +577,102 @@ def build_output_rows(candidates: List[Dict[str, object]]) -> List[Dict[str, str
     return rows
 
 
+def _collect_focus_row_samples(
+    clusters: List[RowCluster],
+    *,
+    focus_terms: List[str],
+    row_limit: int,
+) -> List[Dict[str, object]]:
+    samples: List[Dict[str, object]] = []
+    for cluster in clusters:
+        row_text = _row_text(cluster)
+        if not _row_matches_focus(row_text, focus_terms):
+            continue
+        tokens = sorted(cluster.words, key=lambda x: x.cx)
+        samples.append(
+            {
+                "row_y": round(cluster.row_y, 2),
+                "row_text": row_text,
+                "tokens": [
+                    {
+                        "text": normalize_text(token.text),
+                        "bbox": [round(float(v), 2) for v in token.bbox],
+                    }
+                    for token in tokens
+                ],
+            }
+        )
+        if len(samples) >= max(row_limit, 1):
+            break
+    return samples
+
+
+def _print_diagnostics_summary(diagnostics: Dict[str, object]) -> None:
+    page_diagnostics = diagnostics.get("page_diagnostics", [])
+    if not isinstance(page_diagnostics, list):
+        return
+
+    row_print_limit = _int_env("E055_DEBUG_LOG_ROW_LIMIT", 20)
+    candidate_print_limit = _int_env("E055_DEBUG_LOG_CANDIDATE_LIMIT", 20)
+    for page_diag in page_diagnostics:
+        if not isinstance(page_diag, dict):
+            continue
+        page = page_diag.get("page")
+        focus_rows = page_diag.get("focus_rows", [])
+        candidate_rows = page_diag.get("candidate_rows", [])
+        print(
+            f"[E055 DEBUG] page={page} focus_rows={len(focus_rows) if isinstance(focus_rows, list) else 0} "
+            f"candidate_rows={len(candidate_rows) if isinstance(candidate_rows, list) else 0}"
+        )
+        if isinstance(focus_rows, list):
+            for row in focus_rows[:max(row_print_limit, 0)]:
+                if not isinstance(row, dict):
+                    continue
+                print(f"[E055 DEBUG][focus] page={page} y={row.get('row_y')} text={row.get('row_text', '')}")
+        if isinstance(candidate_rows, list):
+            for row in candidate_rows[:max(candidate_print_limit, 0)]:
+                if not isinstance(row, dict):
+                    continue
+                print(
+                    "[E055 DEBUG][candidate] "
+                    f"page={page} y={row.get('row_y')} block={row.get('block_index')} "
+                    f"eq={row.get('機器器具', '')} model={row.get('相当型番', '')} "
+                    f"row_x={row.get('row_x')} model_x={row.get('model_x')}"
+                )
+
+
 def _extract_page_candidate_rows(
     *,
     client: vision.ImageAnnotatorClient,
     page_image: Image.Image,
     page_number: int,
     y_cluster: float,
+    diagnostics: Dict[str, object] | None = None,
 ) -> List[Dict[str, object]]:
     words = _extract_words(client, page_image)
     clusters = _cluster_by_y(words, y_cluster)
     header_indexes = [idx for idx, cluster in enumerate(clusters) if _is_header_row(_row_text(cluster))]
+    page_diag_candidates: List[Dict[str, object]] = []
     if not header_indexes:
+        if diagnostics is not None:
+            page_diagnostics = diagnostics.setdefault("page_diagnostics", [])
+            if not isinstance(page_diagnostics, list):
+                page_diagnostics = []
+                diagnostics["page_diagnostics"] = page_diagnostics
+            page_diagnostics.append(
+                {
+                    "page": page_number,
+                    "word_count": len(words),
+                    "cluster_count": len(clusters),
+                    "header_indexes": [],
+                    "focus_rows": _collect_focus_row_samples(
+                        clusters,
+                        focus_terms=list(diagnostics.get("focus_terms", [])),
+                        row_limit=int(diagnostics.get("focus_row_limit", 30)),
+                    ),
+                    "candidate_rows": [],
+                }
+            )
         return []
 
     candidates: List[Dict[str, object]] = []
@@ -560,6 +707,37 @@ def _extract_page_candidate_rows(
         _propagate_equipment_in_section(section_candidates)
         for row in section_candidates:
             candidates.append(row)
+            if diagnostics is not None and len(page_diag_candidates) < int(diagnostics.get("candidate_limit", 120)):
+                page_diag_candidates.append(
+                    {
+                        "section_index": int(row.get("section_index", 0)),
+                        "row_y": float(row.get("row_y", 0.0)),
+                        "row_x": float(row.get("row_x", 0.0)),
+                        "model_x": float(row.get("model_x", 0.0)),
+                        "block_index": int(row.get("block_index", 0)),
+                        "機器器具": str(row.get("機器器具", "")),
+                        "相当型番": str(row.get("相当型番", "")),
+                    }
+                )
+    if diagnostics is not None:
+        page_diagnostics = diagnostics.setdefault("page_diagnostics", [])
+        if not isinstance(page_diagnostics, list):
+            page_diagnostics = []
+            diagnostics["page_diagnostics"] = page_diagnostics
+        page_diagnostics.append(
+            {
+                "page": page_number,
+                "word_count": len(words),
+                "cluster_count": len(clusters),
+                "header_indexes": header_indexes,
+                "focus_rows": _collect_focus_row_samples(
+                    clusters,
+                    focus_terms=list(diagnostics.get("focus_terms", [])),
+                    row_limit=int(diagnostics.get("focus_row_limit", 30)),
+                ),
+                "candidate_rows": page_diag_candidates,
+            }
+        )
     return candidates
 
 
@@ -572,9 +750,35 @@ def extract_e055_pdf(
     dpi: int = 300,
     y_cluster: float = 18.0,
 ) -> Dict[str, object]:
-    del debug_dir  # reserved for future debug image output
     if not pdf_path.exists():
         raise FileNotFoundError(f"入力PDFが見つかりません: {pdf_path}")
+
+    diagnostics_enabled = _is_truthy_env("E055_DEBUG_DIAGNOSTICS")
+    diagnostics: Dict[str, object] | None = None
+    diagnostics_path: Path | None = None
+    if diagnostics_enabled:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        diagnostics_path = debug_dir / "e055_diagnostics.json"
+        diagnostics = {
+            "enabled": True,
+            "extractor_file": str(Path(__file__).resolve()),
+            "git_sha": _git_sha(),
+            "python_version": sys.version.split()[0],
+            "pillow_version": _package_version("Pillow"),
+            "vision_version": _package_version("google-cloud-vision"),
+            "pdftoppm_version": _command_output(["pdftoppm", "-v"]),
+            "dpi": dpi,
+            "y_cluster": y_cluster,
+            "focus_terms": _debug_focus_terms(),
+            "focus_row_limit": _int_env("E055_DEBUG_FOCUS_ROW_LIMIT", 40),
+            "candidate_limit": _int_env("E055_DEBUG_CANDIDATE_LIMIT", 200),
+            "page_diagnostics": [],
+        }
+        print(
+            "[E055 DEBUG] enabled "
+            f"sha={diagnostics['git_sha']} "
+            f"pdftoppm={diagnostics['pdftoppm_version'].splitlines()[0] if diagnostics['pdftoppm_version'] else 'unknown'}"
+        )
 
     client = build_vision_client(vision_service_account_json)
     total_pages = count_pdf_pages(pdf_path)
@@ -592,13 +796,14 @@ def extract_e055_pdf(
                 page_image=page_image,
                 page_number=target_page,
                 y_cluster=y_cluster,
+                diagnostics=diagnostics,
             )
             rows_by_page[target_page] = len(page_candidates)
             candidate_rows.extend(page_candidates)
 
     rows = build_output_rows(candidate_rows)
     write_csv(rows, out_csv)
-    return {
+    result = {
         "rows": len(rows),
         "columns": OUTPUT_COLUMNS,
         "output_csv": str(out_csv),
@@ -606,3 +811,20 @@ def extract_e055_pdf(
         "target_pages": target_pages,
         "rows_by_page": rows_by_page,
     }
+    if diagnostics is not None and diagnostics_path is not None:
+        diagnostics["input_pdf"] = str(pdf_path)
+        diagnostics["input_pdf_size_bytes"] = pdf_path.stat().st_size
+        diagnostics["target_pages"] = target_pages
+        diagnostics["candidate_rows_total"] = len(candidate_rows)
+        diagnostics["output_rows_total"] = len(rows)
+        if _is_truthy_env("E055_DEBUG_LOG_SUMMARY", "1"):
+            _print_diagnostics_summary(diagnostics)
+        diagnostics_path.write_text(
+            json.dumps(diagnostics, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"[E055 DEBUG] wrote diagnostics to {diagnostics_path}")
+        result["diagnostics_file"] = str(diagnostics_path)
+        result["diagnostics_git_sha"] = str(diagnostics.get("git_sha", "unknown"))
+        result["diagnostics_pdftoppm_version"] = str(diagnostics.get("pdftoppm_version", "unknown"))
+    return result
