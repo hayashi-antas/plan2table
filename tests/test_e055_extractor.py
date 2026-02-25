@@ -236,6 +236,29 @@ def test_extract_candidates_from_cluster_handles_model_only_continuation_row():
     assert rows[1]["相当型番"] == "TAD-ELT7W1-026J27-24A × 1"
 
 
+def test_extract_candidates_from_cluster_handles_dash_variant_in_model_only_continuation_row():
+    cluster = RowCluster(
+        row_y=200.0,
+        words=[
+            _word("9.6W×1", 100.0, cy=200.0),
+            _word("TAD", 180.0, cy=200.0),
+            _word("−", 220.0, cy=200.0),
+            _word("ELT7W1-122J27-24A", 320.0, cy=200.0),
+            _word("×", 430.0, cy=200.0),
+            _word("1", 455.0, cy=200.0),
+            _word("TAD", 650.0, cy=200.0),
+            _word("-", 690.0, cy=200.0),
+            _word("ELT7W1-026J27-24A", 800.0, cy=200.0),
+            _word("×", 915.0, cy=200.0),
+            _word("1", 940.0, cy=200.0),
+        ],
+    )
+    rows = _extract_candidates_from_cluster(cluster)
+    assert len(rows) == 2
+    assert rows[0]["相当型番"] == "TAD-ELT7W1-122J27-24A × 1"
+    assert rows[1]["相当型番"] == "TAD-ELT7W1-026J27-24A × 1"
+
+
 def test_extract_candidates_from_cluster_keeps_multiplier_suffix_without_colon():
     cluster = RowCluster(
         row_y=100.0,

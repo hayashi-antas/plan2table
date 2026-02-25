@@ -28,6 +28,7 @@ OUTPUT_COLUMNS = ["機器器具", "メーカー", "型番"]
 MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
 MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
 COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
+DASH_VARIANTS_PATTERN = re.compile(r"[ー―−–—‐ｰ－]")  # noqa: RUF001
 EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
 DEFAULT_DEBUG_FOCUS_TERMS = ("TP1", "TP2", "CT2G", "DL9", "同上", "TAD-", "LZD-")
 
@@ -257,6 +258,7 @@ def _is_equipment_code_token(value: str) -> bool:
 
 def _cleanup_model_text(value: str) -> str:
     text = normalize_text(value)
+    text = DASH_VARIANTS_PATTERN.sub("-", text)
     text = re.split(r"\s+\d+\.(?=\s)", text, maxsplit=1)[0]
     text = text.split("。", 1)[0]
     text = text.strip(" |[]")
@@ -364,12 +366,13 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
 
     tokens = [normalize_text(word.text).strip() for word in sorted_words]
     row_text = " ".join(tokens)
+    normalized_row_text = DASH_VARIANTS_PATTERN.sub("-", row_text)
     if not re.search(r"\d+(?:\.\d+)?\s*W", row_text, flags=re.IGNORECASE):
         return []
     candidates: List[Dict[str, object]] = []
     seen: set[tuple[int, str]] = set()
-    for match in MODEL_PATTERN.finditer(row_text):
-        model = _append_multiplier_suffix(row_text, match.group(1), match.end(1))
+    for match in MODEL_PATTERN.finditer(normalized_row_text):
+        model = _append_multiplier_suffix(normalized_row_text, match.group(1), match.end(1))
         if not model:
             continue
 
@@ -396,13 +399,14 @@ def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str,
 
     tokens = [normalize_text(word.text).strip() for word in sorted_words]
     row_text = " ".join(tokens)
+    normalized_row_text = DASH_VARIANTS_PATTERN.sub("-", row_text)
     candidates: List[Dict[str, object]] = []
     seen: set[tuple[int, str]] = set()
     # Intentionally no wattage guard here: continuation rows may contain only
     # maker:model text (e.g. "DAIKO:LZA-93039") and still need extraction.
-    for match in COLON_MODEL_PATTERN.finditer(row_text):
+    for match in COLON_MODEL_PATTERN.finditer(normalized_row_text):
         maker = match.group(1).strip()
-        model = _append_multiplier_suffix(row_text, match.group(2), match.end(2))
+        model = _append_multiplier_suffix(normalized_row_text, match.group(2), match.end(2))
         if not maker or not model:
             continue
 
