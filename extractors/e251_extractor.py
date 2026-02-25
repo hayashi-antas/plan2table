@@ -495,13 +495,17 @@ def extract_e251_pdf(
         tmp_dir = Path(tmp_dir_raw)
         for target_page in target_pages:
             png_path = run_pdftoppm(pdf_path, target_page, dpi, tmp_dir)
-            page_image = Image.open(png_path).convert("RGB")
-            page_candidates = _extract_page_candidate_rows(
-                client=client,
-                page_image=page_image,
-                page_number=target_page,
-                y_cluster=y_cluster,
-            )
+            with Image.open(png_path) as source_image:
+                page_image = source_image.convert("RGB")
+            try:
+                page_candidates = _extract_page_candidate_rows(
+                    client=client,
+                    page_image=page_image,
+                    page_number=target_page,
+                    y_cluster=y_cluster,
+                )
+            finally:
+                page_image.close()
             rows_by_page[target_page] = len(page_candidates)
             candidate_rows.extend(page_candidates)
 
