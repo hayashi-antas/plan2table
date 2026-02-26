@@ -24,6 +24,7 @@ from extractors.raster_extractor import extract_raster_pdf
 from extractors.vector_extractor import extract_vector_pdf_four_columns
 from extractors.e055_extractor import extract_e055_pdf
 from extractors.e251_extractor import extract_e251_pdf
+from extractors.e142_extractor import extract_e142_pdf
 from extractors.job_store import create_job, resolve_job_csv_path, save_metadata
 from extractors.unified_csv import merge_vector_raster_csv
 
@@ -454,6 +455,17 @@ def _csv_profile(csv_path: Path) -> dict:
     return {"rows": max(0, len(rows) - 1), "columns": rows[0]}
 
 
+def _csv_profile_no_header(csv_path: Path) -> dict:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    max_columns = max((len(row) for row in rows), default=0)
+    return {
+        "rows": len(rows),
+        "columns": [f"column_{index + 1}" for index in range(max_columns)],
+    }
+
+
 def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str]) -> str:
     label_map = {
         "raster": "Raster",
@@ -461,6 +473,7 @@ def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str
         "unified": "Unified",
         "e055": "E-055",
         "e251": "E-251",
+        "e142": "E-142",
     }
     label = label_map.get(kind, kind.capitalize())
     download_path = f"/jobs/{job_id}/{kind}.csv"
@@ -546,6 +559,12 @@ def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
     with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         return [dict(row) for row in reader]
+
+
+def _read_csv_rows(csv_path: Path) -> list[list[str]]:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        return [list(row) for row in reader]
 
 
 def _parse_float_or_none(value: str) -> Optional[float]:
@@ -827,6 +846,25 @@ def _build_e251_table_html(e251_csv_path: Path) -> str:
     return _build_table_html(columns, normalized_rows)
 
 
+def _build_e142_rows_html(e142_csv_path: Path) -> str:
+    rows = _read_csv_rows(e142_csv_path)
+    if not rows:
+        return (
+            "<div class=\"rounded border border-stone-300 bg-white px-4 py-6 text-center text-sm text-stone-500\">"
+            "データがありません"
+            "</div>"
+        )
+    line_items = []
+    for row in rows:
+        text = ",".join(str(cell) for cell in row)
+        line_items.append(
+            "<li class=\"rounded border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-ink-light\">"
+            f"{html.escape(text)}"
+            "</li>"
+        )
+    return f"<ol class=\"space-y-2\">{''.join(line_items)}</ol>"
+
+
 def _render_e055_success_html(job_id: str, table_html: str, row_count: int) -> str:
     safe_job_id = html.escape(job_id, quote=True)
     download_url = f"/jobs/{job_id}/e055.csv"
@@ -903,6 +941,44 @@ def _render_e251_error_html(message: str) -> str:
     """
 
 
+def _render_e142_success_html(job_id: str, rows_html: str, row_count: int) -> str:
+    safe_job_id = html.escape(job_id, quote=True)
+    download_url = f"/jobs/{job_id}/e142.csv"
+    safe_download_url = html.escape(download_url, quote=True)
+    return f"""
+    <section class="relative rounded-lg border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
+      data-status="success"
+      data-kind="e142"
+      data-job-id="{safe_job_id}">
+      <a
+        href="{safe_download_url}"
+        title="CSVをダウンロード"
+        aria-label="CSVをダウンロード"
+        class="group absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
+          <path d="M12 3v11"></path>
+          <path d="m8 10 4 4 4-4"></path>
+          <path d="M4 20h16"></path>
+        </svg>
+      </a>
+      <div class="text-sm font-semibold text-emerald-800">抽出が完了しました</div>
+      <div class="mt-1 text-sm text-emerald-900">Rows: {int(row_count)}</div>
+      <div class="mt-4 overflow-x-auto">{rows_html}</div>
+    </section>
+    """
+
+
+def _render_e142_error_html(message: str) -> str:
+    safe_message = html.escape(_single_line_message(message), quote=True)
+    return f"""
+    <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm" data-status="error" data-kind="e142">
+      <div class="text-sm font-semibold text-red-800">処理に失敗しました</div>
+      <div class="mt-1 text-sm">message: {safe_message}</div>
+    </section>
+    """
+
+
 def _run_e055_job(file_bytes: bytes, source_filename: str):
     if not vision_service_account_json:
         raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not configured.")
@@ -961,6 +1037,39 @@ def _run_e251_job(file_bytes: bytes, source_filename: str):
             "row_count": profile["rows"],
             "columns": profile["columns"],
             "extractor_version": "e251-v1",
+            "extract_result": extract_result,
+        },
+    )
+    return job, profile
+
+
+def _run_e142_job(file_bytes: bytes, source_filename: str):
+    if not vision_service_account_json:
+        raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+
+    job = create_job(kind="e142", source_filename=source_filename)
+    input_pdf_path = job.job_dir / "input.pdf"
+    input_pdf_path.write_bytes(file_bytes)
+    csv_path = job.job_dir / "e142.csv"
+    debug_dir = Path("/tmp") / "plan2table" / "debug" / job.job_id
+    extract_result = extract_e142_pdf(
+        pdf_path=input_pdf_path,
+        out_csv=csv_path,
+        debug_dir=debug_dir,
+        vision_service_account_json=vision_service_account_json,
+        page=0,
+        dpi=300,
+        y_cluster=12.0,
+        x_gap=70.0,
+    )
+    profile = _csv_profile_no_header(csv_path)
+    save_metadata(
+        job,
+        {
+            "csv_files": ["e142.csv"],
+            "row_count": profile["rows"],
+            "columns": profile["columns"],
+            "extractor_version": "e142-v1",
             "extract_result": extract_result,
         },
     )
@@ -1090,6 +1199,11 @@ async def read_e055(request: Request):
 @app.get("/e-251", response_class=HTMLResponse)
 async def read_e251(request: Request):
     return templates.TemplateResponse("e-251.html", {"request": request})
+
+
+@app.get("/e-142", response_class=HTMLResponse)
+async def read_e142(request: Request):
+    return templates.TemplateResponse("e-142.html", {"request": request})
 
 
 @app.get("/area", response_class=HTMLResponse)
@@ -1268,6 +1382,30 @@ async def handle_e251_upload(file: UploadFile = File(...)):
     except Exception as exc:
         print(f"E-251 extraction failed: {exc}")
         return _render_e251_error_html(str(exc))
+
+
+@app.post("/e-142/upload", response_class=HTMLResponse)
+async def handle_e142_upload(file: UploadFile = File(...)):
+    if not _is_pdf_upload(file):
+        return _render_e142_error_html("Please upload a valid PDF file.")
+    if not vision_service_account_json:
+        return _render_e142_error_html("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+
+    try:
+        file_bytes = await file.read()
+        job, profile = _run_e142_job(
+            file_bytes=file_bytes,
+            source_filename=file.filename or "upload.pdf",
+        )
+        rows_html = _build_e142_rows_html(job.job_dir / "e142.csv")
+        return _render_e142_success_html(
+            job_id=job.job_id,
+            rows_html=rows_html,
+            row_count=int(profile["rows"]),
+        )
+    except Exception as exc:
+        print(f"E-142 extraction failed: {exc}")
+        return _render_e142_error_html(str(exc))
 
 
 @app.post("/customer/run", response_class=HTMLResponse)
@@ -1522,6 +1660,11 @@ async def download_e055_csv(job_id: UUID):
 @app.get("/jobs/{job_id}/e251.csv")
 async def download_e251_csv(job_id: UUID):
     return _download_job_csv(job_id=job_id, kind="e251")
+
+
+@app.get("/jobs/{job_id}/e142.csv")
+async def download_e142_csv(job_id: UUID):
+    return _download_job_csv(job_id=job_id, kind="e142")
 
 
 @app.get("/jobs/{job_id}/vector.csv")
