@@ -48,6 +48,15 @@ MAKER_SPACE_MODEL_PATTERN = re.compile(
     + rf"(?P<model>{MODEL_TOKEN_PATTERN})"
 )
 
+# E-251 対象領域・レイアウト（ピクセル）
+SECTION_BOUNDARY_MARGIN_PX = 20.0
+SECTION_BAND_HEIGHT_BELOW_TITLE_PX = 520.0
+TITLE_SUB_BAND_HEIGHT_PX = 120.0
+ANCHOR_TOKEN_MERGE_GAP_PX = 20.0
+ANCHOR_ASSIGN_MAX_DISTANCE_PX = 520.0
+BLOCK_X_CLUSTER_TOLERANCE_PX = 260.0
+Y_CLUSTER_THRESHOLD_DEFAULT = 14.0
+
 
 @dataclass
 class WordBox:
@@ -228,15 +237,17 @@ def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
     return max(len(tokens) - 1, 0)
 
 
-def _extract_section_words(words: List[WordBox], y_cluster: float = 14.0) -> Tuple[List[WordBox], float]:
+def _extract_section_words(
+    words: List[WordBox], y_cluster: float = Y_CLUSTER_THRESHOLD_DEFAULT
+) -> Tuple[List[WordBox], float]:
     clusters = _cluster_by_y(words, y_cluster)
     title_cluster = next((cluster for cluster in clusters if _is_section_title(_row_text(cluster))), None)
     if title_cluster is None:
         return [], 0.0
 
-    x_min = min(word.bbox[0] for word in title_cluster.words) - 20.0
-    y_min = title_cluster.row_y - 20.0
-    y_max = title_cluster.row_y + 520.0
+    x_min = min(word.bbox[0] for word in title_cluster.words) - SECTION_BOUNDARY_MARGIN_PX
+    y_min = title_cluster.row_y - SECTION_BOUNDARY_MARGIN_PX
+    y_max = title_cluster.row_y + SECTION_BAND_HEIGHT_BELOW_TITLE_PX
     section_words = [
         word
         for word in words
@@ -250,7 +261,7 @@ def _detect_anchors(clusters: List[RowCluster], *, title_y: float) -> List[Equip
     seen: set[tuple[str, int]] = set()
 
     for cluster in clusters:
-        if cluster.row_y < title_y or cluster.row_y > title_y + 120.0:
+        if cluster.row_y < title_y or cluster.row_y > title_y + TITLE_SUB_BAND_HEIGHT_PX:
             continue
         words = sorted(cluster.words, key=lambda item: item.cx)
         idx = 0
@@ -264,7 +275,7 @@ def _detect_anchors(clusters: List[RowCluster], *, title_y: float) -> List[Equip
                 next_token = _normalize_token(words[idx + 1].text)
                 if re.fullmatch(r"\d{1,2}", next_token):
                     gap = float(words[idx + 1].bbox[0] - words[idx].bbox[2])
-                    if gap <= 20.0:
+                    if gap <= ANCHOR_TOKEN_MERGE_GAP_PX:
                         raw = f"{token}{next_token}"
                         idx += 1
 
@@ -361,7 +372,7 @@ def _assign_equipment_from_anchors(
     candidates: List[Dict[str, object]],
     *,
     anchors: List[EquipmentAnchor],
-    max_distance: float = 520.0,
+    max_distance: float = ANCHOR_ASSIGN_MAX_DISTANCE_PX,
 ) -> None:
     if not anchors:
         return
@@ -380,7 +391,9 @@ def _assign_equipment_from_anchors(
         row["器具記号"] = nearest.equipment if _is_equipment_code(nearest.equipment) else ""
 
 
-def _cluster_x_positions(values: List[float], tolerance: float = 260.0) -> List[float]:
+def _cluster_x_positions(
+    values: List[float], tolerance: float = BLOCK_X_CLUSTER_TOLERANCE_PX
+) -> List[float]:
     if not values:
         return []
     sorted_values = sorted(values)
@@ -397,7 +410,7 @@ def _assign_block_indexes(candidates: List[Dict[str, object]]) -> None:
     if not candidates:
         return
     x_values = [float(row.get("row_x", 0.0)) for row in candidates]
-    x_centers = _cluster_x_positions(x_values, tolerance=260.0)
+    x_centers = _cluster_x_positions(x_values, tolerance=BLOCK_X_CLUSTER_TOLERANCE_PX)
     if not x_centers:
         for row in candidates:
             row["block_index"] = 0
@@ -455,7 +468,7 @@ def _extract_page_candidate_rows(
 
     candidates: List[Dict[str, object]] = []
     for cluster in clusters:
-        if cluster.row_y <= title_y + 120.0:
+        if cluster.row_y <= title_y + TITLE_SUB_BAND_HEIGHT_PX:
             continue
         row_candidates = _extract_candidates_from_cluster(cluster)
         for row in row_candidates:
@@ -479,7 +492,7 @@ def extract_e251_pdf(
     vision_service_account_json: str,
     page: int = 0,
     dpi: int = 300,
-    y_cluster: float = 14.0,
+    y_cluster: float = Y_CLUSTER_THRESHOLD_DEFAULT,
 ) -> Dict[str, object]:
     if not pdf_path.exists():
         raise FileNotFoundError(f"入力PDFが見つかりません: {pdf_path}")
