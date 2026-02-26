@@ -195,8 +195,10 @@
 
         /* Typography for headings */
         .heading-serif {
-            font-family: 'Cormorant Garamond', 'Noto Serif JP', serif;
-            letter-spacing: 0.02em;
+            font-family: 'M PLUS 1p', 'Noto Sans JP', 'Source Sans 3', sans-serif;
+            letter-spacing: 0.01em;
+            font-variant-numeric: lining-nums tabular-nums;
+            font-feature-settings: "lnum" 1, "tnum" 1;
         }
 
         /* Result/Prose Styles - like technical documentation */
@@ -205,20 +207,22 @@
             font-family: 'Source Sans 3', sans-serif;
         }
         .prose h1 { 
-            font-family: 'Cormorant Garamond', 'Noto Serif JP', serif;
+            font-family: 'M PLUS 1p', 'Noto Sans JP', 'Source Sans 3', sans-serif;
             font-size: 1.75rem; 
             font-weight: 600; 
             margin: 0 0 1rem; 
             color: #2B3034;
             border-bottom: 2px solid #832C34;
             padding-bottom: 0.5rem;
+            font-variant-numeric: lining-nums tabular-nums;
         }
         .prose h2 { 
-            font-family: 'Cormorant Garamond', 'Noto Serif JP', serif;
+            font-family: 'M PLUS 1p', 'Noto Sans JP', 'Source Sans 3', sans-serif;
             font-size: 1.25rem; 
             font-weight: 600; 
             margin: 1.5rem 0 0.75rem; 
             color: #2B3034;
+            font-variant-numeric: lining-nums tabular-nums;
         }
         .prose h3 { 
             font-size: 1rem; 
