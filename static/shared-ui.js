@@ -33,7 +33,7 @@
       `top:${yPos}%`,
       "font-family:'Cormorant Garamond',serif",
       `font-size:${Math.random() * 6 + 14}px`,
-      'color:#8b5a2b',
+      'color:#832C34',
       'opacity:0',
       'white-space:nowrap',
       'transform:translateY(20px)',
@@ -42,7 +42,7 @@
 
     el.innerHTML =
       `<span class="formula-text">${item.formula}</span>` +
-      '<span class="formula-result" style="opacity:0; margin-left: 8px; color: #6b4423; font-weight: 500;"> ' +
+      '<span class="formula-result" style="opacity:0; margin-left: 8px; color: #6b252c; font-weight: 500;"> ' +
       `${item.result}</span>`;
     container.appendChild(el);
 

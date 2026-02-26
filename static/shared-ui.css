@@ -4,18 +4,53 @@
         
         body {
             font-family: 'Source Sans 3', sans-serif;
-            background-color: #f7f3ed;
-            color: #2c2416;
+            background-color: #f4f5f6;
+            color: #2B3034;
+        }
+
+        /* Brand header bar - #832C34 (El Salva) */
+        .brand-header {
+            background-color: #832C34;
+            color: #ffffff;
+            min-height: 72px;
+            padding: 1.5rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 3px rgba(43, 48, 52, 0.15);
+        }
+        .brand-header a {
+            color: #ffffff;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .brand-header a:hover {
+            color: rgba(255, 255, 255, 0.95);
+        }
+        .brand-header-icon {
+            width: 48px;
+            height: 48px;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+        }
+        .brand-header-icon svg {
+            stroke-width: 2.5;
         }
 
         /* Blueprint grid background - like old drafting paper */
         .blueprint-grid {
-            background-color: #f7f3ed;
+            background-color: #f4f5f6;
             background-image: 
-                linear-gradient(#e8e0d4 1px, transparent 1px),
-                linear-gradient(90deg, #e8e0d4 1px, transparent 1px),
-                linear-gradient(#ebe5db 0.5px, transparent 0.5px),
-                linear-gradient(90deg, #ebe5db 0.5px, transparent 0.5px);
+                linear-gradient(#eef0f2 1px, transparent 1px),
+                linear-gradient(90deg, #eef0f2 1px, transparent 1px),
+                linear-gradient(#e5e7eb 0.5px, transparent 0.5px),
+                linear-gradient(90deg, #e5e7eb 0.5px, transparent 0.5px);
             background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
         }
 
@@ -26,7 +61,7 @@
             position: absolute;
             width: 40px;
             height: 40px;
-            border-color: #8a8072;
+            border-color: #9ca3af;
             opacity: 0.5;
         }
         .corner-marks::before {
@@ -44,17 +79,17 @@
 
         /* Main card with paper texture feel */
         .paper-card {
-            background: linear-gradient(135deg, #ffffff 0%, #faf8f5 50%, #f5f1ea 100%);
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 50%, #f4f5f6 100%);
             box-shadow: 
-                0 1px 3px rgba(44, 36, 22, 0.08),
-                0 8px 32px rgba(44, 36, 22, 0.12),
+                0 1px 3px rgba(43, 48, 52, 0.08),
+                0 8px 32px rgba(43, 48, 52, 0.12),
                 inset 0 1px 0 rgba(255, 255, 255, 0.8);
         }
 
         /* Upload dropzone - like a drafting table area */
         .dropzone {
-            border: 2px dashed #b8a68c;
-            background: linear-gradient(135deg, #fdfcfa 0%, #f9f6f1 100%);
+            border: 2px dashed #d1d5db;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
             transition: all 0.3s ease;
             position: relative;
         }
@@ -63,14 +98,14 @@
             content: '';
             position: absolute;
             inset: 8px;
-            border: 1px solid #e8e0d4;
+            border: 1px solid #e5e7eb;
             pointer-events: none;
         }
         
         .dropzone:hover,
         .dropzone.dragover {
-            border-color: #8b5a2b;
-            background: linear-gradient(135deg, #fdfcfa 0%, #f5efe5 100%);
+            border-color: #832C34;
+            background: linear-gradient(135deg, #ffffff 0%, #f4f5f6 100%);
         }
 
         /* Hide file inputs only when they are used with custom dropzones */
@@ -82,9 +117,9 @@
         .loader {
             width: 24px;
             height: 24px;
-            border: 2px solid #e8e0d4;
+            border: 2px solid #e5e7eb;
             border-radius: 50%;
-            border-top-color: #8b5a2b;
+            border-top-color: #832C34;
             animation: spin 1s linear infinite;
         }
 
@@ -102,9 +137,9 @@
             animation: pulse 2s ease-in-out infinite;
         }
 
-        /* Button with wood/copper feel */
+        /* Button - brand accent (El Salva) */
         .btn-architectural {
-            background: linear-gradient(135deg, #8b5a2b 0%, #6b4423 100%);
+            background: linear-gradient(135deg, #832C34 0%, #6b252c 100%);
             position: relative;
             overflow: hidden;
             transition: all 0.3s ease;
@@ -122,9 +157,9 @@
         }
         
         .btn-architectural:hover {
-            background: linear-gradient(135deg, #9d6a35 0%, #7d5429 100%);
+            background: linear-gradient(135deg, #9a3942 0%, #7a2d34 100%);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(107, 68, 35, 0.3);
+            box-shadow: 0 4px 12px rgba(131, 44, 52, 0.3);
         }
 
         /* HTMX indicator - use opacity for HTMX compatibility */
@@ -174,8 +209,8 @@
             font-size: 1.75rem; 
             font-weight: 600; 
             margin: 0 0 1rem; 
-            color: #2c2416;
-            border-bottom: 2px solid #8b5a2b;
+            color: #2B3034;
+            border-bottom: 2px solid #832C34;
             padding-bottom: 0.5rem;
         }
         .prose h2 { 
@@ -183,18 +218,18 @@
             font-size: 1.25rem; 
             font-weight: 600; 
             margin: 1.5rem 0 0.75rem; 
-            color: #6b4423;
+            color: #2B3034;
         }
         .prose h3 { 
             font-size: 1rem; 
             font-weight: 600; 
             margin: 1rem 0 0.5rem; 
-            color: #5c5243; 
+            color: #4b5563; 
         }
-        .prose p { margin: 0 0 1rem; color: #5c5243; }
-        .prose ul, .prose ol { margin: 0 0 1rem 1.5rem; color: #5c5243; }
+        .prose p { margin: 0 0 1rem; color: #4b5563; }
+        .prose ul, .prose ol { margin: 0 0 1rem 1.5rem; color: #4b5563; }
         .prose li { margin-bottom: 0.5rem; }
-        .prose strong { font-weight: 600; color: #2c2416; }
+        .prose strong { font-weight: 600; color: #2B3034; }
 
         /* Table styles - like specification sheets */
         .prose table,
@@ -202,8 +237,8 @@
         #customer-result table {
             width: 100%;
             border-collapse: collapse;
-            background: #fdfcfa;
-            border: 1px solid #d4cbbe;
+            background: #ffffff;
+            border: 1px solid #d1d5db;
             margin: 1rem 0;
             font-size: 0.875rem;
         }
@@ -211,7 +246,7 @@
         .prose thead,
         #result thead,
         #customer-result thead {
-            background: linear-gradient(135deg, #f5f1ea 0%, #ebe5db 100%);
+            background: linear-gradient(135deg, #f4f5f6 0%, #eef0f2 100%);
         }
         
         .prose th,
@@ -223,8 +258,8 @@
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            color: #6b4423;
-            border-bottom: 2px solid #8b5a2b;
+            color: #2B3034;
+            border-bottom: 2px solid #832C34;
             font-family: 'Source Sans 3', sans-serif;
         }
         
@@ -232,8 +267,8 @@
         #result td,
         #customer-result td {
             padding: 0.875rem 1rem;
-            color: #5c5243;
-            border-bottom: 1px solid #e8e0d4;
+            color: #4b5563;
+            border-bottom: 1px solid #e5e7eb;
         }
         
         .prose tr:last-child td,
@@ -245,7 +280,7 @@
         .prose tbody tr:hover,
         #result tbody tr:hover,
         #customer-result tbody tr:hover {
-            background: #f9f6f1;
+            background: #f4f5f6;
         }
 
         /* Scrollbar */
@@ -254,14 +289,14 @@
             height: 8px;
         }
         ::-webkit-scrollbar-track {
-            background: #f5f1ea;
+            background: #eef0f2;
         }
         ::-webkit-scrollbar-thumb {
-            background: #c4b8a8;
+            background: #d1d5db;
             border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: #a89a88;
+            background: #9ca3af;
         }
 
         /* File name display */
@@ -277,24 +312,24 @@
             display: flex;
             align-items: center;
             gap: 1rem;
-            color: #b8a68c;
+            color: #6b7280;
         }
         .divider-ornament::before,
         .divider-ornament::after {
             content: '';
             flex: 1;
             height: 1px;
-            background: linear-gradient(90deg, transparent, #d4cbbe, transparent);
+            background: linear-gradient(90deg, transparent, #d1d5db, transparent);
         }
 
         /* Stamp/seal decoration */
         .seal {
             width: 48px;
             height: 48px;
-            border: 2px solid #8b5a2b;
+            border: 2px solid #832C34;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #fdfcfa 0%, #f5f1ea 100%);
+            background: linear-gradient(135deg, #ffffff 0%, #f4f5f6 100%);
         }
