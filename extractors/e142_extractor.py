@@ -696,9 +696,11 @@ def _refine_titles_for_reference_rows(rows: List[FrameRow]) -> None:
 
     for row in rows:
         note_text = "".join(value for _, value in row.pairs)
-        if "取付" not in note_text:
-            continue
         if "取付参考例" in row.title:
+            row.code = ""
+            row.pairs = []
+            continue
+        if "取付" not in note_text:
             continue
 
         sibling_candidates = [
@@ -719,6 +721,9 @@ def _refine_titles_for_reference_rows(rows: List[FrameRow]) -> None:
             row.title = f"{sibling.title}取付参考例"
         elif should_promote and row.title == "マグネットセンサー":
             row.title = "マグネットセンサー取付参考例"
+        if "取付参考例" in row.title:
+            row.code = ""
+            row.pairs = []
 
 
 def build_frame_rows_from_segments(

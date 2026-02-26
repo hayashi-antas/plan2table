@@ -1,4 +1,6 @@
 from extractors.e142_extractor import (
+    FrameRow,
+    _refine_titles_for_reference_rows,
     Segment,
     build_frame_rows_from_segments,
     extract_label_value_pairs,
@@ -246,3 +248,21 @@ def test_build_frame_rows_prefers_parenthesized_product_code():
 
     assert len(rows) == 1
     assert rows[0].values[1] == "(商品コード:4361000)"
+
+
+def test_build_frame_rows_reference_example_is_title_only():
+    rows = [
+        FrameRow(page=1, top=100.0, x0=100.0, title="マグネットセンサー(露出型)", code="", pairs=[]),
+        FrameRow(
+            page=1,
+            top=110.0,
+            x0=520.0,
+            title="8φ通線孔(建築工事)",
+            code="MS-X0001",
+            pairs=[("形状", "により取付が異なる場合があります。")],
+        ),
+    ]
+
+    _refine_titles_for_reference_rows(rows)
+
+    assert rows[1].values == ["マグネットセンサー（露出型）取付参考例"]
