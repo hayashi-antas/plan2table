@@ -249,6 +249,34 @@ def test_e142_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
     assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
 
 
+def test_build_e142_rows_html_preserves_csv_quoting(tmp_path):
+    e142_csv = tmp_path / "e142.csv"
+    with e142_csv.open("w", encoding="utf-8-sig", newline="") as fp:
+        writer = csv.writer(fp)
+        writer.writerow(["電源アダプター", "DC24V,出力電流"])
+
+    html_text = app_main._build_e142_rows_html(e142_csv)
+    assert "電源アダプター,&quot;DC24V,出力電流&quot;" in html_text
+
+
+def test_run_e142_job_uses_job_scoped_debug_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    captured = {}
+
+    def _fake_extract(**kwargs):
+        captured["debug_dir"] = kwargs["debug_dir"]
+        kwargs["out_csv"].write_text("title,code\nA,AA-001\n", encoding="utf-8-sig")
+        return {"rows": 1, "columns": ["column_1", "column_2"]}
+
+    monkeypatch.setattr(app_main, "extract_e142_pdf", _fake_extract)
+    job, _profile = app_main._run_e142_job(file_bytes=b"%PDF-1.4\n", source_filename="e142.pdf")
+
+    expected = job.job_dir / "debug" / job.job_id
+    assert captured["debug_dir"] == expected
+    assert expected.exists()
+
+
 def test_e142_upload_returns_generic_error_on_internal_exception(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")

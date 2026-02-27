@@ -38,6 +38,11 @@ def test_extract_label_value_pairs_supports_output_voltage_and_current_in_same_s
     assert pairs == [("出力電圧", "DC24V"), ("出力電流", "1A")]
 
 
+def test_extract_label_value_pairs_merges_duplicate_non_empty_labels():
+    pairs = extract_label_value_pairs("備考注意備考要確認")
+    assert pairs == [("備考", "注意 要確認")]
+
+
 def test_extract_label_value_pairs_supports_toso_label():
     pairs = extract_label_value_pairs("塗装黒電着塗装")
     assert pairs == [("塗装", "黒電着塗装")]

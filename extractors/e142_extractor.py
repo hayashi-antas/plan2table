@@ -633,6 +633,8 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
             if not prev_value:
                 merged[-1] = (prev_label, value)
                 continue
+            merged[-1] = (prev_label, _clean_value(f"{prev_value} {value}"))
+            continue
         merged.append((label, value))
     return merged
 

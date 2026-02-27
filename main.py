@@ -1,6 +1,7 @@
 import os
 import asyncio
 import csv
+import io
 import json
 import html
 import logging
@@ -858,7 +859,9 @@ def _build_e142_rows_html(e142_csv_path: Path) -> str:
         )
     line_items = []
     for row in rows:
-        text = ",".join(str(cell) for cell in row)
+        row_buffer = io.StringIO()
+        csv.writer(row_buffer).writerow(row)
+        text = row_buffer.getvalue().rstrip("\r\n")
         line_items.append(
             "<li class=\"rounded border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-ink-light\">"
             f"{html.escape(text)}"
@@ -1053,7 +1056,8 @@ def _run_e142_job(file_bytes: bytes, source_filename: str):
     input_pdf_path = job.job_dir / "input.pdf"
     input_pdf_path.write_bytes(file_bytes)
     csv_path = job.job_dir / "e142.csv"
-    debug_dir = Path("/tmp") / "plan2table" / "debug" / job.job_id
+    debug_dir = Path(job.job_dir) / "debug" / job.job_id
+    debug_dir.mkdir(parents=True, exist_ok=True)
     extract_result = extract_e142_pdf(
         pdf_path=input_pdf_path,
         out_csv=csv_path,
