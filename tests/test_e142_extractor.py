@@ -68,6 +68,11 @@ def test_extract_label_value_pairs_keeps_mass_row_fix_when_line_starts_with_shit
     assert pairs == [("質量", "本体約5.4Kg")]
 
 
+def test_extract_label_value_pairs_normalizes_mass_q_and_missing_colon():
+    pairs = extract_label_value_pairs("質量スイッチ:10gマグネット9q")
+    assert pairs == [("質量", "スイッチ:10gマグネット:9g")]
+
+
 def test_build_frame_rows_extracts_title_code_and_label_value_pairs():
     rows = build_frame_rows_from_segments(
         [
@@ -143,6 +148,24 @@ def test_build_frame_rows_supports_split_mass_label_and_value_row():
     assert "約36g" in values
     assert "材質" in values
     assert "形状" in values
+
+
+def test_build_frame_rows_normalizes_mass_q_typo_from_ocr():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("マグネットセンサー(露出型)", y=100.0, x0=120.0, x1=460.0),
+            _segment("MG-TO130", y=140.0, x0=500.0, x1=700.0),
+            _segment("質量 スイッチ:10g マグネット9q", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 ABS樹脂", y=340.0, x0=100.0, x1=760.0),
+            _segment("形状 露出型", y=380.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "質量" in values
+    mass_value = values[values.index("質量") + 1]
+    assert mass_value == "スイッチ:10gマグネット:9g"
 
 
 def test_build_frame_rows_without_table_returns_title_and_code():
@@ -477,7 +500,7 @@ def test_build_frame_rows_keeps_multiline_toshoku_with_code_prefixed_lines():
 
     assert len(rows) == 1
     values = rows[0].values
-    first_toshoku_idx = values.index("塗色")
+    first_toshoku_idx = values.index("塗色（スイッチ）")
     first_toshoku_value = values[first_toshoku_idx + 1]
     assert "SPM-0090:グレー" in first_toshoku_value
     assert "MG-T0060:アイボリー" in first_toshoku_value
@@ -485,7 +508,7 @@ def test_build_frame_rows_keeps_multiline_toshoku_with_code_prefixed_lines():
     assert "MG-T0080:ブラウン" in first_toshoku_value
     assert "MG-T0130:ブラック" in first_toshoku_value
 
-    second_toshoku_idx = values.index("塗色", first_toshoku_idx + 1)
+    second_toshoku_idx = values.index("塗色（マグネット）", first_toshoku_idx + 1)
     second_toshoku_value = values[second_toshoku_idx + 1]
     assert "SPM-0092:メタリックシルバー" in second_toshoku_value
     assert "その他は、スイッチと同色" in second_toshoku_value

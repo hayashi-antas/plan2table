@@ -282,6 +282,7 @@ def _find_layout_row_pairs(segments: List[Segment]) -> List[LayoutRowPair]:
 
         label = _clean_layout_label(left.text_compact)
         value = _clean_value(best.text_compact)
+        value = _normalize_pair_value(label, value)
         if not label or not value:
             continue
 
@@ -770,6 +771,50 @@ def _clean_value(value: str) -> str:
     return cleaned
 
 
+def _normalize_pair_value(label: str, value: str) -> str:
+    normalized = value
+    if label == "質量":
+        # Vision occasionally reads "g" as "q" in mass rows.
+        normalized = re.sub(r"(\d)q\b", r"\1g", normalized, flags=re.IGNORECASE)
+        # Some rows miss the delimiter after "マグネット"/"スイッチ".
+        normalized = re.sub(
+            r"(スイッチ|マグネット)(?![:：])(?=\d+(?:\.\d+)?g\b)",
+            r"\1:",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    return normalized
+
+
+def _promote_toshoku_qualifier(label: str, value: str) -> Tuple[str, str]:
+    if label != "塗色":
+        return label, value
+
+    compact = _compact_text(value)
+    matched = re.match(r"^[\(（]([^()（）]{1,12})[\)）](.*)$", compact)
+    if not matched:
+        return label, value
+
+    qualifier = matched.group(1)
+    remainder = _clean_value(matched.group(2))
+    if not qualifier:
+        return label, value
+
+    # Keep qualifiers as part of the label when OCR splits the same left cell
+    # into "塗色" and "(スイッチ)/(マグネット)".
+    return f"塗色（{qualifier}）", remainder
+
+
+def _split_leading_qualifier(text: str) -> Tuple[str, str]:
+    compact = _compact_text(text)
+    matched = re.match(r"^[\(（]([^()（）]{1,12})[\)）](.*)$", compact)
+    if not matched:
+        return "", compact
+    qualifier = matched.group(1)
+    remainder = _clean_value(matched.group(2))
+    return qualifier, remainder
+
+
 def _is_code_prefixed_value_continuation(text: str) -> bool:
     compact = _normalize_for_label_detection(text)
     if "商品コード" in compact:
@@ -809,6 +854,7 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
     for idx, (start, end, label) in enumerate(selected):
         value_end = selected[idx + 1][0] if idx + 1 < len(selected) else len(normalized)
         value = _clean_value(normalized[end:value_end])
+        value = _normalize_pair_value(label, value)
         pairs.append((label, value))
 
     merged: List[Tuple[str, str]] = []
@@ -821,10 +867,11 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
             if not prev_value:
                 merged[-1] = (prev_label, value)
                 continue
-            merged[-1] = (prev_label, _clean_value(f"{prev_value} {value}"))
+            merged_value = _clean_value(f"{prev_value} {value}")
+            merged[-1] = (prev_label, _normalize_pair_value(prev_label, merged_value))
             continue
         merged.append((label, value))
-    return merged
+    return [_promote_toshoku_qualifier(label, value) for label, value in merged]
 
 
 def _is_continuation_text(text: str) -> bool:
@@ -850,7 +897,15 @@ def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]],
             continue
         if pairs and _is_continuation_text(segment.text_compact):
             label, prev = pairs[-1]
-            pairs[-1] = (label, _clean_value(prev + segment.text_compact))
+            continuation = segment.text_compact
+            if label == "塗色":
+                qualifier, remainder = _split_leading_qualifier(continuation)
+                if qualifier:
+                    label = f"塗色（{qualifier}）"
+                    continuation = remainder
+            appended = _clean_value(prev + continuation)
+            appended = _normalize_pair_value(label, appended)
+            pairs[-1] = _promote_toshoku_qualifier(label, appended)
 
     filtered = [(label, value) for label, value in pairs if label]
     labels = {label for label, _ in filtered}
