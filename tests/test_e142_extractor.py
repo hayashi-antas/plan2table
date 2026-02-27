@@ -284,6 +284,22 @@ def test_build_frame_rows_preserves_toku_suffix_in_product_code():
     assert rows[0].values[1] == "MS-L1370トク"
 
 
+def test_build_frame_rows_supports_single_char_suffix_code_like_rs_a():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("漏水センサー", y=100.0, x0=120.0, x1=340.0),
+            _segment("RS-A", y=140.0, x0=500.0, x1=620.0),
+            _segment("電源電圧 ACまたはDC5~24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("形状 床面設置形", y=340.0, x0=100.0, x1=760.0),
+            _segment("備考 センサ点検口必要", y=380.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0].values[0] == "漏水センサー"
+    assert rows[0].values[1] == "RS-A"
+
+
 def test_build_frame_rows_supports_product_code_identifier_and_paint_row():
     rows = build_frame_rows_from_segments(
         [
