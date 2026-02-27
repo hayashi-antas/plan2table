@@ -33,6 +33,11 @@ def test_extract_label_value_pairs_supports_multiple_labels_in_one_segment():
     assert pairs == [("電源電圧", "AC100V"), ("消費電流", "0.8A以下")]
 
 
+def test_extract_label_value_pairs_supports_output_voltage_and_current_in_same_segment():
+    pairs = extract_label_value_pairs("出力電圧DC24V出力電流1A")
+    assert pairs == [("出力電圧", "DC24V"), ("出力電流", "1A")]
+
+
 def test_extract_label_value_pairs_supports_toso_label():
     pairs = extract_label_value_pairs("塗装黒電着塗装")
     assert pairs == [("塗装", "黒電着塗装")]
@@ -41,6 +46,11 @@ def test_extract_label_value_pairs_supports_toso_label():
 def test_extract_label_value_pairs_normalizes_black_variant():
     pairs = extract_label_value_pairs("塗装黑電着塗装")
     assert pairs == [("塗装", "黒電着塗装")]
+
+
+def test_extract_label_value_pairs_normalizes_mass_label_ocr_noise():
+    pairs = extract_label_value_pairs("質★15kg")
+    assert pairs == [("質量", "15kg")]
 
 
 def test_build_frame_rows_extracts_title_code_and_label_value_pairs():

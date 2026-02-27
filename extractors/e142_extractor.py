@@ -25,6 +25,7 @@ LABEL_KEYWORDS = (
     "電源電圧",
     "入力電圧",
     "出力電圧",
+    "出力電流",
     "消費電流",
     "消費電力",
     "質量",
@@ -571,6 +572,7 @@ def _normalize_for_label_detection(value: str) -> str:
     compact = compact.replace("電電源電圧", "電源電圧")
     compact = compact.replace("消消費電流", "消費電流")
     compact = compact.replace("消消費電力", "消費電力")
+    compact = re.sub(r"質[★＊*]+", "質量", compact)
     compact = compact.replace("質本体", "質量本体")
     compact = compact.replace("材貝質", "材質")
     compact = compact.replace("形備状", "形状")
