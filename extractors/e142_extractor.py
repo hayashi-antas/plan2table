@@ -65,6 +65,11 @@ CODE_TARGET_LEFT_MARGIN = 140.0
 CODE_TARGET_RIGHT_MARGIN = 220.0
 CODE_OVERLAP_PENALTY_WEIGHT = 220.0
 CODE_SEGMENT_X_GAP = 20.0
+LAYOUT_ROW_Y_TOLERANCE = 22.0
+LAYOUT_ROW_MIN_GAP = 12.0
+LAYOUT_ROW_MAX_GAP = 360.0
+LAYOUT_BLOCK_ROW_GAP = 120.0
+LAYOUT_BLOCK_MIN_ROWS = 2
 
 
 @dataclass(frozen=True)
@@ -118,6 +123,16 @@ class FrameRow:
             if value:
                 values.append(value)
         return values
+
+
+@dataclass(frozen=True)
+class LayoutRowPair:
+    page: int
+    row_y: float
+    left: Segment
+    right: Segment
+    label: str
+    value: str
 
 
 def _compact_text(value: str) -> str:
@@ -192,6 +207,170 @@ def _x_overlap_ratio(a: Tuple[float, float], b: Tuple[float, float]) -> float:
 def _is_table_segment(segment: Segment) -> bool:
     compact = _normalize_for_label_detection(segment.text_compact)
     return any(keyword in compact for keyword in LABEL_KEYWORDS_COMPACT)
+
+
+def _clean_layout_label(value: str) -> str:
+    label = _compact_text(value).strip("|:：- ")
+    label = re.sub(r"^[◎○●◯◇◆□■△▲▽▼⊙⊗◉]+", "", label)
+    return label
+
+
+def _is_layout_label_segment(segment: Segment) -> bool:
+    compact = segment.text_compact
+    if len(compact) < 2 or len(compact) > 24:
+        return False
+    if _find_code_in_segment(segment):
+        return False
+    if any(keyword in _normalize_for_label_detection(compact) for keyword in LABEL_KEYWORDS_COMPACT):
+        return False
+    if re.fullmatch(r"[0-9０-９]+(?:[.,][0-9０-９]+)?(?:mm|cm|m|kg|g|v|a|w|hz|℃|%|φ)?", compact, re.IGNORECASE):
+        return False
+    if re.fullmatch(r"[^ぁ-んァ-ン一-龥A-Za-z0-9]+", compact):
+        return False
+    return bool(JAPANESE_PATTERN.search(compact))
+
+
+def _is_layout_value_segment(segment: Segment) -> bool:
+    compact = segment.text_compact
+    if not compact or len(compact) > 80:
+        return False
+    if _find_code_in_segment(segment):
+        return False
+    if re.fullmatch(r"[◎○●◯◇◆□■△▲▽▼⊙⊗◉]+", compact):
+        return False
+    return True
+
+
+def _find_layout_row_pairs(segments: List[Segment]) -> List[LayoutRowPair]:
+    ordered = sorted(segments, key=lambda item: (item.page, item.row_y, item.x0))
+    pairs: List[LayoutRowPair] = []
+    used_right: set[Tuple[int, float, float, float, str]] = set()
+
+    for left in ordered:
+        if not _is_layout_label_segment(left):
+            continue
+
+        best: Segment | None = None
+        best_score = 99999.0
+        for right in ordered:
+            if right.page != left.page:
+                continue
+            if right.x0 <= left.x1:
+                continue
+            row_diff = abs(right.row_y - left.row_y)
+            if row_diff > LAYOUT_ROW_Y_TOLERANCE:
+                continue
+            gap = right.x0 - left.x1
+            if gap < LAYOUT_ROW_MIN_GAP or gap > LAYOUT_ROW_MAX_GAP:
+                continue
+            if not _is_layout_value_segment(right):
+                continue
+            if _is_layout_label_segment(right) and not re.search(r"\d|[%℃°/()（）~〜]", right.text_compact):
+                continue
+
+            score = gap + row_diff * 8.0
+            if score < best_score:
+                best_score = score
+                best = right
+
+        if best is None:
+            continue
+
+        right_sig = (best.page, best.row_y, best.x0, best.x1, best.text_compact)
+        if right_sig in used_right:
+            continue
+
+        label = _clean_layout_label(left.text_compact)
+        value = _clean_value(best.text_compact)
+        if not label or not value:
+            continue
+
+        used_right.add(right_sig)
+        pairs.append(
+            LayoutRowPair(
+                page=left.page,
+                row_y=left.row_y,
+                left=left,
+                right=best,
+                label=label,
+                value=value,
+            )
+        )
+    return pairs
+
+
+def _build_layout_fallback_blocks(segments: List[Segment]) -> List[ParsedTableBlock]:
+    row_pairs = _find_layout_row_pairs(segments)
+    if not row_pairs:
+        return []
+
+    blocks: List[dict] = []
+    for pair in sorted(row_pairs, key=lambda item: (item.page, item.row_y, item.left.x0)):
+        matched: dict | None = None
+        for block in blocks:
+            if block["page"] != pair.page:
+                continue
+            if pair.row_y > block["bottom"] + LAYOUT_BLOCK_ROW_GAP:
+                continue
+            left_diff = abs(pair.left.x0 - block["left_x"])
+            right_diff = abs(pair.right.x0 - block["right_x"])
+            overlap = _x_overlap_ratio((pair.left.x0, pair.right.x1), (block["x0"], block["x1"]))
+            if left_diff > 260.0 or right_diff > 360.0:
+                continue
+            if overlap < 0.05 and left_diff > 180.0:
+                continue
+            matched = block
+            break
+
+        if matched is None:
+            blocks.append(
+                {
+                    "page": pair.page,
+                    "x0": pair.left.x0,
+                    "x1": pair.right.x1,
+                    "top": min(pair.left.top, pair.right.top),
+                    "bottom": max(pair.left.bottom, pair.right.bottom),
+                    "left_x": pair.left.x0,
+                    "right_x": pair.right.x0,
+                    "pairs": [pair],
+                }
+            )
+            continue
+
+        matched["x0"] = min(matched["x0"], pair.left.x0)
+        matched["x1"] = max(matched["x1"], pair.right.x1)
+        matched["top"] = min(matched["top"], pair.left.top, pair.right.top)
+        matched["bottom"] = max(matched["bottom"], pair.left.bottom, pair.right.bottom)
+        count = float(len(matched["pairs"]))
+        matched["left_x"] = (matched["left_x"] * count + pair.left.x0) / (count + 1.0)
+        matched["right_x"] = (matched["right_x"] * count + pair.right.x0) / (count + 1.0)
+        matched["pairs"].append(pair)
+
+    parsed_blocks: List[ParsedTableBlock] = []
+    for block in blocks:
+        row_pairs_in_block: List[LayoutRowPair] = block["pairs"]
+        if len(row_pairs_in_block) < LAYOUT_BLOCK_MIN_ROWS:
+            continue
+        pairs = [(pair.label, pair.value) for pair in row_pairs_in_block if pair.label and pair.value]
+        if len(pairs) < LAYOUT_BLOCK_MIN_ROWS:
+            continue
+        labels = {label for label, _ in pairs}
+        segments_in_block = [segment for pair in row_pairs_in_block for segment in (pair.left, pair.right)]
+        parsed_blocks.append(
+            ParsedTableBlock(
+                block=TableBlock(
+                    page=int(block["page"]),
+                    x0=float(block["x0"]),
+                    x1=float(block["x1"]),
+                    top=float(block["top"]),
+                    bottom=float(block["bottom"]),
+                    segments=segments_in_block,
+                ),
+                pairs=pairs,
+                label_count=len(labels),
+            )
+        )
+    return parsed_blocks
 
 
 def _is_title_candidate(segment: Segment) -> bool:
@@ -569,6 +748,8 @@ def _resolve_title_text_for_block(title_segment: Segment, block: TableBlock) -> 
 def _normalize_for_label_detection(value: str) -> str:
     compact = _compact_text(value)
     compact = compact.strip("|")
+    if compact == "質":
+        compact = "質量"
     compact = compact.replace("電電源電圧", "電源電圧")
     compact = compact.replace("消消費電流", "消費電流")
     compact = compact.replace("消消費電力", "消費電力")
@@ -587,6 +768,13 @@ def _clean_value(value: str) -> str:
     cleaned = cleaned.replace("\u3000", "")
     cleaned = cleaned.replace("黑", "黒")
     return cleaned
+
+
+def _is_code_prefixed_value_continuation(text: str) -> bool:
+    compact = _normalize_for_label_detection(text)
+    if "商品コード" in compact:
+        return False
+    return bool(re.match(r"^(?:\([^)]+\)|（[^）]+）)?[A-Z]{1,4}-[A-Z0-9-]{1,}[:：]", compact))
 
 
 def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
@@ -644,7 +832,8 @@ def _is_continuation_text(text: str) -> bool:
     if not compact:
         return False
     if CODE_PATTERN.search(compact):
-        return False
+        if not _is_code_prefixed_value_continuation(compact):
+            return False
     if extract_label_value_pairs(compact):
         return False
     if len(compact) > 80:
@@ -691,11 +880,11 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
                 continue
             if _x_overlap_ratio((segment.x0, segment.x1), (block.x0, block.x1)) < 0.35:
                 continue
-            if HEADER_MARKER_PATTERN.search(segment.text_compact):
+            if HEADER_MARKER_PATTERN.search(segment.text_compact) and not _is_code_prefixed_value_continuation(segment.text_compact):
                 continue
-            if _is_title_candidate(segment):
+            if _find_code_in_segment(segment) and not _is_code_prefixed_value_continuation(segment.text_compact):
                 continue
-            if _find_code_in_segment(segment):
+            if _is_title_candidate(segment) and segment.x0 <= block.x0 + 60.0:
                 continue
             if not _is_continuation_text(segment.text_compact):
                 continue
@@ -816,6 +1005,8 @@ def build_frame_rows_from_segments(
         if label_count >= TABLE_MIN_LABEL_COUNT:
             parsed_blocks.append(ParsedTableBlock(block=block, pairs=pairs, label_count=label_count))
     parsed_blocks = _filter_extreme_wide_blocks(parsed_blocks)
+    if not parsed_blocks:
+        parsed_blocks = _filter_extreme_wide_blocks(_build_layout_fallback_blocks(segments))
 
     frame_rows: List[FrameRow] = []
     used_titles: set[Tuple[int, float, float, str]] = set()

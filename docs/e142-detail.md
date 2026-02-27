@@ -42,7 +42,8 @@
 
 ### 2.3 HTML表示仕様
 
-`main.py` の `_build_e142_rows_html()` は、CSV各行をそのままカンマ連結して `<ol><li>` で表示します。  
+`main.py` の `_build_e142_rows_html()` は、CSV各行を `csv.writer` で再シリアライズし、  
+必要なクオートを保持した1行テキストとして `<ol><li>` で表示します。  
 E-055 / E-251 のような見出し付き表ではなく、**1行=1枠**を可視化する形式です。
 
 ---
@@ -91,17 +92,22 @@ E-055 / E-251 のような見出し付き表ではなく、**1行=1枠**を可�
 - `_split_row_cluster_by_x_gap` で行内をXギャップ分割
 - `text_compact` は NFKC + 空白除去で比較用に統一
 
-`extract_e142_pdf()` では2系統のセグメントを作成します。
+`extract_e142_pdf()` では3系統のセグメントを作成します。
 
 - 本処理用: `x_gap=70.0`
 - タイトル精密用: `x_gap=40.0`（`TITLE_SEGMENT_X_GAP`）
+- コード精密用: `x_gap=20.0`（`CODE_SEGMENT_X_GAP`）
 
-後者は、タイトル帯の過結合を抑えるためです。
+後者2つは、タイトル帯の過結合抑制と、型番+説明の過結合抑制に使います。
 
 ### 5.2 表ブロック抽出
 
 `_is_table_segment()` が `LABEL_KEYWORDS` を含むセグメントを表候補とします。  
 `_cluster_table_segments()` が `x重なり + y近接` で `TableBlock` に統合します。
+
+ラベル語ベースで表ブロックが作れない場合は、`_build_layout_fallback_blocks()` にフォールバックします。  
+このフォールバックは、同一行で「左側ラベル候補 + 右側値候補」が並ぶ行を抽出し、  
+位置関係（行近接・列位置・x重なり）から表ブロックを再構成します。
 
 ### 5.3 タイトル候補抽出と絞り込み
 
@@ -208,7 +214,7 @@ OCR揺れ吸収として `_normalize_for_label_detection()` と `_clean_value()`
 `main.py`:
 
 - `_run_e142_job()` が `extract_e142_pdf()` を実行
-- `debug_dir` は `/tmp/plan2table/debug/<job_id>`
+- `debug_dir` は `job.job_dir/debug/<job_id>`（例: `/tmp/plan2table/jobs/<job_id>/debug/<job_id>`）
 - 行数・列数は `_csv_profile_no_header()` で算出
 - `metadata.json` に `extract_result` を保存
 

@@ -123,6 +123,28 @@ def test_build_frame_rows_handles_ocr_label_noise_and_multiline_mass():
     assert "備考" in values
 
 
+def test_build_frame_rows_supports_split_mass_label_and_value_row():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("壁取付具", y=100.0, x0=120.0, x1=360.0),
+            _segment("MN-T2170", y=140.0, x0=470.0, x1=620.0),
+            _segment("質", y=300.0, x0=100.0, x1=140.0),
+            _segment("約36g", y=300.0, x0=220.0, x1=320.0),
+            _segment("材質 自己消火性PC+ABS樹脂(UL94V-0)", y=340.0, x0=100.0, x1=760.0),
+            _segment("形状 屋外壁面露出設置", y=380.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert values[0] == "壁取付具"
+    assert values[1] == "MN-T2170"
+    assert "質量" in values
+    assert "約36g" in values
+    assert "材質" in values
+    assert "形状" in values
+
+
 def test_build_frame_rows_without_table_returns_title_and_code():
     rows = build_frame_rows_from_segments(
         [
@@ -144,6 +166,28 @@ def test_build_frame_rows_without_code_returns_title_only():
 
     assert len(rows) == 1
     assert rows[0].values == ["住戸モニターアダプター"]
+
+
+def test_build_frame_rows_layout_fallback_extracts_unknown_label_pairs():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("環境センサー", y=100.0, x0=140.0, x1=320.0),
+            _segment("ES-X1234", y=140.0, x0=470.0, x1=620.0),
+            _segment("使用温度範囲", y=300.0, x0=100.0, x1=300.0),
+            _segment("0〜40℃", y=300.0, x0=380.0, x1=520.0),
+            _segment("保護等級", y=340.0, x0=100.0, x1=260.0),
+            _segment("IP54", y=340.0, x0=380.0, x1=460.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert values[0] == "環境センサー"
+    assert values[1] == "ES-X1234"
+    assert "使用温度範囲" in values
+    assert "0〜40℃" in values
+    assert "保護等級" in values
+    assert "IP54" in values
 
 
 def test_build_frame_rows_title_only_fallback_ignores_unrelated_distant_code():
@@ -391,6 +435,80 @@ def test_build_frame_rows_supports_product_code_identifier_and_paint_row():
     assert "鋼板" in values
     assert "塗装" in values
     assert "黒電着塗装" in values
+
+
+def test_build_frame_rows_keeps_multiline_biko_continuations():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=120.0, x1=500.0),
+            _segment("MS-L1370トク", y=140.0, x0=520.0, x1=700.0),
+            _segment("電源電圧 DC24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("質量 約3.0kg", y=340.0, x0=100.0, x1=760.0),
+            _segment("備考 防まつ形（JIS C 0920 IPX4 相当）", y=380.0, x0=100.0, x1=760.0),
+            _segment("ただし、直射日光や強い紫外線の当たる場所への設置は避けること", y=420.0, x0=210.0, x1=760.0),
+            _segment("トク・カラーSUSパネル（選択色制限あり）", y=460.0, x0=210.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "備考" in values
+    biko_value = values[values.index("備考") + 1]
+    assert "防まつ形" in biko_value
+    assert "ただし、直射日光や強い紫外線の当たる場所への設置は避けること" in biko_value
+    assert "トク・カラーSUSパネル（選択色制限あり）" in biko_value
+
+
+def test_build_frame_rows_keeps_multiline_toshoku_with_code_prefixed_lines():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("マグネットセンサー(露出型)", y=100.0, x0=120.0, x1=460.0),
+            _segment("MG-TO130", y=140.0, x0=500.0, x1=700.0),
+            _segment("質量 スイッチ:10g マグネット:9g", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 スイッチ:ABS樹脂 マグネット:鉄・コバルト・ニッケル合金", y=340.0, x0=100.0, x1=760.0),
+            _segment("塗色 SPM-0090:グレー MG-T0060:アイボリー", y=380.0, x0=100.0, x1=760.0),
+            _segment("(スイッチ) MG-T0070:ライトグレー MG-T0080:ブラウン", y=420.0, x0=170.0, x1=760.0),
+            _segment("MG-T0130:ブラック", y=460.0, x0=220.0, x1=520.0),
+            _segment("塗色 SPM-0092:メタリックシルバー", y=500.0, x0=100.0, x1=760.0),
+            _segment("(マグネット) その他は、スイッチと同色", y=540.0, x0=170.0, x1=760.0),
+            _segment("形状 露出型", y=580.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    first_toshoku_idx = values.index("塗色")
+    first_toshoku_value = values[first_toshoku_idx + 1]
+    assert "SPM-0090:グレー" in first_toshoku_value
+    assert "MG-T0060:アイボリー" in first_toshoku_value
+    assert "MG-T0070:ライトグレー" in first_toshoku_value
+    assert "MG-T0080:ブラウン" in first_toshoku_value
+    assert "MG-T0130:ブラック" in first_toshoku_value
+
+    second_toshoku_idx = values.index("塗色", first_toshoku_idx + 1)
+    second_toshoku_value = values[second_toshoku_idx + 1]
+    assert "SPM-0092:メタリックシルバー" in second_toshoku_value
+    assert "その他は、スイッチと同色" in second_toshoku_value
+
+
+def test_build_frame_rows_does_not_append_next_title_to_toshoku_value():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("マグネットセンサー", y=100.0, x0=120.0, x1=360.0),
+            _segment("SPM-0070", y=140.0, x0=470.0, x1=620.0),
+            _segment("質量 スイッチ:27g マグネット:28g", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 ABS樹脂", y=340.0, x0=100.0, x1=760.0),
+            _segment("塗色 ライトグレー", y=380.0, x0=100.0, x1=520.0),
+            _segment("8インフラレッドセンサー", y=420.0, x0=100.0, x1=420.0),
+        ]
+    )
+
+    assert len(rows) >= 1
+    target = rows[0].values
+    assert "塗色" in target
+    toshoku = target[target.index("塗色") + 1]
+    assert "ライトグレー" in toshoku
+    assert "インフラレッドセンサー" not in toshoku
 
 
 def test_build_frame_rows_accepts_product_code_when_distance_is_slightly_large():
