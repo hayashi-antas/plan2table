@@ -158,6 +158,47 @@ def test_build_frame_rows_orders_left_to_right_then_next_row():
         "鍵管理ボックス（120戸）",  # noqa: RUF001  # intentional fullwidth parentheses
         "電源アダプター",
     ]
+    assert rows[0].values[1] == "MC-N0190"
+    assert rows[1].values[1] == "KB-X0670"
+    assert rows[2].values[1] == "AC-A0480"
+
+
+def test_build_frame_rows_prefers_code_with_better_x_overlap_in_neighbor_frames():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("メインコントローラ", y=100.0, x0=120.0, x1=360.0),
+            _segment("MC-N0190", y=140.0, x0=520.0, x1=660.0),
+            _segment("電源電圧 AC100V", y=320.0, x0=100.0, x1=640.0),
+            _segment("形状 露出型", y=360.0, x0=100.0, x1=640.0),
+            _segment("鍵管理ボックス(120戸)", y=108.0, x0=760.0, x1=1120.0),
+            _segment("KB-X0670", y=140.0, x0=1120.0, x1=1260.0),
+            _segment("材質 メラミン樹脂焼付塗装", y=322.0, x0=760.0, x1=1040.0),
+            _segment("塗色 ライトグレー", y=352.0, x0=760.0, x1=1020.0),
+            _segment("形状 露出型", y=382.0, x0=760.0, x1=1000.0),
+        ]
+    )
+
+    row_by_title = {row.values[0]: row.values for row in rows}
+    assert row_by_title["メインコントローラ"][1] == "MC-N0190"
+    assert row_by_title["鍵管理ボックス（120戸）"][1] == "KB-X0670"  # noqa: RUF001  # intentional fullwidth parentheses
+
+
+def test_build_frame_rows_keeps_high_overlap_code_when_score_is_slightly_above_threshold():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("PS10電源アダプター", y=182.0, x0=1339.0, x1=1665.0),
+            _segment("KB-X0670", y=229.0, x0=1152.0, x1=1292.0),
+            _segment("AC-A0480", y=229.0, x0=1746.0, x1=1889.0),
+            _segment("電源電圧", y=621.0, x0=1373.0, x1=1633.0),
+            _segment("AC100V", y=621.0, x0=1660.0, x1=1810.0),
+            _segment("出力電圧", y=651.0, x0=1373.0, x1=1633.0),
+            _segment("DC24V", y=651.0, x0=1660.0, x1=1810.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0].values[0] == "電源アダプター"
+    assert rows[0].values[1] == "AC-A0480"
 
 
 def test_build_frame_rows_skips_outlier_large_frame_when_same_size_frames_exist():

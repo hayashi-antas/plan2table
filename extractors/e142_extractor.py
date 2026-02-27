@@ -55,9 +55,14 @@ READING_ORDER_Y_BAND = 140.0
 TITLE_MAX_DISTANCE_TO_TABLE = 900.0
 CODE_ASSIGN_MAX_SCORE = 420.0
 PRODUCT_CODE_ASSIGN_MAX_SCORE = 520.0
+CODE_ASSIGN_SOFT_MARGIN = 40.0
+CODE_ASSIGN_SOFT_MIN_OVERLAP = 0.70
 TITLE_SEGMENT_X_GAP = 40.0
 TITLE_CODE_ROW_MIN_DIFF = 25.0
 TITLE_CODE_ROW_MAX_DIFF = 70.0
+CODE_TARGET_LEFT_MARGIN = 140.0
+CODE_TARGET_RIGHT_MARGIN = 220.0
+CODE_OVERLAP_PENALTY_WEIGHT = 220.0
 
 
 @dataclass(frozen=True)
@@ -359,9 +364,13 @@ def _pick_code_for_anchor(
     anchor_y: float,
     max_y: float,
     code_segments: List[Segment],
+    x_pad_left: float = 200.0,
+    x_pad_right: float = 300.0,
+    min_overlap: float = 0.01,
 ) -> str:
     candidates: List[Tuple[float, str]] = []
     anchor_center = (anchor_x0 + anchor_x1) / 2.0
+    anchor_range = (anchor_x0 - x_pad_left, anchor_x1 + x_pad_right)
     for segment in code_segments:
         if segment.page != page:
             continue
@@ -370,11 +379,11 @@ def _pick_code_for_anchor(
         code = _find_code_in_segment(segment)
         if not code:
             continue
-        overlap = _x_overlap_ratio((segment.x0, segment.x1), (anchor_x0 - 200.0, anchor_x1 + 300.0))
-        if overlap <= 0.0:
+        overlap = _x_overlap_ratio((segment.x0, segment.x1), anchor_range)
+        if overlap < min_overlap:
             continue
         seg_center = (segment.x0 + segment.x1) / 2.0
-        score = abs(segment.row_y - anchor_y) * 1.2 + abs(seg_center - anchor_center)
+        score = abs(segment.row_y - anchor_y) * 1.2 + abs(seg_center - anchor_center) + (1.0 - overlap) * 120.0
         candidates.append((score, code))
     if not candidates:
         return ""
@@ -390,8 +399,8 @@ def _pick_code_for_title(
     lower_y = header_y + 18.0
     upper_y = header_y + 190.0
     block_center = (block.x0 + block.x1) / 2.0
-    target_range = (block.x0 - 220.0, block.x1 + 220.0)
-    candidates: List[Tuple[float, str]] = []
+    target_range = (block.x0 - CODE_TARGET_LEFT_MARGIN, block.x1 + CODE_TARGET_RIGHT_MARGIN)
+    candidates: List[Tuple[float, str, float]] = []
 
     for segment in code_segments:
         if segment.page != block.page:
@@ -408,7 +417,8 @@ def _pick_code_for_title(
         text = segment.text_compact
         if any(keyword in text for keyword in LABEL_KEYWORDS_COMPACT):
             continue
-        if _x_overlap_ratio((segment.x0, segment.x1), target_range) <= 0.0:
+        overlap = _x_overlap_ratio((segment.x0, segment.x1), target_range)
+        if overlap <= 0.0:
             continue
 
         penalty = 0.0
@@ -418,16 +428,23 @@ def _pick_code_for_title(
             penalty += 80.0
         if segment.row_y > 3000.0:
             penalty += 200.0
+        penalty += (1.0 - overlap) * CODE_OVERLAP_PENALTY_WEIGHT
 
         seg_center = (segment.x0 + segment.x1) / 2.0
         score = abs(seg_center - block_center) + abs(segment.row_y - lower_y) * 2.0 + penalty
-        candidates.append((score, code))
+        candidates.append((score, code, overlap))
 
     if not candidates:
         return ""
-    best_score, best_code = min(candidates, key=lambda item: item[0])
+    best_score, best_code, best_overlap = min(candidates, key=lambda item: item[0])
     threshold = PRODUCT_CODE_ASSIGN_MAX_SCORE if "商品コード:" in best_code else CODE_ASSIGN_MAX_SCORE
     if best_score > threshold:
+        if (
+            "商品コード:" not in best_code
+            and best_overlap >= CODE_ASSIGN_SOFT_MIN_OVERLAP
+            and best_score <= threshold + CODE_ASSIGN_SOFT_MARGIN
+        ):
+            return best_code
         return ""
     return best_code
 
@@ -845,6 +862,18 @@ def build_frame_rows_from_segments(
             if title_segment
             else ""
         )
+        if not code and title_segment is not None:
+            code = _pick_code_for_anchor(
+                page=block.page,
+                anchor_x0=block.x0,
+                anchor_x1=block.x1,
+                anchor_y=title_segment.row_y,
+                max_y=title_segment.row_y + 220.0,
+                code_segments=code_segments,
+                x_pad_left=80.0,
+                x_pad_right=120.0,
+                min_overlap=0.35,
+            )
 
         if not title:
             continue
