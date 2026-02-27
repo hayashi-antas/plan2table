@@ -634,6 +634,26 @@ def test_build_frame_rows_does_not_append_next_title_to_toshoku_value():
     assert "インフラレッドセンサー" not in toshoku
 
 
+def test_build_frame_rows_does_not_append_next_frame_title_to_biko_when_row_gap_is_large():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("漏水センサー", y=100.0, x0=120.0, x1=340.0),
+            _segment("RS-A", y=140.0, x0=500.0, x1=620.0),
+            _segment("電源電圧 ACまたはDC5~24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("形状 床面設置形", y=340.0, x0=100.0, x1=760.0),
+            _segment("備考 スポット警戒型空間センサー", y=380.0, x0=100.0, x1=760.0),
+            _segment("カメラ無し管理人室インターホン", y=428.0, x0=100.0, x1=520.0),
+            _segment("MS-P1460", y=468.0, x0=540.0, x1=700.0),
+        ]
+    )
+
+    target = next(row.values for row in rows if row.values and row.values[0] == "漏水センサー")
+    assert "備考" in target
+    biko = target[target.index("備考") + 1]
+    assert "スポット警戒型空間センサー" in biko
+    assert "カメラ無し管理人室インターホン" not in biko
+
+
 def test_build_frame_rows_accepts_product_code_when_distance_is_slightly_large():
     rows = build_frame_rows_from_segments(
         [

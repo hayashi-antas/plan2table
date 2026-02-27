@@ -76,6 +76,7 @@ LAYOUT_ROW_MIN_GAP = 12.0
 LAYOUT_ROW_MAX_GAP = 360.0
 LAYOUT_BLOCK_ROW_GAP = 120.0
 LAYOUT_BLOCK_MIN_ROWS = 2
+CONTINUATION_MAX_ROW_GAP = 45.0
 PAINT_VALUE_PREFIXES = ("焼付", "焼付け", "焼き付け", "電着", "粉体", "吹付")
 SUPPLEMENTAL_INLINE_LABELS = ("カメラ",)
 ORPHAN_TITLE_INCLUDE_HINTS = (
@@ -959,23 +960,28 @@ def _is_continuation_text(text: str) -> bool:
 def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]], int]:
     pairs: List[Tuple[str, str]] = []
     pending_label = ""
+    prev_row_y: Optional[float] = None
     for segment in sorted(block.segments, key=lambda item: (item.row_y, item.x0)):
+        row_gap = 0.0 if prev_row_y is None else segment.row_y - prev_row_y
         detected = extract_label_value_pairs(segment.text_compact)
         if detected:
             pairs.extend(detected)
             pending_label = ""
+            prev_row_y = segment.row_y
             continue
         compact = _normalize_for_label_detection(segment.text_compact)
         if compact in SUPPLEMENTAL_INLINE_LABELS:
             pending_label = compact
+            prev_row_y = segment.row_y
             continue
-        if pending_label and _is_continuation_text(segment.text_compact):
+        if pending_label and row_gap <= CONTINUATION_MAX_ROW_GAP and _is_continuation_text(segment.text_compact):
             value = _clean_value(segment.text_compact)
             if value:
                 pairs.append((pending_label, value))
             pending_label = ""
+            prev_row_y = segment.row_y
             continue
-        if pairs and _is_continuation_text(segment.text_compact):
+        if pairs and row_gap <= CONTINUATION_MAX_ROW_GAP and _is_continuation_text(segment.text_compact):
             label, prev = pairs[-1]
             continuation = segment.text_compact
             if label == "塗色":
@@ -988,6 +994,7 @@ def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]],
             pairs[-1] = _promote_toshoku_qualifier(label, appended)
         else:
             pending_label = ""
+        prev_row_y = segment.row_y
 
     filtered = [(label, value) for label, value in pairs if label]
     labels = {label for label, _ in filtered}
