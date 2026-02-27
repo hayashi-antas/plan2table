@@ -269,6 +269,21 @@ def test_build_frame_rows_supports_tokuchuhin_as_identifier_column():
     assert rows[0].values[1] == "特注品"
 
 
+def test_build_frame_rows_preserves_toku_suffix_in_product_code():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=120.0, x1=460.0),
+            _segment("MS-L1370トク", y=140.0, x0=500.0, x1=700.0),
+            _segment("電源電圧 DC24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("質量 約3.0kg", y=340.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0].values[0] == "カメラ付ロビーインターホン"
+    assert rows[0].values[1] == "MS-L1370トク"
+
+
 def test_build_frame_rows_supports_product_code_identifier_and_paint_row():
     rows = build_frame_rows_from_segments(
         [

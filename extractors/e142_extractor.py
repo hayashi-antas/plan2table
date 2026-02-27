@@ -43,7 +43,7 @@ TITLE_EXCLUDE_TERMS = LABEL_KEYWORDS_COMPACT + (
     "図面",
     "縮尺",
 )
-CODE_PATTERN = re.compile(r"[A-Z]{1,4}-[A-Z0-9]{2,}(?:\+[A-Z0-9-]+)?")
+CODE_PATTERN = re.compile(r"[A-Z]{1,4}-[A-Z0-9]{2,}(?:\+[A-Z0-9-]+)?(?:トク)?")
 PRODUCT_CODE_PATTERN = re.compile(r"商品コード[:：]?\s*([0-9A-Za-z-]{4,})")
 PAREN_PRODUCT_CODE_PATTERN = re.compile(r"\(商品コード[:：]?[0-9A-Za-z-]{4,}\)")
 SPECIAL_IDENTIFIER_TOKENS = ("特注品",)
