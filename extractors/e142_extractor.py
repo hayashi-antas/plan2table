@@ -183,7 +183,7 @@ def _x_overlap_ratio(a: Tuple[float, float], b: Tuple[float, float]) -> float:
 
 
 def _is_table_segment(segment: Segment) -> bool:
-    compact = segment.text_compact
+    compact = _normalize_for_label_detection(segment.text_compact)
     return any(keyword in compact for keyword in LABEL_KEYWORDS_COMPACT)
 
 
@@ -203,7 +203,7 @@ def _is_title_candidate(segment: Segment) -> bool:
         return False
     if "約" in compact and re.search(r"\d", compact):
         return False
-    if re.search(r"\d+(?:\\.\\d+)?(?:kg|g|v|a|w|hz|φ)", compact.lower()):
+    if re.search(r"\d+(?:\.\d+)?(?:kg|g|v|a|w|hz|φ)", compact.lower()):
         return False
     if re.fullmatch(r"[^ぁ-んァ-ン一-龥A-Za-z0-9]+", compact):
         return False
@@ -557,6 +557,8 @@ def _normalize_for_label_detection(value: str) -> str:
     compact = compact.replace("材貝質", "材質")
     compact = compact.replace("形備状", "形状")
     compact = compact.replace("形備", "形状")
+    if compact.startswith("考"):
+        compact = f"備{compact}"
     return compact
 
 
@@ -589,6 +591,12 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
             continue
         selected.append(hit)
 
+    if len(selected) >= 2:
+        last_start, last_end, last_label = selected[-1]
+        _prev_start, _prev_end, prev_label = selected[-2]
+        if last_end >= len(normalized) and last_label == prev_label and last_start < len(normalized):
+            selected = selected[:-1]
+
     pairs: List[Tuple[str, str]] = []
     for idx, (start, end, label) in enumerate(selected):
         value_end = selected[idx + 1][0] if idx + 1 < len(selected) else len(normalized)
@@ -600,7 +608,7 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
         if merged and merged[-1][0] == label:
             prev_label, prev_value = merged[-1]
             if not value:
-                merged[-1] = (prev_label, _clean_value(prev_value + label))
+                merged[-1] = (prev_label, _clean_value(prev_value))
                 continue
             if not prev_value:
                 merged[-1] = (prev_label, value)
@@ -636,6 +644,45 @@ def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]],
     filtered = [(label, value) for label, value in pairs if label]
     labels = {label for label, _ in filtered}
     return filtered, len(labels)
+
+
+def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: List[Segment]) -> None:
+    if not blocks:
+        return
+
+    signatures_by_block: Dict[int, set[Tuple[float, float, float, str]]] = {}
+    for idx, block in enumerate(blocks):
+        signatures_by_block[idx] = {
+            (segment.row_y, segment.x0, segment.x1, segment.text_compact)
+            for segment in block.segments
+        }
+
+    for idx, block in enumerate(blocks):
+        known = signatures_by_block[idx]
+        for segment in segments:
+            signature = (segment.row_y, segment.x0, segment.x1, segment.text_compact)
+            if signature in known:
+                continue
+            if segment.page != block.page:
+                continue
+            if segment.row_y < block.top - 8.0 or segment.row_y > block.bottom + 40.0:
+                continue
+            if _x_overlap_ratio((segment.x0, segment.x1), (block.x0, block.x1)) < 0.35:
+                continue
+            if HEADER_MARKER_PATTERN.search(segment.text_compact):
+                continue
+            if _is_title_candidate(segment):
+                continue
+            if _find_code_in_segment(segment):
+                continue
+            if not _is_continuation_text(segment.text_compact):
+                continue
+            block.segments.append(segment)
+            known.add(signature)
+            block.x0 = min(block.x0, segment.x0)
+            block.x1 = max(block.x1, segment.x1)
+            block.top = min(block.top, segment.top)
+            block.bottom = max(block.bottom, segment.bottom)
 
 
 def _filter_extreme_wide_blocks(blocks: List[ParsedTableBlock]) -> List[ParsedTableBlock]:
@@ -733,6 +780,7 @@ def build_frame_rows_from_segments(
 ) -> List[FrameRow]:
     table_segments = [segment for segment in segments if _is_table_segment(segment)]
     blocks = _cluster_table_segments(table_segments)
+    _attach_continuation_segments_to_blocks(blocks, segments)
     title_source = title_segments if title_segments is not None else segments
     all_title_candidates = [segment for segment in title_source if _is_title_candidate(segment)]
     code_segments = [segment for segment in segments if _find_code_in_segment(segment)]

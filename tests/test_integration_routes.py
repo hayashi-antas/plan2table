@@ -249,6 +249,25 @@ def test_e142_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
     assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
 
 
+def test_e142_upload_returns_generic_error_on_internal_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+
+    def _boom(**kwargs):
+        raise RuntimeError("internal details should not be exposed")
+
+    monkeypatch.setattr(app_main, "_run_e142_job", _boom)
+
+    resp = client.post(
+        "/e-142/upload",
+        files={"file": ("e142.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert "An internal error occurred while processing your request." in resp.text
+    assert "internal details should not be exposed" not in resp.text
+
+
 def test_fixed_download_returns_404_when_missing():
     missing_job = str(uuid4())
     assert client.get(f"/jobs/{missing_job}/raster.csv").status_code == 404

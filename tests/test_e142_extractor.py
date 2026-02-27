@@ -73,6 +73,31 @@ def test_build_frame_rows_extracts_title_code_and_label_value_pairs():
     assert "備考" in values
 
 
+def test_build_frame_rows_handles_ocr_label_noise_and_multiline_mass():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("メイン コントローラ", y=100.0, x0=120.0, x1=340.0),
+            _segment("MC-N0190", y=140.0, x0=470.0, x1=620.0),
+            _segment("電電源電圧 AC100V", y=230.0, x0=100.0, x1=640.0),
+            _segment("消消費電流 0.8A以下", y=260.0, x0=100.0, x1=640.0),
+            _segment("質本体約5.4Kg+取付板約1.2Kg+公衆回線用", y=290.0, x0=100.0, x1=640.0),
+            _segment("回線ユニット約120g（バッテリー含まず）", y=315.0, x0=200.0, x1=640.0),
+            _segment("材質 鋼板1.2t", y=340.0, x0=100.0, x1=640.0),
+            _segment("形備状 露出型", y=370.0, x0=100.0, x1=640.0),
+            _segment("考 公衆回線用回線ユニット内蔵", y=400.0, x0=100.0, x1=640.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert values[0] == "メインコントローラ"
+    assert values[1] == "MC-N0190"
+    assert "質量" in values
+    assert any("回線ユニット約120g" in value for value in values)
+    assert "形状" in values
+    assert "備考" in values
+
+
 def test_build_frame_rows_without_table_returns_title_and_code():
     rows = build_frame_rows_from_segments(
         [
@@ -128,9 +153,9 @@ def test_build_frame_rows_orders_left_to_right_then_next_row():
         ]
     )
 
-    assert [row.values[0] for row in rows] == [
+    assert [row.values[0] for row in rows] == [  # noqa: RUF001  # intentional fullwidth parentheses
         "メインコントローラ",
-        "鍵管理ボックス（120戸）",
+        "鍵管理ボックス（120戸）",  # noqa: RUF001  # intentional fullwidth parentheses
         "電源アダプター",
     ]
 
@@ -155,7 +180,7 @@ def test_build_frame_rows_skips_outlier_large_frame_when_same_size_frames_exist(
 
     titles = [row.values[0] for row in rows]
     assert "メインコントローラ" in titles
-    assert "鍵管理ボックス（120戸）" in titles
+    assert "鍵管理ボックス（120戸）" in titles  # noqa: RUF001  # intentional fullwidth parentheses
     assert "右側大枠" not in titles
 
 
@@ -170,7 +195,7 @@ def test_build_frame_rows_normalizes_title_header_marker_prefix():
     )
 
     assert len(rows) == 1
-    assert rows[0].values[0] == "鍵管理ボックス（120戸）"
+    assert rows[0].values[0] == "鍵管理ボックス（120戸）"  # noqa: RUF001  # intentional fullwidth parentheses
 
 
 def test_build_frame_rows_does_not_assign_far_code_candidate():
@@ -265,4 +290,4 @@ def test_build_frame_rows_reference_example_is_title_only():
 
     _refine_titles_for_reference_rows(rows)
 
-    assert rows[1].values == ["マグネットセンサー（露出型）取付参考例"]
+    assert rows[1].values == ["マグネットセンサー（露出型）取付参考例"]  # noqa: RUF001  # intentional fullwidth parentheses

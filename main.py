@@ -3,6 +3,7 @@ import asyncio
 import csv
 import json
 import html
+import logging
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,7 @@ from extractors.unified_csv import merge_vector_raster_csv
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger(__name__)
 
 # Initialize Vertex AI (new google-genai client)
 # We use the environment variable GOOGLE_CLOUD_PROJECT as requested.
@@ -1393,19 +1395,23 @@ async def handle_e142_upload(file: UploadFile = File(...)):
 
     try:
         file_bytes = await file.read()
-        job, profile = _run_e142_job(
+        job, profile = await asyncio.to_thread(
+            _run_e142_job,
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
-        rows_html = _build_e142_rows_html(job.job_dir / "e142.csv")
+        rows_html = await asyncio.to_thread(
+            _build_e142_rows_html,
+            job.job_dir / "e142.csv",
+        )
         return _render_e142_success_html(
             job_id=job.job_id,
             rows_html=rows_html,
             row_count=int(profile["rows"]),
         )
-    except Exception as exc:
-        print(f"E-142 extraction failed: {exc}")
-        return _render_e142_error_html(str(exc))
+    except Exception:
+        logger.exception("E-142 extraction failed")
+        return _render_e142_error_html("An internal error occurred while processing your request.")
 
 
 @app.post("/customer/run", response_class=HTMLResponse)
