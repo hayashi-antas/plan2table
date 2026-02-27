@@ -54,6 +54,8 @@ TABLE_MIN_LABEL_COUNT = 1
 TABLE_MAX_WIDTH_RATIO = 2.1
 READING_ORDER_Y_BAND = 140.0
 TITLE_MAX_DISTANCE_TO_TABLE = 900.0
+REFERENCE_SIBLING_Y_GAP_DEFAULT = 220.0
+REFERENCE_SIBLING_Y_GAP_TSUSENKO = 620.0
 CODE_ASSIGN_MAX_SCORE = 420.0
 PRODUCT_CODE_ASSIGN_MAX_SCORE = 520.0
 CODE_ASSIGN_SOFT_MARGIN = 40.0
@@ -65,6 +67,41 @@ CODE_TARGET_LEFT_MARGIN = 140.0
 CODE_TARGET_RIGHT_MARGIN = 220.0
 CODE_OVERLAP_PENALTY_WEIGHT = 220.0
 CODE_SEGMENT_X_GAP = 20.0
+ORPHAN_CODE_MAX_Y_OFFSET = 140.0
+ORPHAN_CODE_X_PAD_LEFT = 40.0
+ORPHAN_CODE_X_PAD_RIGHT = 180.0
+ORPHAN_CODE_MIN_OVERLAP = 0.55
+LAYOUT_ROW_Y_TOLERANCE = 22.0
+LAYOUT_ROW_MIN_GAP = 12.0
+LAYOUT_ROW_MAX_GAP = 360.0
+LAYOUT_BLOCK_ROW_GAP = 120.0
+LAYOUT_BLOCK_MIN_ROWS = 2
+CONTINUATION_MAX_ROW_GAP = 45.0
+PAINT_VALUE_PREFIXES = ("焼付", "焼付け", "焼き付け", "電着", "粉体", "吹付")
+SUPPLEMENTAL_INLINE_LABELS = ("カメラ",)
+ORPHAN_TITLE_INCLUDE_HINTS = (
+    "センサー",
+    "アダプタ",
+    "アダプター",
+    "インターホン",
+    "コントローラ",
+    "ユニット",
+    "取付具",
+    "増幅器",
+    "ボタン",
+    "スピーカー",
+    "キーボックス",
+    "パワーユニット",
+)
+ORPHAN_TITLE_EXCLUDE_TERMS = (
+    "参考図",
+    "施工",
+    "金具",
+    "通線孔",
+    "コンクリート",
+    "公衆回線",
+    "内蔵",
+)
 
 
 @dataclass(frozen=True)
@@ -118,6 +155,16 @@ class FrameRow:
             if value:
                 values.append(value)
         return values
+
+
+@dataclass(frozen=True)
+class LayoutRowPair:
+    page: int
+    row_y: float
+    left: Segment
+    right: Segment
+    label: str
+    value: str
 
 
 def _compact_text(value: str) -> str:
@@ -192,6 +239,171 @@ def _x_overlap_ratio(a: Tuple[float, float], b: Tuple[float, float]) -> float:
 def _is_table_segment(segment: Segment) -> bool:
     compact = _normalize_for_label_detection(segment.text_compact)
     return any(keyword in compact for keyword in LABEL_KEYWORDS_COMPACT)
+
+
+def _clean_layout_label(value: str) -> str:
+    label = _compact_text(value).strip("|:：- ")
+    label = re.sub(r"^[◎○●◯◇◆□■△▲▽▼⊙⊗◉]+", "", label)
+    return label
+
+
+def _is_layout_label_segment(segment: Segment) -> bool:
+    compact = segment.text_compact
+    if len(compact) < 2 or len(compact) > 24:
+        return False
+    if _find_code_in_segment(segment):
+        return False
+    if any(keyword in _normalize_for_label_detection(compact) for keyword in LABEL_KEYWORDS_COMPACT):
+        return False
+    if re.fullmatch(r"[0-9０-９]+(?:[.,][0-9０-９]+)?(?:mm|cm|m|kg|g|v|a|w|hz|℃|%|φ)?", compact, re.IGNORECASE):
+        return False
+    if re.fullmatch(r"[^ぁ-んァ-ン一-龥A-Za-z0-9]+", compact):
+        return False
+    return bool(JAPANESE_PATTERN.search(compact))
+
+
+def _is_layout_value_segment(segment: Segment) -> bool:
+    compact = segment.text_compact
+    if not compact or len(compact) > 80:
+        return False
+    if _find_code_in_segment(segment):
+        return False
+    if re.fullmatch(r"[◎○●◯◇◆□■△▲▽▼⊙⊗◉]+", compact):
+        return False
+    return True
+
+
+def _find_layout_row_pairs(segments: List[Segment]) -> List[LayoutRowPair]:
+    ordered = sorted(segments, key=lambda item: (item.page, item.row_y, item.x0))
+    pairs: List[LayoutRowPair] = []
+    used_right: set[Tuple[int, float, float, float, str]] = set()
+
+    for left in ordered:
+        if not _is_layout_label_segment(left):
+            continue
+
+        best: Segment | None = None
+        best_score = 99999.0
+        for right in ordered:
+            if right.page != left.page:
+                continue
+            if right.x0 <= left.x1:
+                continue
+            row_diff = abs(right.row_y - left.row_y)
+            if row_diff > LAYOUT_ROW_Y_TOLERANCE:
+                continue
+            gap = right.x0 - left.x1
+            if gap < LAYOUT_ROW_MIN_GAP or gap > LAYOUT_ROW_MAX_GAP:
+                continue
+            if not _is_layout_value_segment(right):
+                continue
+            if _is_layout_label_segment(right) and not re.search(r"\d|[%℃°/()（）~〜]", right.text_compact):
+                continue
+
+            score = gap + row_diff * 8.0
+            if score < best_score:
+                best_score = score
+                best = right
+
+        if best is None:
+            continue
+
+        right_sig = (best.page, best.row_y, best.x0, best.x1, best.text_compact)
+        if right_sig in used_right:
+            continue
+
+        label = _clean_layout_label(left.text_compact)
+        value = _clean_value(best.text_compact)
+        value = _normalize_pair_value(label, value)
+        if not label or not value:
+            continue
+
+        used_right.add(right_sig)
+        pairs.append(
+            LayoutRowPair(
+                page=left.page,
+                row_y=left.row_y,
+                left=left,
+                right=best,
+                label=label,
+                value=value,
+            )
+        )
+    return pairs
+
+
+def _build_layout_fallback_blocks(segments: List[Segment]) -> List[ParsedTableBlock]:
+    row_pairs = _find_layout_row_pairs(segments)
+    if not row_pairs:
+        return []
+
+    blocks: List[dict] = []
+    for pair in sorted(row_pairs, key=lambda item: (item.page, item.row_y, item.left.x0)):
+        matched: dict | None = None
+        for block in blocks:
+            if block["page"] != pair.page:
+                continue
+            if pair.row_y > block["bottom"] + LAYOUT_BLOCK_ROW_GAP:
+                continue
+            left_diff = abs(pair.left.x0 - block["left_x"])
+            right_diff = abs(pair.right.x0 - block["right_x"])
+            overlap = _x_overlap_ratio((pair.left.x0, pair.right.x1), (block["x0"], block["x1"]))
+            if left_diff > 260.0 or right_diff > 360.0:
+                continue
+            if overlap < 0.05 and left_diff > 180.0:
+                continue
+            matched = block
+            break
+
+        if matched is None:
+            blocks.append(
+                {
+                    "page": pair.page,
+                    "x0": pair.left.x0,
+                    "x1": pair.right.x1,
+                    "top": min(pair.left.top, pair.right.top),
+                    "bottom": max(pair.left.bottom, pair.right.bottom),
+                    "left_x": pair.left.x0,
+                    "right_x": pair.right.x0,
+                    "pairs": [pair],
+                }
+            )
+            continue
+
+        matched["x0"] = min(matched["x0"], pair.left.x0)
+        matched["x1"] = max(matched["x1"], pair.right.x1)
+        matched["top"] = min(matched["top"], pair.left.top, pair.right.top)
+        matched["bottom"] = max(matched["bottom"], pair.left.bottom, pair.right.bottom)
+        count = float(len(matched["pairs"]))
+        matched["left_x"] = (matched["left_x"] * count + pair.left.x0) / (count + 1.0)
+        matched["right_x"] = (matched["right_x"] * count + pair.right.x0) / (count + 1.0)
+        matched["pairs"].append(pair)
+
+    parsed_blocks: List[ParsedTableBlock] = []
+    for block in blocks:
+        row_pairs_in_block: List[LayoutRowPair] = block["pairs"]
+        if len(row_pairs_in_block) < LAYOUT_BLOCK_MIN_ROWS:
+            continue
+        pairs = [(pair.label, pair.value) for pair in row_pairs_in_block if pair.label and pair.value]
+        if len(pairs) < LAYOUT_BLOCK_MIN_ROWS:
+            continue
+        labels = {label for label, _ in pairs}
+        segments_in_block = [segment for pair in row_pairs_in_block for segment in (pair.left, pair.right)]
+        parsed_blocks.append(
+            ParsedTableBlock(
+                block=TableBlock(
+                    page=int(block["page"]),
+                    x0=float(block["x0"]),
+                    x1=float(block["x1"]),
+                    top=float(block["top"]),
+                    bottom=float(block["bottom"]),
+                    segments=segments_in_block,
+                ),
+                pairs=pairs,
+                label_count=len(labels),
+            )
+        )
+    return parsed_blocks
 
 
 def _is_title_candidate(segment: Segment) -> bool:
@@ -566,14 +778,28 @@ def _resolve_title_text_for_block(title_segment: Segment, block: TableBlock) -> 
     return _normalize_title(chunks[index])
 
 
+def _is_orphan_title_row_candidate(title: str) -> bool:
+    normalized = _normalize_title(title)
+    if not normalized:
+        return False
+    if normalized.startswith(("備考", "考")):
+        return False
+    if any(token in normalized for token in ORPHAN_TITLE_EXCLUDE_TERMS):
+        return False
+    return any(token in normalized for token in ORPHAN_TITLE_INCLUDE_HINTS)
+
+
 def _normalize_for_label_detection(value: str) -> str:
     compact = _compact_text(value)
     compact = compact.strip("|")
+    if compact == "質":
+        compact = "質量"
     compact = compact.replace("電電源電圧", "電源電圧")
     compact = compact.replace("消消費電流", "消費電流")
     compact = compact.replace("消消費電力", "消費電力")
     compact = re.sub(r"質[★＊*]+", "質量", compact)
     compact = re.sub(r"^質本体", "質量本体", compact)
+    compact = re.sub(r"^質最", "質量", compact)
     compact = compact.replace("材貝質", "材質")
     compact = compact.replace("形備状", "形状")
     compact = compact.replace("形備", "形状")
@@ -589,6 +815,80 @@ def _clean_value(value: str) -> str:
     return cleaned
 
 
+def _normalize_pair_value(label: str, value: str) -> str:
+    normalized = value
+    if label == "質量":
+        # Vision occasionally reads "g" as "q" in mass rows.
+        normalized = re.sub(r"(\d)q\b", r"\1g", normalized, flags=re.IGNORECASE)
+        # Some rows miss the delimiter after "マグネット"/"スイッチ".
+        normalized = re.sub(
+            r"(スイッチ|マグネット)(?![:：])(?=\d+(?:\.\d+)?g\b)",
+            r"\1:",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    return normalized
+
+
+def _promote_toshoku_qualifier(label: str, value: str) -> Tuple[str, str]:
+    if label != "塗色":
+        return label, value
+
+    compact = _compact_text(value)
+    matched = re.match(r"^[\(（]([^()（）]{1,12})[\)）](.*)$", compact)
+    if not matched:
+        return label, value
+
+    qualifier = matched.group(1)
+    remainder = _clean_value(matched.group(2))
+    if not qualifier:
+        return label, value
+
+    # Keep qualifiers as part of the label when OCR splits the same left cell
+    # into "塗色" and "(スイッチ)/(マグネット)".
+    return f"塗色（{qualifier}）", remainder
+
+
+def _split_leading_qualifier(text: str) -> Tuple[str, str]:
+    compact = _compact_text(text)
+    matched = re.match(r"^[\(（]([^()（）]{1,12})[\)）](.*)$", compact)
+    if not matched:
+        return "", compact
+    qualifier = matched.group(1)
+    remainder = _clean_value(matched.group(2))
+    return qualifier, remainder
+
+
+def _is_code_prefixed_value_continuation(text: str) -> bool:
+    compact = _normalize_for_label_detection(text)
+    if "商品コード" in compact:
+        return False
+    return bool(re.match(r"^(?:\([^)]+\)|（[^）]+）)?[A-Z]{1,4}-[A-Z0-9-]{1,}[:：]", compact))
+
+
+def _is_embedded_value_label(normalized: str, start: int, label: str) -> bool:
+    if label != "塗装":
+        return False
+    for prefix in PAINT_VALUE_PREFIXES:
+        if start >= len(prefix) and normalized[start - len(prefix) : start] == prefix:
+            return True
+    return False
+
+
+def _extract_supplemental_inline_pair(text: str) -> List[Tuple[str, str]]:
+    compact = _normalize_for_label_detection(text)
+    for label in SUPPLEMENTAL_INLINE_LABELS:
+        if not compact.startswith(label):
+            continue
+        value = _clean_value(compact[len(label) :])
+        if not value:
+            continue
+        if not re.search(r"\d|[A-Za-z/／]", value):
+            continue
+        return [(label, value)]
+    return []
+
+
 def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
     normalized = _normalize_for_label_detection(text)
     hits: List[Tuple[int, int, str]] = []
@@ -598,11 +898,14 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
             idx = normalized.find(label, start)
             if idx == -1:
                 break
+            if _is_embedded_value_label(normalized, idx, label):
+                start = idx + len(label)
+                continue
             hits.append((idx, idx + len(label), label))
             start = idx + len(label)
 
     if not hits:
-        return []
+        return _extract_supplemental_inline_pair(normalized)
 
     hits.sort(key=lambda item: (item[0], -(item[1] - item[0])))
     selected: List[Tuple[int, int, str]] = []
@@ -621,6 +924,7 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
     for idx, (start, end, label) in enumerate(selected):
         value_end = selected[idx + 1][0] if idx + 1 < len(selected) else len(normalized)
         value = _clean_value(normalized[end:value_end])
+        value = _normalize_pair_value(label, value)
         pairs.append((label, value))
 
     merged: List[Tuple[str, str]] = []
@@ -633,10 +937,11 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
             if not prev_value:
                 merged[-1] = (prev_label, value)
                 continue
-            merged[-1] = (prev_label, _clean_value(f"{prev_value} {value}"))
+            merged_value = _clean_value(f"{prev_value} {value}")
+            merged[-1] = (prev_label, _normalize_pair_value(prev_label, merged_value))
             continue
         merged.append((label, value))
-    return merged
+    return [_promote_toshoku_qualifier(label, value) for label, value in merged]
 
 
 def _is_continuation_text(text: str) -> bool:
@@ -644,7 +949,8 @@ def _is_continuation_text(text: str) -> bool:
     if not compact:
         return False
     if CODE_PATTERN.search(compact):
-        return False
+        if not _is_code_prefixed_value_continuation(compact):
+            return False
     if extract_label_value_pairs(compact):
         return False
     if len(compact) > 80:
@@ -654,14 +960,42 @@ def _is_continuation_text(text: str) -> bool:
 
 def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]], int]:
     pairs: List[Tuple[str, str]] = []
+    pending_label = ""
+    prev_row_y: Optional[float] = None
     for segment in sorted(block.segments, key=lambda item: (item.row_y, item.x0)):
+        row_gap = 0.0 if prev_row_y is None else segment.row_y - prev_row_y
         detected = extract_label_value_pairs(segment.text_compact)
         if detected:
             pairs.extend(detected)
+            pending_label = ""
+            prev_row_y = segment.row_y
             continue
-        if pairs and _is_continuation_text(segment.text_compact):
+        compact = _normalize_for_label_detection(segment.text_compact)
+        if compact in SUPPLEMENTAL_INLINE_LABELS:
+            pending_label = compact
+            prev_row_y = segment.row_y
+            continue
+        if pending_label and row_gap <= CONTINUATION_MAX_ROW_GAP and _is_continuation_text(segment.text_compact):
+            value = _clean_value(segment.text_compact)
+            if value:
+                pairs.append((pending_label, value))
+            pending_label = ""
+            prev_row_y = segment.row_y
+            continue
+        if pairs and row_gap <= CONTINUATION_MAX_ROW_GAP and _is_continuation_text(segment.text_compact):
             label, prev = pairs[-1]
-            pairs[-1] = (label, _clean_value(prev + segment.text_compact))
+            continuation = segment.text_compact
+            if label == "塗色":
+                qualifier, remainder = _split_leading_qualifier(continuation)
+                if qualifier:
+                    label = f"塗色（{qualifier}）"
+                    continuation = remainder
+            appended = _clean_value(prev + continuation)
+            appended = _normalize_pair_value(label, appended)
+            pairs[-1] = _promote_toshoku_qualifier(label, appended)
+        else:
+            pending_label = ""
+        prev_row_y = segment.row_y
 
     filtered = [(label, value) for label, value in pairs if label]
     labels = {label for label, _ in filtered}
@@ -679,6 +1013,15 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
             for segment in block.segments
         }
 
+    def _eligible_candidate_blocks_for_segment(target: Segment) -> List[TableBlock]:
+        return [
+            candidate
+            for candidate in blocks
+            if candidate.page == target.page
+            and target.row_y >= candidate.top - 8.0
+            and target.row_y <= candidate.bottom + 40.0
+        ]
+
     for idx, block in enumerate(blocks):
         known = signatures_by_block[idx]
         for segment in segments:
@@ -689,15 +1032,42 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
                 continue
             if segment.row_y < block.top - 8.0 or segment.row_y > block.bottom + 40.0:
                 continue
-            if _x_overlap_ratio((segment.x0, segment.x1), (block.x0, block.x1)) < 0.35:
+            compact = _normalize_for_label_detection(segment.text_compact)
+            supplemental_like = bool(_extract_supplemental_inline_pair(compact)) or compact in SUPPLEMENTAL_INLINE_LABELS
+            overlap = _x_overlap_ratio((segment.x0, segment.x1), (block.x0, block.x1))
+            if overlap < 0.35:
+                if not supplemental_like:
+                    continue
+                if segment.x0 > block.x1 + 420.0:
+                    continue
+                candidate_blocks = _eligible_candidate_blocks_for_segment(segment)
+                if candidate_blocks:
+                    overlaps = [
+                        _x_overlap_ratio((segment.x0, segment.x1), (candidate.x0, candidate.x1))
+                        for candidate in candidate_blocks
+                    ]
+                    best_overlap = max(overlaps)
+                    if best_overlap >= 0.35 and overlap + 1e-6 < best_overlap:
+                        continue
+                    if best_overlap < 0.35:
+                        seg_center = (segment.x0 + segment.x1) / 2.0
+                        nearest = min(
+                            candidate_blocks,
+                            key=lambda candidate: abs(((candidate.x0 + candidate.x1) / 2.0) - seg_center),
+                        )
+                        if nearest is not block:
+                            continue
+            if HEADER_MARKER_PATTERN.search(segment.text_compact) and not _is_code_prefixed_value_continuation(segment.text_compact):
                 continue
-            if HEADER_MARKER_PATTERN.search(segment.text_compact):
+            if _find_code_in_segment(segment) and not _is_code_prefixed_value_continuation(segment.text_compact):
                 continue
-            if _is_title_candidate(segment):
+            if (
+                _is_title_candidate(segment)
+                and segment.x0 <= block.x0 + 60.0
+                and not supplemental_like
+            ):
                 continue
-            if _find_code_in_segment(segment):
-                continue
-            if not _is_continuation_text(segment.text_compact):
+            if not supplemental_like and not _is_continuation_text(segment.text_compact):
                 continue
             block.segments.append(segment)
             known.add(signature)
@@ -772,12 +1142,13 @@ def _refine_titles_for_reference_rows(rows: List[FrameRow]) -> None:
         if "取付" not in note_text:
             continue
 
+        sibling_y_gap = REFERENCE_SIBLING_Y_GAP_TSUSENKO if "通線孔" in row.title else REFERENCE_SIBLING_Y_GAP_DEFAULT
         sibling_candidates = [
             candidate
             for candidate in rows
             if candidate.page == row.page
             and candidate.title.startswith("マグネットセンサー")
-            and abs(candidate.top - row.top) <= 220.0
+            and abs(candidate.top - row.top) <= sibling_y_gap
             and candidate.x0 < row.x0
         ]
         should_promote = (
@@ -816,6 +1187,8 @@ def build_frame_rows_from_segments(
         if label_count >= TABLE_MIN_LABEL_COUNT:
             parsed_blocks.append(ParsedTableBlock(block=block, pairs=pairs, label_count=label_count))
     parsed_blocks = _filter_extreme_wide_blocks(parsed_blocks)
+    if not parsed_blocks:
+        parsed_blocks = _filter_extreme_wide_blocks(_build_layout_fallback_blocks(segments))
 
     frame_rows: List[FrameRow] = []
     used_titles: set[Tuple[int, float, float, str]] = set()
@@ -895,6 +1268,37 @@ def build_frame_rows_from_segments(
                 pairs=parsed_block.pairs,
             )
         )
+
+    # Recover frame rows where a title exists but no table block was formed.
+    for segment in title_candidates:
+        title_key = (segment.page, segment.row_y, segment.x0, segment.text_compact)
+        if title_key in used_titles:
+            continue
+        title_text = _normalize_title(segment.text_compact)
+        if not _is_orphan_title_row_candidate(title_text):
+            continue
+        code = _pick_code_for_anchor(
+            page=segment.page,
+            anchor_x0=segment.x0,
+            anchor_x1=segment.x1,
+            anchor_y=segment.row_y,
+            max_y=segment.row_y + ORPHAN_CODE_MAX_Y_OFFSET,
+            code_segments=code_segments,
+            x_pad_left=ORPHAN_CODE_X_PAD_LEFT,
+            x_pad_right=ORPHAN_CODE_X_PAD_RIGHT,
+            min_overlap=ORPHAN_CODE_MIN_OVERLAP,
+        )
+        frame_rows.append(
+            FrameRow(
+                page=segment.page,
+                top=segment.top,
+                x0=segment.x0,
+                title=title_text,
+                code=code,
+                pairs=[],
+            )
+        )
+        used_titles.add(title_key)
 
     # Avoid unrelated large-frame pickup when table-based frames are detected.
     if not frame_rows:

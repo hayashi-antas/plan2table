@@ -1,4 +1,8 @@
 (function () {
+  const FORMULA_FONT_LINK_ID = 'formula-font-cormorant';
+  const FORMULA_FONT_URL = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&display=swap';
+  const FORMULA_FONT_FAMILY = "'Cormorant Garamond',serif";
+
   const formulas = [
     { formula: 'σ = M·y / I', result: '= 156.2 MPa' },
     { formula: 'M = P·L / 4', result: '= 125 kN·m' },
@@ -20,6 +24,15 @@
     { formula: 'tan θ = a/b', result: '= 0.577' },
   ];
 
+  function ensureFormulaFontLoaded() {
+    if (document.getElementById(FORMULA_FONT_LINK_ID)) return;
+    const link = document.createElement('link');
+    link.id = FORMULA_FONT_LINK_ID;
+    link.rel = 'stylesheet';
+    link.href = FORMULA_FONT_URL;
+    document.head.appendChild(link);
+  }
+
   function createFormula(container) {
     const item = formulas[Math.floor(Math.random() * formulas.length)];
     const el = document.createElement('div');
@@ -31,9 +44,9 @@
       'position:absolute',
       `left:${xPos}%`,
       `top:${yPos}%`,
-      "font-family:'M PLUS 1p','Noto Sans JP','Source Sans 3',sans-serif",
+      `font-family:${FORMULA_FONT_FAMILY}`,
       `font-size:${Math.random() * 6 + 14}px`,
-      'color:#832C34',
+      'color:#8b5a2b',
       'opacity:0',
       'white-space:nowrap',
       'transform:translateY(20px)',
@@ -42,7 +55,7 @@
 
     el.innerHTML =
       `<span class="formula-text">${item.formula}</span>` +
-      '<span class="formula-result" style="opacity:0; margin-left: 8px; color: #6b252c; font-weight: 500;"> ' +
+      '<span class="formula-result" style="opacity:0; margin-left: 8px; color: #6b4423; font-weight: 500;"> ' +
       `${item.result}</span>`;
     container.appendChild(el);
 
@@ -69,6 +82,7 @@
   }
 
   window.initFormulaAnimation = function initFormulaAnimation(containerId) {
+    ensureFormulaFontLoaded();
     const container = document.getElementById(containerId);
     if (!container) return;
     createFormula(container);

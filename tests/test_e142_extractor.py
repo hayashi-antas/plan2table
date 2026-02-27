@@ -58,6 +58,11 @@ def test_extract_label_value_pairs_normalizes_mass_label_ocr_noise():
     assert pairs == [("質量", "15kg")]
 
 
+def test_extract_label_value_pairs_normalizes_mass_label_shitsu_sai_noise():
+    pairs = extract_label_value_pairs("質最約570g")
+    assert pairs == [("質量", "約570g")]
+
+
 def test_extract_label_value_pairs_does_not_inject_mass_into_material_value():
     pairs = extract_label_value_pairs("材質本体:自己消火性樹脂/パネル:ステンレス(シルバー)")
     assert pairs == [("材質", "本体:自己消火性樹脂/パネル:ステンレス(シルバー)")]
@@ -66,6 +71,21 @@ def test_extract_label_value_pairs_does_not_inject_mass_into_material_value():
 def test_extract_label_value_pairs_keeps_mass_row_fix_when_line_starts_with_shitsu_hontai():
     pairs = extract_label_value_pairs("質本体約5.4Kg")
     assert pairs == [("質量", "本体約5.4Kg")]
+
+
+def test_extract_label_value_pairs_normalizes_mass_q_and_missing_colon():
+    pairs = extract_label_value_pairs("質量スイッチ:10gマグネット9q")
+    assert pairs == [("質量", "スイッチ:10gマグネット:9g")]
+
+
+def test_extract_label_value_pairs_keeps_baked_paint_word_inside_material_value():
+    pairs = extract_label_value_pairs("材質メラミン樹脂焼付塗装塗色ライトグレー")
+    assert pairs == [("材質", "メラミン樹脂焼付塗装"), ("塗色", "ライトグレー")]
+
+
+def test_extract_label_value_pairs_supports_camera_inline_pair():
+    pairs = extract_label_value_pairs("カメラ1/4型カラーCMOS")
+    assert pairs == [("カメラ", "1/4型カラーCMOS")]
 
 
 def test_build_frame_rows_extracts_title_code_and_label_value_pairs():
@@ -123,6 +143,136 @@ def test_build_frame_rows_handles_ocr_label_noise_and_multiline_mass():
     assert "備考" in values
 
 
+def test_build_frame_rows_supports_split_mass_label_and_value_row():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("壁取付具", y=100.0, x0=120.0, x1=360.0),
+            _segment("MN-T2170", y=140.0, x0=470.0, x1=620.0),
+            _segment("質", y=300.0, x0=100.0, x1=140.0),
+            _segment("約36g", y=300.0, x0=220.0, x1=320.0),
+            _segment("材質 自己消火性PC+ABS樹脂(UL94V-0)", y=340.0, x0=100.0, x1=760.0),
+            _segment("形状 屋外壁面露出設置", y=380.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert values[0] == "壁取付具"
+    assert values[1] == "MN-T2170"
+    assert "質量" in values
+    assert "約36g" in values
+    assert "材質" in values
+    assert "形状" in values
+
+
+def test_build_frame_rows_normalizes_mass_q_typo_from_ocr():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("マグネットセンサー(露出型)", y=100.0, x0=120.0, x1=460.0),
+            _segment("MG-TO130", y=140.0, x0=500.0, x1=700.0),
+            _segment("質量 スイッチ:10g マグネット9q", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 ABS樹脂", y=340.0, x0=100.0, x1=760.0),
+            _segment("形状 露出型", y=380.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "質量" in values
+    mass_value = values[values.index("質量") + 1]
+    assert mass_value == "スイッチ:10gマグネット:9g"
+
+
+def test_build_frame_rows_supports_camera_row_split_into_label_and_value_segments():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=120.0, x1=500.0),
+            _segment("MS-L1370トク", y=140.0, x0=520.0, x1=700.0),
+            _segment("電源電圧 DC24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 本体:自己消火性樹脂/パネル:ステンレス(シルバー)", y=340.0, x0=100.0, x1=760.0),
+            _segment("カメラ", y=380.0, x0=100.0, x1=180.0),
+            _segment("1/4型カラーCMOS", y=380.0, x0=240.0, x1=500.0),
+            _segment("備考 防まつ形", y=420.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "材質" in values
+    material = values[values.index("材質") + 1]
+    assert "本体:自己消火性樹脂/パネル:ステンレス(シルバー)" == material
+    assert "カメラ" in values
+    assert values[values.index("カメラ") + 1] == "1/4型カラーCMOS"
+
+
+def test_build_frame_rows_supports_camera_inline_row_shifted_to_right_of_block():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=120.0, x1=500.0),
+            _segment("MS-L1370トク", y=140.0, x0=520.0, x1=700.0),
+            _segment("電源電圧 DC24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("質量 約3.0kg", y=340.0, x0=100.0, x1=760.0),
+            _segment("材質 本体:自己消火性樹脂/パネル:ステンレス(シルバー)", y=380.0, x0=100.0, x1=760.0),
+            _segment("カメラ1/4型カラーCMOS", y=420.0, x0=820.0, x1=1120.0),
+            _segment("備考 防まつ形", y=460.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "カメラ" in values
+    assert values[values.index("カメラ") + 1] == "1/4型カラーCMOS"
+
+
+def test_build_frame_rows_keeps_camera_inline_segment_that_looks_like_title_candidate():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=120.0, x1=500.0),
+            _segment("MS-L1370トク", y=140.0, x0=520.0, x1=700.0),
+            _segment("電源電圧 DC24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("質量 約3.0kg", y=340.0, x0=100.0, x1=760.0),
+            _segment("材質 本体:自己消火性樹脂/パネル:ステンレス(シルバー)", y=380.0, x0=100.0, x1=760.0),
+            _segment("カメラ1/4型カラーCMOS", y=420.0, x0=140.0, x1=420.0),
+            _segment("備考 防まつ形", y=460.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "カメラ" in values
+    assert values[values.index("カメラ") + 1] == "1/4型カラーCMOS"
+
+
+def test_build_frame_rows_does_not_attach_camera_inline_segment_to_neighbor_block():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("電源アダプター", y=100.0, x0=120.0, x1=360.0),
+            _segment("AC-A0480", y=140.0, x0=460.0, x1=620.0),
+            _segment("電源電圧 AC100V", y=320.0, x0=100.0, x1=420.0),
+            _segment("出力電圧 DC24V", y=350.0, x0=100.0, x1=420.0),
+            _segment("出力電流 1A", y=380.0, x0=100.0, x1=420.0),
+            _segment("形状 据置壁取付両用形", y=410.0, x0=100.0, x1=420.0),
+            _segment("材質 自己消火性ABS樹脂", y=440.0, x0=100.0, x1=420.0),
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=760.0, x1=1120.0),
+            _segment("MS-L1370トク", y=140.0, x0=1160.0, x1=1340.0),
+            _segment("電源電圧 DC24V", y=320.0, x0=760.0, x1=1320.0),
+            _segment("質量 約3.0kg", y=350.0, x0=760.0, x1=1320.0),
+            _segment("カメラ1/4型カラーCMOS", y=380.0, x0=760.0, x1=1120.0),
+            _segment("備考 防まつ形", y=410.0, x0=760.0, x1=1320.0),
+        ]
+    )
+
+    row_by_title = {row.values[0]: row.values for row in rows}
+    left = row_by_title["電源アダプター"]
+    assert "カメラ" not in left
+    assert "出力電圧" in left
+    assert left[left.index("出力電圧") + 1] == "DC24V"
+
+    right = row_by_title["カメラ付ロビーインターホン"]
+    assert "カメラ" in right
+    assert right[right.index("カメラ") + 1] == "1/4型カラーCMOS"
+
+
 def test_build_frame_rows_without_table_returns_title_and_code():
     rows = build_frame_rows_from_segments(
         [
@@ -144,6 +294,28 @@ def test_build_frame_rows_without_code_returns_title_only():
 
     assert len(rows) == 1
     assert rows[0].values == ["住戸モニターアダプター"]
+
+
+def test_build_frame_rows_layout_fallback_extracts_unknown_label_pairs():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("環境センサー", y=100.0, x0=140.0, x1=320.0),
+            _segment("ES-X1234", y=140.0, x0=470.0, x1=620.0),
+            _segment("使用温度範囲", y=300.0, x0=100.0, x1=300.0),
+            _segment("0〜40℃", y=300.0, x0=380.0, x1=520.0),
+            _segment("保護等級", y=340.0, x0=100.0, x1=260.0),
+            _segment("IP54", y=340.0, x0=380.0, x1=460.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert values[0] == "環境センサー"
+    assert values[1] == "ES-X1234"
+    assert "使用温度範囲" in values
+    assert "0〜40℃" in values
+    assert "保護等級" in values
+    assert "IP54" in values
 
 
 def test_build_frame_rows_title_only_fallback_ignores_unrelated_distant_code():
@@ -393,6 +565,100 @@ def test_build_frame_rows_supports_product_code_identifier_and_paint_row():
     assert "黒電着塗装" in values
 
 
+def test_build_frame_rows_keeps_multiline_biko_continuations():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("カメラ付ロビーインターホン", y=100.0, x0=120.0, x1=500.0),
+            _segment("MS-L1370トク", y=140.0, x0=520.0, x1=700.0),
+            _segment("電源電圧 DC24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("質量 約3.0kg", y=340.0, x0=100.0, x1=760.0),
+            _segment("備考 防まつ形（JIS C 0920 IPX4 相当）", y=380.0, x0=100.0, x1=760.0),
+            _segment("ただし、直射日光や強い紫外線の当たる場所への設置は避けること", y=420.0, x0=210.0, x1=760.0),
+            _segment("トク・カラーSUSパネル（選択色制限あり）", y=460.0, x0=210.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    assert "備考" in values
+    biko_value = values[values.index("備考") + 1]
+    assert "防まつ形" in biko_value
+    assert "ただし、直射日光や強い紫外線の当たる場所への設置は避けること" in biko_value
+    assert "トク・カラーSUSパネル（選択色制限あり）" in biko_value
+
+
+def test_build_frame_rows_keeps_multiline_toshoku_with_code_prefixed_lines():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("マグネットセンサー(露出型)", y=100.0, x0=120.0, x1=460.0),
+            _segment("MG-TO130", y=140.0, x0=500.0, x1=700.0),
+            _segment("質量 スイッチ:10g マグネット:9g", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 スイッチ:ABS樹脂 マグネット:鉄・コバルト・ニッケル合金", y=340.0, x0=100.0, x1=760.0),
+            _segment("塗色 SPM-0090:グレー MG-T0060:アイボリー", y=380.0, x0=100.0, x1=760.0),
+            _segment("(スイッチ) MG-T0070:ライトグレー MG-T0080:ブラウン", y=420.0, x0=170.0, x1=760.0),
+            _segment("MG-T0130:ブラック", y=460.0, x0=220.0, x1=520.0),
+            _segment("塗色 SPM-0092:メタリックシルバー", y=500.0, x0=100.0, x1=760.0),
+            _segment("(マグネット) その他は、スイッチと同色", y=540.0, x0=170.0, x1=760.0),
+            _segment("形状 露出型", y=580.0, x0=100.0, x1=760.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    values = rows[0].values
+    first_toshoku_idx = values.index("塗色（スイッチ）")
+    first_toshoku_value = values[first_toshoku_idx + 1]
+    assert "SPM-0090:グレー" in first_toshoku_value
+    assert "MG-T0060:アイボリー" in first_toshoku_value
+    assert "MG-T0070:ライトグレー" in first_toshoku_value
+    assert "MG-T0080:ブラウン" in first_toshoku_value
+    assert "MG-T0130:ブラック" in first_toshoku_value
+
+    second_toshoku_idx = values.index("塗色（マグネット）", first_toshoku_idx + 1)
+    second_toshoku_value = values[second_toshoku_idx + 1]
+    assert "SPM-0092:メタリックシルバー" in second_toshoku_value
+    assert "その他は、スイッチと同色" in second_toshoku_value
+
+
+def test_build_frame_rows_does_not_append_next_title_to_toshoku_value():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("マグネットセンサー", y=100.0, x0=120.0, x1=360.0),
+            _segment("SPM-0070", y=140.0, x0=470.0, x1=620.0),
+            _segment("質量 スイッチ:27g マグネット:28g", y=300.0, x0=100.0, x1=760.0),
+            _segment("材質 ABS樹脂", y=340.0, x0=100.0, x1=760.0),
+            _segment("塗色 ライトグレー", y=380.0, x0=100.0, x1=520.0),
+            _segment("8インフラレッドセンサー", y=420.0, x0=100.0, x1=420.0),
+        ]
+    )
+
+    assert len(rows) >= 1
+    target = rows[0].values
+    assert "塗色" in target
+    toshoku = target[target.index("塗色") + 1]
+    assert "ライトグレー" in toshoku
+    assert "インフラレッドセンサー" not in toshoku
+
+
+def test_build_frame_rows_does_not_append_next_frame_title_to_biko_when_row_gap_is_large():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("漏水センサー", y=100.0, x0=120.0, x1=340.0),
+            _segment("RS-A", y=140.0, x0=500.0, x1=620.0),
+            _segment("電源電圧 ACまたはDC5~24V", y=300.0, x0=100.0, x1=760.0),
+            _segment("形状 床面設置形", y=340.0, x0=100.0, x1=760.0),
+            _segment("備考 スポット警戒型空間センサー", y=380.0, x0=100.0, x1=760.0),
+            _segment("カメラ無し管理人室インターホン", y=428.0, x0=100.0, x1=520.0),
+            _segment("MS-P1460", y=468.0, x0=540.0, x1=700.0),
+        ]
+    )
+
+    target = next(row.values for row in rows if row.values and row.values[0] == "漏水センサー")
+    assert "備考" in target
+    biko = target[target.index("備考") + 1]
+    assert "スポット警戒型空間センサー" in biko
+    assert "カメラ無し管理人室インターホン" not in biko
+
+
 def test_build_frame_rows_accepts_product_code_when_distance_is_slightly_large():
     rows = build_frame_rows_from_segments(
         [
@@ -420,6 +686,26 @@ def test_build_frame_rows_prefers_parenthesized_product_code():
     assert rows[0].values[1] == "(商品コード:4361000)"
 
 
+def test_build_frame_rows_recovers_orphan_titles_without_detected_table_block():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("メインコントローラ", y=100.0, x0=120.0, x1=360.0),
+            _segment("MC-N0190", y=140.0, x0=470.0, x1=620.0),
+            _segment("電源電圧 AC100V", y=300.0, x0=100.0, x1=760.0),
+            _segment("PS10電源アダプター", y=1000.0, x0=850.0, x1=1160.0),
+            _segment("AC-A0480", y=1050.0, x0=930.0, x1=1100.0),
+            _segment("マグネットセンサー(防水加工)", y=1000.0, x0=1500.0, x1=1840.0),
+        ]
+    )
+
+    titles = [row.values[0] for row in rows]
+    assert "メインコントローラ" in titles
+    assert "電源アダプター" in titles
+    assert "マグネットセンサー（防水加工）" in titles  # noqa: RUF001  # intentional fullwidth parentheses
+    row_by_title = {row.values[0]: row.values for row in rows}
+    assert row_by_title["電源アダプター"][1] == "AC-A0480"
+
+
 def test_build_frame_rows_reference_example_is_title_only():
     rows = [
         FrameRow(page=1, top=100.0, x0=100.0, title="マグネットセンサー(露出型)", code="", pairs=[]),
@@ -429,6 +715,24 @@ def test_build_frame_rows_reference_example_is_title_only():
             x0=520.0,
             title="8φ通線孔(建築工事)",
             code="MS-X0001",
+            pairs=[("形状", "により取付が異なる場合があります。")],
+        ),
+    ]
+
+    _refine_titles_for_reference_rows(rows)
+
+    assert rows[1].values == ["マグネットセンサー（露出型）取付参考例"]  # noqa: RUF001  # intentional fullwidth parentheses
+
+
+def test_refine_titles_for_reference_rows_promotes_tsusenko_with_distant_sibling():
+    rows = [
+        FrameRow(page=1, top=1000.0, x0=2600.0, title="マグネットセンサー(露出型)", code="", pairs=[]),
+        FrameRow(
+            page=1,
+            top=1500.0,
+            x0=4300.0,
+            title="8通線孔(建築工事)",
+            code="",
             pairs=[("形状", "により取付が異なる場合があります。")],
         ),
     ]

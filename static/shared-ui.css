@@ -1,3 +1,5 @@
+        @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+Antique:wght@700;900&display=swap');
+
         * {
             box-sizing: border-box;
         }
@@ -199,6 +201,13 @@
             letter-spacing: 0.01em;
             font-variant-numeric: lining-nums tabular-nums;
             font-feature-settings: "lnum" 1, "tnum" 1;
+        }
+
+        .heading-brand {
+            font-family: 'Zen Kaku Gothic Antique', 'M PLUS 1p', 'Noto Sans JP', 'Source Sans 3', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-shadow: 1px 1px 0 rgba(43, 48, 52, 0.28);
         }
 
         /* Result/Prose Styles - like technical documentation */
