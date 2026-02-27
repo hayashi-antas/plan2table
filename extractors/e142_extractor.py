@@ -63,6 +63,7 @@ TITLE_CODE_ROW_MAX_DIFF = 70.0
 CODE_TARGET_LEFT_MARGIN = 140.0
 CODE_TARGET_RIGHT_MARGIN = 220.0
 CODE_OVERLAP_PENALTY_WEIGHT = 220.0
+CODE_SEGMENT_X_GAP = 20.0
 
 
 @dataclass(frozen=True)
@@ -794,13 +795,15 @@ def build_frame_rows_from_segments(
     segments: List[Segment],
     *,
     title_segments: Optional[List[Segment]] = None,
+    code_segments: Optional[List[Segment]] = None,
 ) -> List[FrameRow]:
     table_segments = [segment for segment in segments if _is_table_segment(segment)]
     blocks = _cluster_table_segments(table_segments)
     _attach_continuation_segments_to_blocks(blocks, segments)
     title_source = title_segments if title_segments is not None else segments
     all_title_candidates = [segment for segment in title_source if _is_title_candidate(segment)]
-    code_segments = [segment for segment in segments if _find_code_in_segment(segment)]
+    code_source = code_segments if code_segments is not None else segments
+    code_segments = [segment for segment in code_source if _find_code_in_segment(segment)]
     code_row_centers = _header_row_centers_from_codes(code_segments)
     title_candidates = _filter_title_candidates_by_header_rows(all_title_candidates, code_row_centers)
     parsed_blocks: List[ParsedTableBlock] = []
@@ -993,9 +996,16 @@ def extract_e142_pdf(
                     y_cluster=y_cluster,
                     x_gap=TITLE_SEGMENT_X_GAP,
                 )
+                code_only_segments = build_segments_from_words(
+                    words,
+                    page=target_page,
+                    y_cluster=y_cluster,
+                    x_gap=CODE_SEGMENT_X_GAP,
+                )
                 page_rows = build_frame_rows_from_segments(
                     segments,
                     title_segments=title_only_segments,
+                    code_segments=code_only_segments,
                 )
                 rows_by_page[target_page] = len(page_rows)
                 all_rows.extend(page_rows)

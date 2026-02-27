@@ -300,6 +300,42 @@ def test_build_frame_rows_supports_single_char_suffix_code_like_rs_a():
     assert rows[0].values[1] == "RS-A"
 
 
+def test_build_frame_rows_uses_code_segments_to_avoid_neighbor_code_misattribution():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment(
+                "1|高感度用マグネットセンサー(埋込型)セキュリティインターホン親機専用埋込ボックス(横型)",
+                y=1953.0,
+                x0=2529.0,
+                x1=3630.0,
+            ),
+            _segment("材質 ABS樹脂", y=2464.0, x0=2554.0, x1=2884.0),
+            _segment("形状 埋込型(専用取付金具が必要)", y=2505.0, x0=2554.0, x1=2884.0),
+            _segment("材質 硬質PVC", y=2416.0, x0=3143.0, x1=3408.0),
+            _segment("色調 黒", y=2451.0, x0=3143.0, x1=3408.0),
+            _segment("質量 約650g", y=2479.0, x0=3143.0, x1=3408.0),
+            _segment("備考 RC固定用補助材付属", y=2506.0, x0=3143.0, x1=3408.0),
+            _segment("MG-T0320コンクリート用", y=2000.0, x0=2924.0, x1=3214.0),
+        ],
+        title_segments=[
+            _segment(
+                "1|高感度用マグネットセンサー(埋込型)セキュリティインターホン親機専用埋込ボックス(横型)",
+                y=1953.0,
+                x0=2529.0,
+                x1=3630.0,
+            )
+        ],
+        code_segments=[
+            _segment("MG-T0320", y=2000.0, x0=2924.0, x1=3064.0),
+            _segment("コンクリート用", y=2000.0, x0=3093.0, x1=3214.0),
+        ],
+    )
+
+    row_by_title = {row.values[0]: row.values for row in rows}
+    assert row_by_title["高感度用マグネットセンサー（埋込型）"][1] == "MG-T0320"  # noqa: RUF001  # intentional fullwidth parentheses
+    assert row_by_title["セキュリティインターホン親機専用埋込ボックス（横型）"][1] == "材質"  # noqa: RUF001  # intentional fullwidth parentheses
+
+
 def test_build_frame_rows_supports_product_code_identifier_and_paint_row():
     rows = build_frame_rows_from_segments(
         [
