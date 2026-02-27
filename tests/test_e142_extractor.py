@@ -146,6 +146,18 @@ def test_build_frame_rows_without_code_returns_title_only():
     assert rows[0].values == ["住戸モニターアダプター"]
 
 
+def test_build_frame_rows_title_only_fallback_ignores_unrelated_distant_code():
+    rows = build_frame_rows_from_segments(
+        [
+            _segment("住戸モニターアダプター", y=100.0, x0=150.0, x1=430.0),
+            _segment("MS-D1220", y=140.0, x0=2200.0, x1=2340.0),
+        ]
+    )
+
+    assert len(rows) == 1
+    assert rows[0].values == ["住戸モニターアダプター"]
+
+
 def test_build_frame_rows_does_not_adopt_symbol_cell_as_title():
     rows = build_frame_rows_from_segments(
         [

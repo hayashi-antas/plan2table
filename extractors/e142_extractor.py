@@ -915,8 +915,7 @@ def build_frame_rows_from_segments(
             if not code:
                 has_only_one_title = len(title_candidates) == 1
                 has_no_blocks = len(blocks) == 0
-                has_no_codes = len(code_segments) == 0
-                if not (has_only_one_title and has_no_blocks and has_no_codes):
+                if not (has_only_one_title and has_no_blocks):
                     continue
 
             frame_rows.append(
