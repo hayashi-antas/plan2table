@@ -58,6 +58,11 @@ def test_extract_label_value_pairs_normalizes_mass_label_ocr_noise():
     assert pairs == [("質量", "15kg")]
 
 
+def test_extract_label_value_pairs_normalizes_mass_label_shitsu_sai_noise():
+    pairs = extract_label_value_pairs("質最約570g")
+    assert pairs == [("質量", "約570g")]
+
+
 def test_extract_label_value_pairs_does_not_inject_mass_into_material_value():
     pairs = extract_label_value_pairs("材質本体:自己消火性樹脂/パネル:ステンレス(シルバー)")
     assert pairs == [("材質", "本体:自己消火性樹脂/パネル:ステンレス(シルバー)")]
