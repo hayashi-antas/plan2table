@@ -7,7 +7,7 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Noto+Serif+JP:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+1p:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -15,7 +15,7 @@
       theme: {
         extend: {
           fontFamily: {
-            serif: ['Cormorant Garamond', 'Noto Serif JP', 'serif'],
+            serif: ['M PLUS 1p', 'Noto Sans JP', 'sans-serif'],
             sans: ['Source Sans 3', 'sans-serif'],
           },
           colors: {
@@ -57,7 +57,7 @@
       </header>
 
       <section class="paper-card border border-stone/30 rounded-sm p-6 md:p-8 relative corner-marks">
-        <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        <div class="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
           <a href="/area" class="group block rounded-sm border border-stone/40 bg-paper p-5 transition hover:-translate-y-0.5 hover:border-wood/60 hover:shadow">
             <div class="text-xs font-semibold tracking-widest uppercase text-stone">Plan2Table</div>
             <h2 class="heading-serif mt-2 text-2xl text-ink">図面解析</h2>
@@ -90,6 +90,15 @@
             <h2 class="heading-serif mt-2 text-2xl text-ink">住戸内照明器具姿図抽出</h2>
             <p class="mt-2 text-sm text-ink-muted leading-relaxed">
               器具記号・メーカー・相当型番を抽出し、3列CSVで出力します。
+            </p>
+            <div class="mt-4 text-sm font-semibold text-wood group-hover:text-wood-dark">開く →</div>
+          </a>
+
+          <a href="/e-142" class="group block rounded-sm border border-stone/40 bg-paper p-5 transition hover:-translate-y-0.5 hover:border-wood/60 hover:shadow">
+            <div class="text-xs font-semibold tracking-widest uppercase text-stone">E-142 OCR</div>
+            <h2 class="heading-serif mt-2 text-2xl text-ink">大枠1行抽出</h2>
+            <p class="mt-2 text-sm text-ink-muted leading-relaxed">
+              大枠ごとにタイトル・番号・表ラベル値を1行のフラットCSVで出力します。
             </p>
             <div class="mt-4 text-sm font-semibold text-wood group-hover:text-wood-dark">開く →</div>
           </a>

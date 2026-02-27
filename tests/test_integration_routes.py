@@ -60,6 +60,16 @@ def _fake_e251_extract_success(**kwargs):
     return {"rows": 4, "columns": ["器具記号", "メーカー", "相当型番"]}
 
 
+def _fake_e142_extract_success(**kwargs):
+    out_csv = kwargs["out_csv"]
+    out_csv.write_text(
+        "メインコントローラ,MC-N0190,電源電圧,AC100V,消費電流,0.8A以下\n"
+        "漏水センサー,MS-D1220\n",
+        encoding="utf-8-sig",
+    )
+    return {"rows": 2, "columns": ["column_1", "column_2", "column_3", "column_4"]}
+
+
 def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
@@ -205,18 +215,101 @@ def test_e251_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
     assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
 
 
+def test_e142_upload_and_download_fixed_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    monkeypatch.setattr(app_main, "extract_e142_pdf", _fake_e142_extract_success)
+
+    resp = client.post(
+        "/e-142/upload",
+        files={"file": ("e142.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="success"' in resp.text
+    assert re.search(r'data-kind="e142"\s+data-job-id="[0-9a-f\-]+"', resp.text)
+    path = _extract_download_path(resp.text, "e142")
+
+    dl = client.get(path)
+    assert dl.status_code == 200
+    csv_text = dl.content.decode("utf-8-sig")
+    assert "メインコントローラ,MC-N0190,電源電圧,AC100V" in csv_text
+    assert "漏水センサー,MS-D1220" in csv_text
+
+
+def test_e142_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "")
+
+    resp = client.post(
+        "/e-142/upload",
+        files={"file": ("e142.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert "VISION_SERVICE_ACCOUNT_KEY is not configured." in resp.text
+
+
+def test_build_e142_rows_html_preserves_csv_quoting(tmp_path):
+    e142_csv = tmp_path / "e142.csv"
+    with e142_csv.open("w", encoding="utf-8-sig", newline="") as fp:
+        writer = csv.writer(fp)
+        writer.writerow(["電源アダプター", "DC24V,出力電流"])
+
+    html_text = app_main._build_e142_rows_html(e142_csv)
+    assert "電源アダプター,&quot;DC24V,出力電流&quot;" in html_text
+
+
+def test_run_e142_job_uses_job_scoped_debug_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+    captured = {}
+
+    def _fake_extract(**kwargs):
+        captured["debug_dir"] = kwargs["debug_dir"]
+        kwargs["out_csv"].write_text("title,code\nA,AA-001\n", encoding="utf-8-sig")
+        return {"rows": 1, "columns": ["column_1", "column_2"]}
+
+    monkeypatch.setattr(app_main, "extract_e142_pdf", _fake_extract)
+    job, _profile = app_main._run_e142_job(file_bytes=b"%PDF-1.4\n", source_filename="e142.pdf")
+
+    expected = job.job_dir / "debug" / job.job_id
+    assert captured["debug_dir"] == expected
+    assert expected.exists()
+
+
+def test_e142_upload_returns_generic_error_on_internal_exception(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
+
+    def _boom(**kwargs):
+        raise RuntimeError("internal details should not be exposed")
+
+    monkeypatch.setattr(app_main, "_run_e142_job", _boom)
+
+    resp = client.post(
+        "/e-142/upload",
+        files={"file": ("e142.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+    assert resp.status_code == 200
+    assert 'data-status="error"' in resp.text
+    assert "An internal error occurred while processing your request." in resp.text
+    assert "internal details should not be exposed" not in resp.text
+
+
 def test_fixed_download_returns_404_when_missing():
     missing_job = str(uuid4())
     assert client.get(f"/jobs/{missing_job}/raster.csv").status_code == 404
     assert client.get(f"/jobs/{missing_job}/vector.csv").status_code == 404
     assert client.get(f"/jobs/{missing_job}/e055.csv").status_code == 404
     assert client.get(f"/jobs/{missing_job}/e251.csv").status_code == 404
+    assert client.get(f"/jobs/{missing_job}/e142.csv").status_code == 404
 
 
 def test_fixed_download_rejects_invalid_job_id_format():
     assert client.get("/jobs/not-a-uuid/raster.csv").status_code == 422
     assert client.get("/jobs/not-a-uuid/e055.csv").status_code == 422
     assert client.get("/jobs/not-a-uuid/e251.csv").status_code == 422
+    assert client.get("/jobs/not-a-uuid/e142.csv").status_code == 422
 
 
 def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
@@ -241,6 +334,7 @@ def test_root_and_develop_routes_are_split():
     assert 'href="/me-check"' in root.text
     assert 'href="/e-055"' in root.text
     assert 'href="/e-251"' in root.text
+    assert 'href="/e-142"' in root.text
     assert 'hx-post="/customer/run"' not in root.text
 
     me_check = client.get("/me-check")
@@ -262,6 +356,10 @@ def test_root_and_develop_routes_are_split():
     e251 = client.get("/e-251")
     assert e251.status_code == 200
     assert 'hx-post="/e-251/upload"' in e251.text
+
+    e142 = client.get("/e-142")
+    assert e142.status_code == 200
+    assert 'hx-post="/e-142/upload"' in e142.text
 
 
 def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatch):

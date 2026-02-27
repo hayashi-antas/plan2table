@@ -31,7 +31,7 @@
       'position:absolute',
       `left:${xPos}%`,
       `top:${yPos}%`,
-      "font-family:'Cormorant Garamond',serif",
+      "font-family:'M PLUS 1p','Noto Sans JP','Source Sans 3',sans-serif",
       `font-size:${Math.random() * 6 + 14}px`,
       'color:#832C34',
       'opacity:0',
