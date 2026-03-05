@@ -406,7 +406,7 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert 'colspan="2">図面番号</th>' in resp.text
     assert resp.text.count('colspan="3">') == 2
     assert len(re.findall(r"<th[^>]*>電気図</th>", resp.text)) == 3
-    assert len(re.findall(r"<th[^>]*>機械図</th>", resp.text)) == 3
+    assert len(re.findall(r"<th[^>]*>機器図</th>", resp.text)) == 3
     assert len(re.findall(r"<th[^>]*>差分</th>", resp.text)) == 2
     assert "M-001" in resp.text
     assert "E-024" in resp.text
