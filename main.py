@@ -505,19 +505,20 @@ CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
     "総合判定(◯/✗)",
     "総合判定(○/×)",
 ]
-DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 盤表 - 機器表"
+DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 電気図 - 機器図"
 
 CUSTOMER_SUMMARY_COLUMNS = [
     ("総合判定", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
+    ("機器ID照合", ["機器ID照合"]),
     ("判定理由", ["判定理由", "不一致内容", "確認理由", "不一致理由"]),
     ("機器ID", ["機器ID", "機器番号", "機械番号"]),
-    ("盤表 台数", ["盤表 台数", "raster_match_count", "raster_台数_calc"]),
-    ("盤表 記載名", ["盤表 記載名", "盤表記載名"]),
-    ("盤表 容量(kW)", ["盤表 容量(kW)", "盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
-    ("盤表 図面番号", ["盤表 図面番号", "図面番号", "図番"]),
-    ("盤表 記載トレース", ["盤表 記載トレース"]),
+    ("電気図 台数", ["電気図 台数", "raster_match_count", "raster_台数_calc"]),
+    ("電気図 記載名", ["電気図 記載名", "電気図記載名"]),
+    ("電気図 容量(kW)", ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"]),
+    ("電気図 図面番号", ["電気図 図面番号", "図面番号", "図番"]),
+    ("電気図 記載トレース", ["電気図 記載トレース"]),
 ]
-CUSTOMER_SUMMARY_JUDGMENT_COLUMNS = {"総合判定"}
+CUSTOMER_SUMMARY_JUDGMENT_COLUMNS = {"総合判定", "機器ID照合"}
 
 CUSTOMER_DISPLAY_SINGLE_COLUMNS = [
     ("機器ID", "機器ID", ["機器ID", "機器番号", "機械番号"]),
@@ -527,21 +528,21 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
     (
         "図面番号",
         [
-            ("図面番号_電気図", "電気図", ["盤表 図面番号", "図面番号", "図番"]),
-            ("図面番号_機械図", "機械図", ["機器表 図面番号", "機器表図面番号"]),
+            ("図面番号_電気図", "電気図", ["電気図 図面番号", "図面番号", "図番"]),
+            ("図面番号_機械図", "機械図", ["機器図 図面番号", "機器図図面番号"]),
         ],
     ),
     (
         "容量（KW）",
         [
-            ("容量_電気図", "電気図", ["盤表 容量(kW)", "盤表 容量合計(kW)", "raster_容量(kW)_sum"]),
+            ("容量_電気図", "電気図", ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"]),
             (
                 "容量_機械図",
                 "機械図",
                 [
-                    "機器表 判定採用容量(kW)",
-                    "機器表 消費電力(kW)",
-                    "機器表 容量合計(kW)",
+                    "機器図 判定採用容量(kW)",
+                    "機器図 消費電力(kW)",
+                    "機器図 容量合計(kW)",
                     "vector_容量(kW)_calc",
                 ],
             ),
@@ -551,9 +552,9 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
     (
         "台数",
         [
-            ("台数_電気図", "電気図", ["盤表 台数", "raster_match_count", "raster_台数_calc"]),
-            ("台数_機械図", "機械図", ["機器表 台数", "台数", "vector_台数_numeric"]),
-            ("台数_差分", "差分", ["台数差", "台数差（盤表-機器表）", "台数差分"]),
+            ("台数_電気図", "電気図", ["電気図 台数", "raster_match_count", "raster_台数_calc"]),
+            ("台数_機械図", "機械図", ["機器図 台数", "台数", "vector_台数_numeric"]),
+            ("台数_差分", "差分", ["台数差", "台数差（電気図-機器図）", "台数差分"]),
         ],
     ),
 ]
@@ -631,19 +632,24 @@ def _map_customer_display_rows(rows: list[dict[str, str]]) -> list[dict[str, str
 
 
 def _build_customer_table_header_html() -> str:
-    th_class = "border border-stone-300 bg-stone-50 px-3 py-2 text-left text-sm font-semibold"
+    th_class = "border border-stone-300 bg-stone-50 px-3 py-2 text-center text-sm font-semibold"
+    th_style = "text-align:center;"
     top_row_cells = []
     for _key, label, _candidates in CUSTOMER_DISPLAY_SINGLE_COLUMNS:
-        top_row_cells.append(f"<th class=\"{th_class}\" rowspan=\"2\">{html.escape(label)}</th>")
+        top_row_cells.append(
+            f"<th class=\"{th_class}\" style=\"{th_style}\" rowspan=\"2\">{html.escape(label)}</th>"
+        )
     for group_label, children in CUSTOMER_DISPLAY_GROUP_COLUMNS:
         top_row_cells.append(
-            f"<th class=\"{th_class}\" colspan=\"{len(children)}\">{html.escape(group_label)}</th>"
+            f"<th class=\"{th_class}\" style=\"{th_style}\" colspan=\"{len(children)}\">{html.escape(group_label)}</th>"
         )
 
     bottom_row_cells = []
     for _group_label, children in CUSTOMER_DISPLAY_GROUP_COLUMNS:
         for _key, child_label, _candidates in children:
-            bottom_row_cells.append(f"<th class=\"{th_class}\">{html.escape(child_label)}</th>")
+            bottom_row_cells.append(
+                f"<th class=\"{th_class}\" style=\"{th_style}\">{html.escape(child_label)}</th>"
+            )
 
     return f"<tr>{''.join(top_row_cells)}</tr><tr>{''.join(bottom_row_cells)}</tr>"
 
@@ -678,30 +684,32 @@ def _compute_customer_summary(
 ) -> dict[str, int]:
     equipment_count = 0
     panel_count = 0
-    perfect_match_count = 0
+    id_match_count = 0
     mismatch_count = 0
     review_count = 0
 
     for row in mapped_rows:
         judgment = _normalize_judgment(row.get("総合判定", ""))
+        id_match = _normalize_judgment(row.get("機器ID照合", ""))
         reason = str(row.get("判定理由", "") or "").strip()
         equipment_id = str(row.get("機器ID", "") or "").strip()
-        panel_units = _parse_float_or_none(row.get("盤表 台数", ""))
+        panel_units = _parse_float_or_none(row.get("電気図 台数", ""))
 
         panel_has_detail = any(
             str(row.get(key, "") or "").strip()
-            for key in ["盤表 記載名", "盤表 容量(kW)", "盤表 図面番号", "盤表 記載トレース"]
+            for key in ["電気図 記載名", "電気図 容量(kW)", "電気図 図面番号", "電気図 記載トレース"]
         )
 
-        if vector_row_count is None and equipment_id and reason != "機器表に記載なし":
+        if vector_row_count is None and equipment_id and reason != "機器図に記載なし":
             equipment_count += 1
 
         if raster_row_count is None and (panel_has_detail or (panel_units is not None and panel_units > 0)):
             panel_count += 1
 
-        if judgment == "◯":
-            perfect_match_count += 1
-        elif judgment == "✗":
+        if id_match == "◯":
+            id_match_count += 1
+
+        if judgment == "✗":
             mismatch_count += 1
         elif judgment == "要確認":
             review_count += 1
@@ -712,9 +720,9 @@ def _compute_customer_summary(
         panel_count = max(0, int(raster_row_count))
 
     return {
-        "機器表記載": equipment_count,
-        "盤表記載": panel_count,
-        "完全一致": perfect_match_count,
+        "機器図記載": equipment_count,
+        "電気図記載": panel_count,
+        "ID照合一致": id_match_count,
         "不一致": mismatch_count,
         "要確認": review_count,
     }
@@ -733,7 +741,7 @@ def _build_customer_summary_html(
     )
     parts = [
         f"{label}：{summary[label]}件"
-        for label in ["機器表記載", "盤表記載", "完全一致", "不一致", "要確認"]
+        for label in ["機器図記載", "電気図記載", "ID照合一致", "不一致", "要確認"]
     ]
     summary_cells = "".join(
         f"<div class=\"rounded border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-900\">"
@@ -765,7 +773,7 @@ def _build_customer_table_html(
         )
         return (
             summary_html
-            + "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
+            + "<table class=\"customer-compare-table w-full border-collapse border border-stone-300 text-sm\">"
             f"<thead>{header_html}</thead>"
             "<tbody><tr><td class=\"border border-stone-300 px-3 py-6 text-center text-stone-500\""
             f" colspan=\"{display_column_count}\">データがありません</td></tr></tbody></table>"
@@ -783,14 +791,15 @@ def _build_customer_table_html(
         mapped_cells = []
         for key, _label, _candidates in display_columns:
             value = mapped_row[key]
+            align_class = "text-left" if key == "機器ID" else "text-center"
             mapped_cells.append(
-                f"<td class=\"border border-stone-300 px-3 py-2 text-sm\">{html.escape(value)}</td>"
+                f"<td class=\"border border-stone-300 px-3 py-2 text-sm {align_class}\">{html.escape(value)}</td>"
             )
         body_rows.append("<tr>" + "".join(mapped_cells) + "</tr>")
 
     return (
         summary_html
-        + "<table class=\"w-full border-collapse border border-stone-300 text-sm\">"
+        + "<table class=\"customer-compare-table w-full border-collapse border border-stone-300 text-sm\">"
         f"<thead>{header_html}</thead>"
         f"<tbody>{''.join(body_rows)}</tbody></table>"
         f"{diff_note_html}"

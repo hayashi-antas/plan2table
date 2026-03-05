@@ -275,6 +275,12 @@
             border-bottom: 2px solid #832C34;
             font-family: 'Source Sans 3', sans-serif;
         }
+
+        /* Keep customer comparison header centered even with global table th defaults. */
+        #customer-result table.customer-compare-table th,
+        #customer-table-modal-content table.customer-compare-table th {
+            text-align: center;
+        }
         
         .prose td,
         #result td,
