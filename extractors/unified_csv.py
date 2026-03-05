@@ -20,11 +20,11 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
         "動力 (50Hz)_消費電力 (Kw)",
     ],
     "vector_count": ["台数"],
-    "vector_drawing_number": ["図面番号", "図番", "機器表 図面番号"],
+    "vector_drawing_number": ["図面番号", "図番", "機械図 図面番号"],
     "raster_name": ["機器名称", "名称"],
     "raster_voltage": ["電圧(V)", "電圧（V）"],
     "raster_capacity_kw": ["容量(kW)", "容量(KW)", "容量(Kw)", "容量（kW）"],
-    "raster_drawing_number": ["図面番号", "盤表 図面番号"],
+    "raster_drawing_number": ["図面番号", "電気図 図面番号"],
 }
 
 OUTPUT_COLUMNS = [
@@ -35,21 +35,21 @@ OUTPUT_COLUMNS = [
     "機器ID照合",
     "判定理由",
     "機器ID",
-    "機器表 記載名",
-    "盤表 記載名",
-    "機器表 台数",
-    "盤表 台数",
+    "機械図 記載名",
+    "電気図 記載名",
+    "機械図 台数",
+    "電気図 台数",
     "台数差",
-    "機器表 消費電力(kW)",
-    "機器表 モード容量(kW)",
-    "機器表 判定モード",
-    "機器表 判定採用容量(kW)",
+    "機械図 消費電力(kW)",
+    "機械図 モード容量(kW)",
+    "機械図 判定モード",
+    "機械図 判定採用容量(kW)",
     "容量判定補足",
-    "盤表 容量(kW)",
+    "電気図 容量(kW)",
     "容量差(kW)",
-    "機器表 図面番号",
-    "盤表 図面番号",
-    "盤表 記載トレース",
+    "機械図 図面番号",
+    "電気図 図面番号",
+    "電気図 記載トレース",
 ]
 
 EPS_KW = 0.1
@@ -461,7 +461,7 @@ def _evaluate_name(
     exists_code: JudgmentCode,
 ) -> Tuple[JudgmentCode, str]:
     if exists_code == "mismatch":
-        return "mismatch", "盤表に記載なし"
+        return "mismatch", "電気図に記載なし"
 
     if not vector_name or not raster_name_candidates:
         return "review", "名称が不明"
@@ -487,7 +487,7 @@ def _evaluate_quantity(
         count_diff = float(raster_match_count) - vector_count
 
     if exists_code == "mismatch":
-        return "mismatch", count_diff, "盤表に記載なし"
+        return "mismatch", count_diff, "電気図に記載なし"
 
     if vector_count is None:
         return "review", count_diff, "台数が不明"
@@ -508,7 +508,7 @@ def _evaluate_capacity(
     _ = vector_display
 
     if exists_code == "mismatch":
-        return "mismatch", None, "盤表に記載なし"
+        return "mismatch", None, "電気図に記載なし"
 
     if vector_kind == "blank" or not raster_variants:
         return "review", None, "容量欠損"
@@ -556,7 +556,7 @@ def _build_legacy_reason(
     mismatch_reasons: List[str] = []
 
     if exists_code == "mismatch":
-        mismatch_reasons.append("盤表に記載なし")
+        mismatch_reasons.append("電気図に記載なし")
 
     if qty_code == "review":
         review_reasons.append("台数差分=欠損")
@@ -797,26 +797,26 @@ def merge_vector_raster_csv(
                 "台数判定": to_mark(qty_code),
                 "容量判定": to_mark(capacity_code),
                 "名称判定": to_mark(name_code),
-                "機器ID照合": id_match_mark,
+                "機器ID照合": "要確認" if overall_code == "review" else id_match_mark,
                 "判定理由": judgment_reason,
                 "機器ID": vector_equipment_id,
-                "機器表 記載名": vector_name,
-                "盤表 記載名": raster_name_candidates_display,
-                "機器表 台数": _format_number(vector_count),
-                "盤表 台数": str(raster_match_count),
+                "機械図 記載名": vector_name,
+                "電気図 記載名": raster_name_candidates_display,
+                "機械図 台数": _format_number(vector_count),
+                "電気図 台数": str(raster_match_count),
                 "台数差": _format_number(count_diff),
-                "機器表 消費電力(kW)": vector_capacity.raw_display,
-                "機器表 モード容量(kW)": vector_capacity.mode_values_display,
-                "機器表 判定モード": vector_capacity.selected_mode,
-                "機器表 判定採用容量(kW)": _format_number(vector_capacity.selected_value)
+                "機械図 消費電力(kW)": vector_capacity.raw_display,
+                "機械図 モード容量(kW)": vector_capacity.mode_values_display,
+                "機械図 判定モード": vector_capacity.selected_mode,
+                "機械図 判定採用容量(kW)": _format_number(vector_capacity.selected_value)
                 if vector_capacity.selected_kind == "numeric"
                 else "",
                 "容量判定補足": vector_capacity.note,
-                "盤表 容量(kW)": _join_capacity_variants(raster_capacity_variants),
+                "電気図 容量(kW)": _join_capacity_variants(raster_capacity_variants),
                 "容量差(kW)": _format_number(capacity_diff),
-                "機器表 図面番号": vector_drawing_number,
-                "盤表 図面番号": drawing_number,
-                "盤表 記載トレース": raster_trace,
+                "機械図 図面番号": vector_drawing_number,
+                "電気図 図面番号": drawing_number,
+                "電気図 記載トレース": raster_trace,
             }
         )
 
@@ -840,23 +840,23 @@ def merge_vector_raster_csv(
                 "容量判定": to_mark("mismatch"),
                 "名称判定": to_mark("mismatch"),
                 "機器ID照合": "✗",
-                "判定理由": "機器表に記載なし",
+                "判定理由": "機械図に記載なし",
                 "機器ID": equipment_id,
-                "機器表 記載名": "",
-                "盤表 記載名": raster_name_candidates_display,
-                "機器表 台数": "",
-                "盤表 台数": str(raster_match_count),
+                "機械図 記載名": "",
+                "電気図 記載名": raster_name_candidates_display,
+                "機械図 台数": "",
+                "電気図 台数": str(raster_match_count),
                 "台数差": "",
-                "機器表 消費電力(kW)": "",
-                "機器表 モード容量(kW)": "",
-                "機器表 判定モード": "",
-                "機器表 判定採用容量(kW)": "",
+                "機械図 消費電力(kW)": "",
+                "機械図 モード容量(kW)": "",
+                "機械図 判定モード": "",
+                "機械図 判定採用容量(kW)": "",
                 "容量判定補足": "",
-                "盤表 容量(kW)": _join_capacity_variants(raster_capacity_variants),
+                "電気図 容量(kW)": _join_capacity_variants(raster_capacity_variants),
                 "容量差(kW)": "",
-                "機器表 図面番号": "",
-                "盤表 図面番号": drawing_number,
-                "盤表 記載トレース": raster_trace,
+                "機械図 図面番号": "",
+                "電気図 図面番号": drawing_number,
+                "電気図 記載トレース": raster_trace,
             }
         )
 
@@ -868,24 +868,24 @@ def merge_vector_raster_csv(
                 "台数判定": to_mark("review"),
                 "容量判定": to_mark("review"),
                 "名称判定": to_mark("review"),
-                "機器ID照合": "✗",
-                "判定理由": "盤表ID未記載",
+                "機器ID照合": "要確認",
+                "判定理由": "電気図ID未記載",
                 "機器ID": "",
-                "機器表 記載名": "",
-                "盤表 記載名": str(agg["name"]),
-                "機器表 台数": "",
-                "盤表 台数": str(int(agg["count"])),
+                "機械図 記載名": "",
+                "電気図 記載名": str(agg["name"]),
+                "機械図 台数": "",
+                "電気図 台数": str(int(agg["count"])),
                 "台数差": "",
-                "機器表 消費電力(kW)": "",
-                "機器表 モード容量(kW)": "",
-                "機器表 判定モード": "",
-                "機器表 判定採用容量(kW)": "",
+                "機械図 消費電力(kW)": "",
+                "機械図 モード容量(kW)": "",
+                "機械図 判定モード": "",
+                "機械図 判定採用容量(kW)": "",
                 "容量判定補足": "",
-                "盤表 容量(kW)": str(agg["capacity_display"]),
+                "電気図 容量(kW)": str(agg["capacity_display"]),
                 "容量差(kW)": "",
-                "機器表 図面番号": "",
-                "盤表 図面番号": str(agg["drawing_number"]),
-                "盤表 記載トレース": raster_trace,
+                "機械図 図面番号": "",
+                "電気図 図面番号": str(agg["drawing_number"]),
+                "電気図 記載トレース": raster_trace,
             }
         )
 
