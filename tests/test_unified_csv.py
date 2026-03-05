@@ -56,9 +56,9 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert "不一致内容" not in header
     assert "確認理由" not in header
     assert "名称差異" not in header
-    assert "機器図 モード容量(kW)" in header
-    assert "機器図 判定モード" in header
-    assert "機器図 判定採用容量(kW)" in header
+    assert "機械図 モード容量(kW)" in header
+    assert "機械図 判定モード" in header
+    assert "機械図 判定採用容量(kW)" in header
     assert "容量判定補足" in header
     assert "容量判定理由コード" not in header
 
@@ -74,9 +74,9 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert a1["電気図 容量(kW)"] == "1.5,2"
     assert a1["台数差"] == "1"
     assert a1["容量差(kW)"] == ""
-    assert a1["機器図 判定モード"] == "単一値"
-    assert a1["機器図 判定採用容量(kW)"] == "1.5"
-    assert a1["機器図 図面番号"] == "M-101"
+    assert a1["機械図 判定モード"] == "単一値"
+    assert a1["機械図 判定採用容量(kW)"] == "1.5"
+    assert a1["機械図 図面番号"] == "M-101"
     assert a1["電気図 図面番号"] == "E-024,E-031"
     assert (
         a1["電気図 記載トレース"]
@@ -94,8 +94,8 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert b1["判定理由"] == "電気図に記載なし"
     assert b1["機器ID"] == "B-1"
     assert b1["電気図 台数"] == "0"
-    assert b1["機器図 判定モード"] == "単一値"
-    assert b1["機器図 判定採用容量(kW)"] == "2"
+    assert b1["機械図 判定モード"] == "単一値"
+    assert b1["機械図 判定採用容量(kW)"] == "2"
     assert b1["電気図 記載トレース"] == ""
 
 
@@ -124,10 +124,10 @@ def test_merge_uses_max_capacity_when_mode_is_unknown(tmp_path):
     assert row["容量判定"] == "◯"
     assert row["名称判定"] == "◯"
     assert row["判定理由"] == ""
-    assert row["機器図 消費電力(kW)"] == "(冷)9.45 / (暖)7.18"
-    assert row["機器図 モード容量(kW)"] == "冷=9.45,暖=7.18"
-    assert row["機器図 判定モード"] == "最大値(冷)"
-    assert row["機器図 判定採用容量(kW)"] == "9.45"
+    assert row["機械図 消費電力(kW)"] == "(冷)9.45 / (暖)7.18"
+    assert row["機械図 モード容量(kW)"] == "冷=9.45,暖=7.18"
+    assert row["機械図 判定モード"] == "最大値(冷)"
+    assert row["機械図 判定採用容量(kW)"] == "9.45"
     assert row["容量判定補足"] == "機器名称からモード特定不可のため最大値を採用"
 
 
@@ -157,8 +157,8 @@ def test_merge_keeps_review_when_unknown_mode_has_tied_max_values(tmp_path):
     assert row["総合判定"] == "要確認"
     assert row["容量判定"] == "要確認"
     assert row["判定理由"] == "容量が数値でない"
-    assert row["機器図 判定モード"] == "未確定"
-    assert row["機器図 判定採用容量(kW)"] == ""
+    assert row["機械図 判定モード"] == "未確定"
+    assert row["機械図 判定採用容量(kW)"] == ""
     assert row["容量判定補足"] == "機器名称からモード特定不可かつ最大値が複数(冷,暖)"
 
 
@@ -186,8 +186,8 @@ def test_merge_uses_strict_mode_when_env_disables_max_fallback(tmp_path, monkeyp
 
     row = _read_rows(out_csv)[0]
     assert row["容量判定"] == "要確認"
-    assert row["機器図 判定モード"] == "未確定"
-    assert row["機器図 判定採用容量(kW)"] == ""
+    assert row["機械図 判定モード"] == "未確定"
+    assert row["機械図 判定採用容量(kW)"] == ""
     assert row["容量判定補足"] == "機器名称からモード特定不可(strict設定)"
 
 
@@ -220,10 +220,10 @@ def test_merge_uses_cooling_capacity_when_name_has_cooling_only_hint(tmp_path):
     assert row["容量判定"] == "◯"
     assert row["名称判定"] == "◯"
     assert row["判定理由"] == ""
-    assert row["機器図 消費電力(kW)"] == "(冷)9.45 / (暖)7.18 / (低温)9.43"
-    assert row["機器図 モード容量(kW)"] == "冷=9.45,暖=7.18,低温=9.43"
-    assert row["機器図 判定モード"] == "冷"
-    assert row["機器図 判定採用容量(kW)"] == "9.45"
+    assert row["機械図 消費電力(kW)"] == "(冷)9.45 / (暖)7.18 / (低温)9.43"
+    assert row["機械図 モード容量(kW)"] == "冷=9.45,暖=7.18,低温=9.43"
+    assert row["機械図 判定モード"] == "冷"
+    assert row["機械図 判定採用容量(kW)"] == "9.45"
     assert row["容量判定補足"] == "機器名称ヒント(冷房専用)で(冷)を採用"
     assert row["容量差(kW)"] == "0"
 
@@ -254,8 +254,8 @@ def test_merge_uses_heating_capacity_when_name_has_heating_only_hint(tmp_path):
     row = _read_rows(out_csv)[0]
     assert row["総合判定"] == "◯"
     assert row["容量判定"] == "◯"
-    assert row["機器図 判定モード"] == "暖"
-    assert row["機器図 判定採用容量(kW)"] == "4.05"
+    assert row["機械図 判定モード"] == "暖"
+    assert row["機械図 判定採用容量(kW)"] == "4.05"
     assert row["容量判定補足"] == "機器名称ヒント(暖房専用)で(暖)を採用"
 
 
@@ -297,15 +297,15 @@ def test_merge_regression_pac_modes_with_max_fallback(tmp_path):
 
     rows = {row["機器ID"]: row for row in _read_rows(out_csv)}
     assert rows["PAC-1"]["容量判定"] == "◯"
-    assert rows["PAC-1"]["機器図 判定モード"] == "冷"
+    assert rows["PAC-1"]["機械図 判定モード"] == "冷"
 
     assert rows["PAC-6"]["容量判定"] == "◯"
-    assert rows["PAC-6"]["機器図 判定モード"] == "最大値(低温)"
-    assert rows["PAC-6"]["機器図 判定採用容量(kW)"] == "2"
+    assert rows["PAC-6"]["機械図 判定モード"] == "最大値(低温)"
+    assert rows["PAC-6"]["機械図 判定採用容量(kW)"] == "2"
 
     assert rows["PAC-14"]["容量判定"] == "✗"
-    assert rows["PAC-14"]["機器図 判定モード"] == "最大値(低温)"
-    assert rows["PAC-14"]["機器図 判定採用容量(kW)"] == "6.3"
+    assert rows["PAC-14"]["機械図 判定モード"] == "最大値(低温)"
+    assert rows["PAC-14"]["機械図 判定採用容量(kW)"] == "6.3"
 
 
 def test_merge_appends_raster_only_and_missing_id_rows(tmp_path):
@@ -343,7 +343,7 @@ def test_merge_appends_raster_only_and_missing_id_rows(tmp_path):
     assert raster_only["機器ID"] == "R-9"
     assert raster_only["総合判定"] == "✗"
     assert raster_only["機器ID照合"] == "✗"
-    assert raster_only["判定理由"] == "機器図に記載なし"
+    assert raster_only["判定理由"] == "機械図に記載なし"
 
     missing_id = rows[2]
     assert missing_id["機器ID"] == ""

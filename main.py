@@ -505,7 +505,7 @@ CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
     "総合判定(◯/✗)",
     "総合判定(○/×)",
 ]
-DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 電気図 - 機器図"
+DIFF_NOTE_TEXT = "※ 台数差 / 容量差は 電気図 - 機械図"
 
 CUSTOMER_SUMMARY_COLUMNS = [
     ("総合判定", CUSTOMER_JUDGMENT_COLUMN_CANDIDATES),
@@ -529,7 +529,7 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
         "図面番号",
         [
             ("図面番号_電気図", "電気図", ["電気図 図面番号", "図面番号", "図番"]),
-            ("図面番号_機器図", "機器図", ["機器図 図面番号", "機器図図面番号"]),
+            ("図面番号_機械図", "機械図", ["機械図 図面番号", "機械図図面番号"]),
         ],
     ),
     (
@@ -537,12 +537,12 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
         [
             ("容量_電気図", "電気図", ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"]),
             (
-                "容量_機器図",
-                "機器図",
+                "容量_機械図",
+                "機械図",
                 [
-                    "機器図 判定採用容量(kW)",
-                    "機器図 消費電力(kW)",
-                    "機器図 容量合計(kW)",
+                    "機械図 判定採用容量(kW)",
+                    "機械図 消費電力(kW)",
+                    "機械図 容量合計(kW)",
                     "vector_容量(kW)_calc",
                 ],
             ),
@@ -553,8 +553,8 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
         "台数",
         [
             ("台数_電気図", "電気図", ["電気図 台数", "raster_match_count", "raster_台数_calc"]),
-            ("台数_機器図", "機器図", ["機器図 台数", "台数", "vector_台数_numeric"]),
-            ("台数_差分", "差分", ["台数差", "台数差（電気図-機器図）", "台数差分"]),
+            ("台数_機械図", "機械図", ["機械図 台数", "台数", "vector_台数_numeric"]),
+            ("台数_差分", "差分", ["台数差", "台数差（電気図-機械図）", "台数差分"]),
         ],
     ),
 ]
@@ -700,7 +700,7 @@ def _compute_customer_summary(
             for key in ["電気図 記載名", "電気図 容量(kW)", "電気図 図面番号", "電気図 記載トレース"]
         )
 
-        if vector_row_count is None and equipment_id and reason != "機器図に記載なし":
+        if vector_row_count is None and equipment_id and reason != "機械図に記載なし":
             equipment_count += 1
 
         if raster_row_count is None and (panel_has_detail or (panel_units is not None and panel_units > 0)):
@@ -720,7 +720,7 @@ def _compute_customer_summary(
         panel_count = max(0, int(raster_row_count))
 
     return {
-        "機器図記載": equipment_count,
+        "機械図記載": equipment_count,
         "電気図記載": panel_count,
         "ID照合一致": id_match_count,
         "不一致": mismatch_count,
@@ -741,7 +741,7 @@ def _build_customer_summary_html(
     )
     parts = [
         f"{label}：{summary[label]}件"
-        for label in ["機器図記載", "電気図記載", "ID照合一致", "不一致", "要確認"]
+        for label in ["機械図記載", "電気図記載", "ID照合一致", "不一致", "要確認"]
     ]
     summary_cells = "".join(
         f"<div class=\"rounded border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-900\">"

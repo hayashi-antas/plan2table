@@ -395,25 +395,25 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "判定理由" not in resp.text
     assert "名称判定" not in resp.text
     assert "機器ID照合" not in resp.text
-    assert "機器図 記載名" not in resp.text
+    assert "機械図 記載名" not in resp.text
     assert "電気図 記載名" not in resp.text
-    assert "機器図 消費電力(kW)" not in resp.text
+    assert "機械図 消費電力(kW)" not in resp.text
     assert "電気図 記載トレース" not in resp.text
     assert "容量判定" not in resp.text
-    assert "機器図 図面番号" not in resp.text
+    assert "機械図 図面番号" not in resp.text
     assert "電気図 図面番号" not in resp.text
     assert resp.text.count('rowspan="2"') == 2
     assert 'colspan="2">図面番号</th>' in resp.text
     assert resp.text.count('colspan="3">') == 2
     assert len(re.findall(r"<th[^>]*>電気図</th>", resp.text)) == 3
-    assert len(re.findall(r"<th[^>]*>機器図</th>", resp.text)) == 3
+    assert len(re.findall(r"<th[^>]*>機械図</th>", resp.text)) == 3
     assert len(re.findall(r"<th[^>]*>差分</th>", resp.text)) == 2
     assert "M-001" in resp.text
     assert "E-024" in resp.text
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
-    assert "台数差 / 容量差は 電気図 - 機器図" in resp.text
-    assert "機器図記載：1件" in resp.text
+    assert "台数差 / 容量差は 電気図 - 機械図" in resp.text
+    assert "機械図記載：1件" in resp.text
     assert "電気図記載：1件" in resp.text
     assert "ID照合一致：1件" in resp.text
     assert "完全一致：" not in resp.text
@@ -425,7 +425,7 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert "総合判定" in dl.text
     assert "判定理由" in dl.text
     assert "機器ID照合" in dl.text
-    assert "機器図 図面番号" in dl.text
+    assert "機械図 図面番号" in dl.text
     assert "電気図 記載名" in dl.text
     assert "名称差異" not in dl.text
     assert "電気図 記載トレース" in dl.text
@@ -472,7 +472,7 @@ def test_customer_run_summary_uses_vector_raster_row_counts(tmp_path, monkeypatc
     )
     assert resp.status_code == 200
     assert 'data-status="success"' in resp.text
-    assert "機器図記載：1件" in resp.text
+    assert "機械図記載：1件" in resp.text
     assert "電気図記載：2件" in resp.text
 
 
@@ -497,10 +497,10 @@ def test_customer_run_handles_judgment_header_variants(
         fieldnames = [
             "機器番号",
             "名称",
-            "機器図 台数",
+            "機械図 台数",
             "電気図 台数",
             "台数差",
-            "機器図 消費電力(kW)",
+            "機械図 消費電力(kW)",
             "電気図 容量(kW)",
             "容量差(kW)",
             "判定理由",
@@ -514,10 +514,10 @@ def test_customer_run_handles_judgment_header_variants(
                 {
                     "機器番号": "A-1",
                     "名称": "排風機",
-                    "機器図 台数": "1",
+                    "機械図 台数": "1",
                     "電気図 台数": "1",
                     "台数差": "0",
-                    "機器図 消費電力(kW)": "1.5",
+                    "機械図 消費電力(kW)": "1.5",
                     "電気図 容量(kW)": "1.5",
                     "容量差(kW)": "0",
                     "判定理由": "",
@@ -539,7 +539,7 @@ def test_customer_run_handles_judgment_header_variants(
     assert resp.status_code == 200
     assert 'data-status="success"' in resp.text
 
-    assert "機器図記載：1件" in resp.text
+    assert "機械図記載：1件" in resp.text
     assert "電気図記載：1件" in resp.text
     assert f"ID照合一致：{expected_id_match}件" in resp.text
     assert "完全一致：" not in resp.text
@@ -843,14 +843,14 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert row["名称判定"] == "✗"
     assert row["機器ID照合"] == "要確認"
     assert row["機器ID"] == "A-1"
-    assert row["機器図 記載名"] == "排風機"
+    assert row["機械図 記載名"] == "排風機"
     assert row["電気図 記載名"] == "送風機,予備"
     assert "名称差異" not in row
-    assert float(row["機器図 台数"]) == 2.0
+    assert float(row["機械図 台数"]) == 2.0
     assert row["電気図 台数"] == "3"
     assert float(row["台数差"]) == 1.0
     assert row["台数判定"] == "✗"
-    assert float(row["機器図 消費電力(kW)"]) == 1.5
+    assert float(row["機械図 消費電力(kW)"]) == 1.5
     assert row["電気図 容量(kW)"] == "1.5,2"
     assert (
         row["電気図 記載トレース"]
@@ -860,19 +860,19 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     )
     assert row["容量差(kW)"] == ""
     assert row["容量判定"] == "要確認"
-    assert row["機器図 図面番号"] == ""
+    assert row["機械図 図面番号"] == ""
     assert row["電気図 図面番号"] == ""
 
     raster_only = rows[1]
     assert raster_only["機器ID"] == "R-9"
     assert raster_only["総合判定"] == "✗"
-    assert raster_only["判定理由"] == "機器図に記載なし"
-    assert raster_only["機器図 記載名"] == ""
+    assert raster_only["判定理由"] == "機械図に記載なし"
+    assert raster_only["機械図 記載名"] == ""
     assert raster_only["電気図 記載名"] == "還気ファン"
     assert "名称差異" not in raster_only
-    assert raster_only["機器図 台数"] == ""
+    assert raster_only["機械図 台数"] == ""
     assert raster_only["電気図 台数"] == "1"
-    assert raster_only["機器図 消費電力(kW)"] == ""
+    assert raster_only["機械図 消費電力(kW)"] == ""
     assert float(raster_only["電気図 容量(kW)"]) == 0.75
     assert raster_only["台数判定"] == "✗"
     assert raster_only["容量判定"] == "✗"
@@ -880,7 +880,7 @@ def test_unified_merge_and_download(tmp_path, monkeypatch):
     assert raster_only["機器ID照合"] == "✗"
     assert raster_only["電気図 記載トレース"] == ""
     assert raster_only["容量差(kW)"] == ""
-    assert raster_only["機器図 図面番号"] == ""
+    assert raster_only["機械図 図面番号"] == ""
     assert raster_only["電気図 図面番号"] == ""
 
     m = re.search(r"/jobs/([0-9a-f\-]+)/unified\.csv", path)
