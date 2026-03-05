@@ -386,27 +386,29 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
     assert f'/jobs/{unified_job_id}/unified.csv' in resp.text
     assert 'data-action="expand-customer-table"' in resp.text
 
-    assert "総合判定" in resp.text
-    assert "判定理由" in resp.text
-    assert "名称判定" in resp.text
-    assert "機器ID照合" in resp.text
     assert "機器ID" in resp.text
-    assert "機器表 記載名" in resp.text
-    assert "盤表 記載名" in resp.text
-    assert "名称差異" not in resp.text
-    assert "機器表 台数" in resp.text
-    assert "盤表 台数" in resp.text
-    assert "台数差" in resp.text
-    assert "台数判定" in resp.text
-    assert "機器表 消費電力(kW)" in resp.text
-    assert "盤表 容量(kW)" in resp.text
-    assert "盤表 記載トレース" in resp.text
-    assert "容量差(kW)" in resp.text
-    assert "容量判定" in resp.text
-    assert "機器表 図面番号" in resp.text
-    assert "盤表 図面番号" in resp.text
+    assert "ID照合" in resp.text
+    assert "図面番号" in resp.text
+    assert "容量（KW）" in resp.text
+    assert "台数" in resp.text
+    assert "総合判定" not in resp.text
+    assert "判定理由" not in resp.text
+    assert "名称判定" not in resp.text
+    assert "機器ID照合" not in resp.text
+    assert "機器表 記載名" not in resp.text
+    assert "盤表 記載名" not in resp.text
+    assert "機器表 消費電力(kW)" not in resp.text
+    assert "盤表 記載トレース" not in resp.text
+    assert "容量判定" not in resp.text
+    assert "機器表 図面番号" not in resp.text
+    assert "盤表 図面番号" not in resp.text
+    assert resp.text.count('rowspan="2"') == 2
+    assert 'colspan="2">図面番号</th>' in resp.text
+    assert resp.text.count('colspan="3">') == 2
+    assert len(re.findall(r"<th[^>]*>電気図</th>", resp.text)) == 3
+    assert len(re.findall(r"<th[^>]*>機械図</th>", resp.text)) == 3
+    assert len(re.findall(r"<th[^>]*>差分</th>", resp.text)) == 2
     assert "M-001" in resp.text
-    assert "送風機" in resp.text
     assert "E-024" in resp.text
     assert "raster_機器名称" not in resp.text
     assert "vector_容量(kW)_calc" not in resp.text
@@ -474,16 +476,16 @@ def test_customer_run_summary_uses_vector_raster_row_counts(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize(
-    ("judgment_header", "raw_mark", "expected_mark"),
+    ("judgment_header", "raw_mark", "summary_label"),
     [
-        ("照合結果", "一致", "◯"),
-        ("総合判定", "○", "◯"),
-        ("総合判定(◯/✗)", "✗", "✗"),
-        ("総合判定(○/×)", "×", "✗"),
+        ("照合結果", "一致", "完全一致"),
+        ("総合判定", "○", "完全一致"),
+        ("総合判定(◯/✗)", "✗", "不一致"),
+        ("総合判定(○/×)", "×", "不一致"),
     ],
 )
 def test_customer_run_handles_judgment_header_variants(
-    tmp_path, monkeypatch, judgment_header, raw_mark, expected_mark
+    tmp_path, monkeypatch, judgment_header, raw_mark, summary_label
 ):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
     monkeypatch.setattr(app_main, "vision_service_account_json", "{\"type\":\"service_account\"}")
@@ -534,8 +536,15 @@ def test_customer_run_handles_judgment_header_variants(
     assert resp.status_code == 200
     assert 'data-status="success"' in resp.text
 
-    mark_cell = re.search(rf"<td[^>]*>\s*{re.escape(expected_mark)}\s*</td>", resp.text)
-    assert mark_cell
+    assert "機器表記載：1件" in resp.text
+    assert "盤表記載：1件" in resp.text
+    if summary_label == "完全一致":
+        assert "完全一致：1件" in resp.text
+        assert "不一致：0件" in resp.text
+    else:
+        assert "完全一致：0件" in resp.text
+        assert "不一致：1件" in resp.text
+    assert "要確認：0件" in resp.text
 
 
 def test_customer_run_returns_stage_for_panel_to_raster_error(tmp_path, monkeypatch):
