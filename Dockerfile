@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# Python 3.14 + OpenSSL (Debian base)
+FROM python:3.14-slim
 
 WORKDIR /app
 
@@ -6,9 +7,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements and install (incl. dev: pytest, ruff, black for make test/lint/format)
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 
 # Copy application code
 COPY . .
