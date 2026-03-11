@@ -1,9 +1,12 @@
 import os
 import asyncio
+import atexit
 import csv
 import io
 import json
+import re
 import html
+import tempfile
 import logging
 import unicodedata
 from datetime import datetime
@@ -51,13 +54,39 @@ _gcp_service_account_json = (
 vertex_service_account_json = _gcp_service_account_json
 vision_service_account_json = _gcp_service_account_json
 
-# Handle Credentials for Hugging Face Spaces / Vertex AI
+# Handle Credentials for Hugging Face Spaces / Vertex AI (secure temp file, 0o600, cleanup on exit)
+_cred_temp_paths = []
+
+
+def _cleanup_cred_temp_files():
+    for p in _cred_temp_paths:
+        try:
+            if os.path.exists(p):
+                os.unlink(p)
+        except OSError:
+            pass
+    _cred_temp_paths.clear()
+
+
 if vertex_service_account_json:
-    cred_file_path = "gcp_credentials.json"
-    with open(cred_file_path, "w") as f:
-        f.write(vertex_service_account_json)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
-    print(f"Credentials saved to {cred_file_path}")
+    fd, cred_file_path = tempfile.mkstemp(suffix=".json", prefix="gcp_credentials_")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(vertex_service_account_json)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
+        _cred_temp_paths.append(cred_file_path)
+        atexit.register(_cleanup_cred_temp_files)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(cred_file_path)
+        except OSError:
+            pass
+        raise
 
 try:
     if project_id:
@@ -244,8 +273,9 @@ def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=
     if len(raw_snippet) > 5000:
         raw_snippet = raw_snippet[:5000] + "\n... (truncated)"
 
-    # Escape for JavaScript string (handle quotes, newlines, backslashes)
+    # Escape for JavaScript string (prevent XSS: </script>, backslashes, backticks, ${)
     def js_escape(s):
+        s = re.sub(r"(?i)</script>", r"<\\/script>", s)
         return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
     text_escaped = js_escape(text_snippet)
