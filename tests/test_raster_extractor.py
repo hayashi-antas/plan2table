@@ -3,11 +3,11 @@ from pathlib import Path
 
 from PIL import Image
 
+from conftest import _wb
 from extractors.raster_extractor import (
     ColumnBounds,
     RowsFromWordsResult,
     TableCandidate,
-    WordBox,
     detect_table_candidates_from_page_words,
     extract_raster_pdf,
     extract_drawing_number_from_word_boxes,
@@ -19,17 +19,6 @@ from extractors.raster_extractor import (
     resolve_target_pages,
     resolve_drawing_number,
 )
-
-
-def _wb(text: str, cx: float, cy: float, w: float = 16.0, h: float = 8.0) -> WordBox:
-    half_w = w / 2.0
-    half_h = h / 2.0
-    return WordBox(
-        text=text,
-        cx=cx,
-        cy=cy,
-        bbox=(cx - half_w, cy - half_h, cx + half_w, cy + half_h),
-    )
 
 
 def test_extract_drawing_number_from_label_and_direct_below():

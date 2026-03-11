@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import main as app_main
 from extractors import job_store
+from renderers import build_e142_rows_html
 
 client = TestClient(app_main.app)
 
@@ -289,7 +290,7 @@ def test_build_e142_rows_html_preserves_csv_quoting(tmp_path):
         writer = csv.writer(fp)
         writer.writerow(["電源アダプター", "DC24V,出力電流"])
 
-    html_text = app_main._build_e142_rows_html(e142_csv)
+    html_text = build_e142_rows_html(e142_csv)
     assert "電源アダプター,&quot;DC24V,出力電流&quot;" in html_text
 
 
