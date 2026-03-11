@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
+import bleach
 import markdown
 from prompts import load_prompt
 from extractors.text_extractor import extract_text_from_pdf
@@ -275,7 +276,7 @@ def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=
 
     # Escape for JavaScript string (prevent XSS: </script>, backslashes, backticks, ${)
     def js_escape(s):
-        s = re.sub(r"(?i)</script>", r"<\\/script>", s)
+        s = re.sub(r"(?i)</script>", "<\\/script>", s)
         return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
     text_escaped = js_escape(text_snippet)
@@ -1452,7 +1453,7 @@ async def handle_area_upload(file: UploadFile = File(...)):
             data = _extract_json(raw_text)
             return response, tool_calls_log, raw_text, data
 
-        response, tool_calls_log, raw_text, data = _run_generation()
+        _response, tool_calls_log, raw_text, data = _run_generation()
         if not isinstance(data, dict):
             return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
 
@@ -1484,7 +1485,7 @@ async def handle_area_upload(file: UploadFile = File(...)):
                     "推測や一般値は禁止。寸法(mm)を明示してください。\n"
                     "「-」や空欄にせず、必ず数値で埋めてください。"
                 )
-                response, tool_calls_log, raw_text, data = _run_generation(
+                _response, tool_calls_log, raw_text, data = _run_generation(
                     extra_instruction
                 )
                 if not isinstance(data, dict):
@@ -1505,8 +1506,15 @@ async def handle_area_upload(file: UploadFile = File(...)):
                 raw_text, "レポート内容（report_markdown）が空です。"
             )
 
-        # Convert Markdown to HTML
+        # Convert Markdown to HTML and sanitize (markdown does not strip raw HTML)
         report_html = markdown.markdown(report_md, extensions=["tables", "fenced_code"])
+        report_html = bleach.clean(
+            report_html,
+            tags={"p", "ul", "ol", "li", "strong", "em", "code", "pre", "table", "thead", "tbody", "tr", "th", "td", "h1", "h2", "h3", "h4", "h5", "h6", "a"},
+            attributes={"a": ["href"]},
+            protocols={"http", "https", "mailto"},
+            strip=True,
+        )
 
         # Build debug info (outputs to browser console)
         debug_script = _build_debug_script(

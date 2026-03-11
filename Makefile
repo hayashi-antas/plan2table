@@ -9,14 +9,19 @@ GCP_SERVICE_ACCOUNT_REF := op://antas/me check service account json key file/me-
 VERTEX_LOCATION ?= global
 VERTEX_MODEL_NAME ?= gemini-3.1-pro-preview
 
-# test/lint/format は Docker 内で実行（ビルド済みイメージを使用）
-DOCKER_RUN := docker run --rm -v "$$(pwd):/app" -w /app $(IMAGE)
+# test/lint/format は Docker 内で実行（ビルド済みイメージを使用）。--user でホストの UID/GID にしマウント先のファイルが root 所有にならないようにする
+DOCKER_RUN := docker run --rm -v "$$(pwd):/app" -w /app --user "$$(id -u):$$(id -g)" $(IMAGE)
 
 .PHONY: build check run lint format format-check check-all test install-hooks
 
-# Install git pre-push hook that runs make check-all (optional, for local dev)
+# Install git pre-push hook that runs make check-all (optional, for local dev).
+# Do not overwrite an existing pre-push hook.
 install-hooks:
 	@mkdir -p .git/hooks
+	@if [ -f .git/hooks/pre-push ]; then \
+		echo "Error: .git/hooks/pre-push already exists. Remove or rename it first."; \
+		exit 1; \
+	fi
 	@cp scripts/pre-push .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-push
 	@echo "✔ Installed pre-push hook (runs make check-all before push)"
@@ -31,9 +36,14 @@ check:
 
 run: build
 	@echo "▶ Loading GCP settings from 1Password (Vertex AI + Vision API)"
+	@set -e; \
+	PROJECT_ID=$$(op read '$(PROJECT_ID_REF)'); \
+	test -n "$$PROJECT_ID" || { echo "Error: GOOGLE_CLOUD_PROJECT is empty or op read failed"; exit 1; }; \
+	GCP_KEY=$$(op read '$(GCP_SERVICE_ACCOUNT_REF)'); \
+	test -n "$$GCP_KEY" || { echo "Error: GCP_SERVICE_ACCOUNT_KEY is empty or op read failed"; exit 1; }; \
 	docker run --rm -p $(PORT):7860 \
-	  -e GOOGLE_CLOUD_PROJECT="$$(op read '$(PROJECT_ID_REF)')" \
-	  -e GCP_SERVICE_ACCOUNT_KEY="$$(op read '$(GCP_SERVICE_ACCOUNT_REF)')" \
+	  -e GOOGLE_CLOUD_PROJECT="$$PROJECT_ID" \
+	  -e GCP_SERVICE_ACCOUNT_KEY="$$GCP_KEY" \
 	  -e VERTEX_LOCATION="$(VERTEX_LOCATION)" \
 	  -e VERTEX_MODEL_NAME="$(VERTEX_MODEL_NAME)" \
 	  $(IMAGE)
