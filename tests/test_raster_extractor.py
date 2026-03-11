@@ -266,7 +266,9 @@ def test_rows_from_words_stops_after_two_non_data_clusters():
         _wb("200", 250, 126, w=24),
         _wb("0.55", 330, 126, w=28),
     ]
-    bounds = ColumnBounds(x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0)
+    bounds = ColumnBounds(
+        x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+    )
     rows = rows_from_words(words, bounds, y_cluster=8.0, start_y=40.0)
     assert len(rows) == 1
     assert rows[0]["機器番号"] == "F-EV-1"
@@ -285,8 +287,12 @@ def test_rows_from_words_allows_larger_trailing_gap_when_configured():
         _wb("200", 250, 126, w=24),
         _wb("0.55", 330, 126, w=28),
     ]
-    bounds = ColumnBounds(x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0)
-    rows = rows_from_words(words, bounds, y_cluster=8.0, start_y=40.0, trailing_non_data_gap=2)
+    bounds = ColumnBounds(
+        x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+    )
+    rows = rows_from_words(
+        words, bounds, y_cluster=8.0, start_y=40.0, trailing_non_data_gap=2
+    )
     assert len(rows) == 2
     assert rows[0]["機器番号"] == "F-EV-1"
     assert rows[1]["機器番号"] == "F-EV-2"
@@ -302,14 +308,18 @@ def test_rows_from_words_rejects_location_labels_without_values():
         _wb("SL-6", 70, 104, w=34),
         _wb("L-H2", 70, 126, w=34),
     ]
-    bounds = ColumnBounds(x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0)
+    bounds = ColumnBounds(
+        x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
+    )
     rows = rows_from_words(words, bounds, y_cluster=8.0, start_y=40.0)
     assert len(rows) == 1
     assert rows[0]["機器番号"] == "PAC-15"
     assert rows[0]["機器名称"] == "空調室外機"
 
 
-def test_parse_table_candidate_expands_bottom_when_tail_near_edge(tmp_path, monkeypatch):
+def test_parse_table_candidate_expands_bottom_when_tail_near_edge(
+    tmp_path, monkeypatch
+):
     page_image = Image.new("RGB", (420, 300), color=(255, 255, 255))
     candidate = TableCandidate(
         bbox=(20.0, 20.0, 390.0, 100.0),
@@ -335,15 +345,22 @@ def test_parse_table_candidate_expands_bottom_when_tail_near_edge(tmp_path, monk
             return short_rows_words
         return expanded_rows_words
 
-    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop
+    )
     monkeypatch.setattr(
         "extractors.raster_extractor.infer_column_bounds",
         lambda words, side_width: ColumnBounds(
             x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
         ),
     )
-    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
-    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_dynamic_data_start_y",
+        lambda words, header_y: 20.0,
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None
+    )
 
     parsed = parse_table_candidate(
         client=object(),
@@ -359,7 +376,9 @@ def test_parse_table_candidate_expands_bottom_when_tail_near_edge(tmp_path, monk
     assert parsed.final_crop_bottom > 100.0
 
 
-def test_parse_table_candidate_keeps_expanding_when_near_edge_without_growth(tmp_path, monkeypatch):
+def test_parse_table_candidate_keeps_expanding_when_near_edge_without_growth(
+    tmp_path, monkeypatch
+):
     page_image = Image.new("RGB", (420, 500), color=(255, 255, 255))
     candidate = TableCandidate(
         bbox=(20.0, 20.0, 390.0, 280.0),
@@ -384,15 +403,22 @@ def test_parse_table_candidate_keeps_expanding_when_near_edge_without_growth(tmp
             words.extend(build_row_words("DP-14", "雑排水ポンプ", h - 52.0))
         return words
 
-    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop
+    )
     monkeypatch.setattr(
         "extractors.raster_extractor.infer_column_bounds",
         lambda words, side_width: ColumnBounds(
             x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
         ),
     )
-    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
-    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_dynamic_data_start_y",
+        lambda words, header_y: 20.0,
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None
+    )
 
     parsed = parse_table_candidate(
         client=object(),
@@ -407,7 +433,9 @@ def test_parse_table_candidate_keeps_expanding_when_near_edge_without_growth(tmp
     assert parsed.expand_attempts >= 3
 
 
-def test_parse_table_candidate_expands_with_y_cluster_scaled_edge_threshold(tmp_path, monkeypatch):
+def test_parse_table_candidate_expands_with_y_cluster_scaled_edge_threshold(
+    tmp_path, monkeypatch
+):
     page_image = Image.new("RGB", (420, 500), color=(255, 255, 255))
     candidate = TableCandidate(
         bbox=(20.0, 20.0, 390.0, 280.0),
@@ -433,15 +461,22 @@ def test_parse_table_candidate_expands_with_y_cluster_scaled_edge_threshold(tmp_
             words.extend(build_row_words("DP-14", "雑排水ポンプ", h - 88.0))
         return words
 
-    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop
+    )
     monkeypatch.setattr(
         "extractors.raster_extractor.infer_column_bounds",
         lambda words, side_width: ColumnBounds(
             x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
         ),
     )
-    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
-    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_dynamic_data_start_y",
+        lambda words, header_y: 20.0,
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None
+    )
 
     parsed = parse_table_candidate(
         client=object(),
@@ -477,15 +512,22 @@ def test_parse_table_candidate_does_not_expand_after_footer_stop(tmp_path, monke
         ocr_calls["count"] += 1
         return words_with_footer
 
-    monkeypatch.setattr("extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.ocr_table_crop", fake_ocr_table_crop
+    )
     monkeypatch.setattr(
         "extractors.raster_extractor.infer_column_bounds",
         lambda words, side_width: ColumnBounds(
             x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
         ),
     )
-    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
-    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_dynamic_data_start_y",
+        lambda words, header_y: 20.0,
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None
+    )
 
     parsed = parse_table_candidate(
         client=object(),
@@ -501,7 +543,9 @@ def test_parse_table_candidate_does_not_expand_after_footer_stop(tmp_path, monke
     assert ocr_calls["count"] == 1
 
 
-def test_parse_table_candidate_expands_when_trailing_non_data_exceeds_gap(tmp_path, monkeypatch):
+def test_parse_table_candidate_expands_when_trailing_non_data_exceeds_gap(
+    tmp_path, monkeypatch
+):
     page_image = Image.new("RGB", (420, 320), color=(255, 255, 255))
     candidate = TableCandidate(
         bbox=(20.0, 20.0, 390.0, 120.0),
@@ -520,12 +564,19 @@ def test_parse_table_candidate_expands_when_trailing_non_data_exceeds_gap(tmp_pa
             x_min=0.0, b12=120.0, b23=220.0, b34=280.0, x_max=380.0, header_y=20.0
         ),
     )
-    monkeypatch.setattr("extractors.raster_extractor.infer_dynamic_data_start_y", lambda words, header_y: 20.0)
-    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.infer_dynamic_data_start_y",
+        lambda words, header_y: 20.0,
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None
+    )
 
     call_index = {"n": 0}
 
-    def fake_rows_with_meta(words, bounds, y_cluster, start_y=None, trailing_non_data_gap=1):
+    def fake_rows_with_meta(
+        words, bounds, y_cluster, start_y=None, trailing_non_data_gap=1
+    ):
         call_index["n"] += 1
         if call_index["n"] == 1:
             return RowsFromWordsResult(
@@ -569,7 +620,9 @@ def test_parse_table_candidate_expands_when_trailing_non_data_exceeds_gap(tmp_pa
             stopped_by_footer=False,
         )
 
-    monkeypatch.setattr("extractors.raster_extractor._rows_from_words_with_meta", fake_rows_with_meta)
+    monkeypatch.setattr(
+        "extractors.raster_extractor._rows_from_words_with_meta", fake_rows_with_meta
+    )
 
     parsed = parse_table_candidate(
         client=object(),
@@ -592,10 +645,16 @@ def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
     png_path = tmp_path / "dummy.png"
     Image.new("RGB", (20, 20), color=(255, 255, 255)).save(png_path)
 
-    monkeypatch.setattr("extractors.raster_extractor.build_vision_client", lambda _: object())
+    monkeypatch.setattr(
+        "extractors.raster_extractor.build_vision_client", lambda _: object()
+    )
     monkeypatch.setattr("extractors.raster_extractor.count_pdf_pages", lambda _: 2)
-    monkeypatch.setattr("extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path)
-    monkeypatch.setattr("extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path
+    )
+    monkeypatch.setattr(
+        "extractors.raster_extractor.save_debug_image", lambda *args, **kwargs: None
+    )
 
     def fake_extract_words(client, side_image):
         return [_wb("dummy", 10, 10, w=8, h=8)]
@@ -624,13 +683,18 @@ def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
             }
         ]
 
-    monkeypatch.setattr("extractors.raster_extractor.rows_from_words", fake_rows_from_words)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.rows_from_words", fake_rows_from_words
+    )
 
     def fake_resolve_drawing_number(**kwargs):
         page = kwargs["page"]
         return (f"E-02{page}", "vision")
 
-    monkeypatch.setattr("extractors.raster_extractor.resolve_drawing_number", fake_resolve_drawing_number)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.resolve_drawing_number",
+        fake_resolve_drawing_number,
+    )
 
     result = extract_raster_pdf(
         pdf_path=input_pdf,
@@ -654,7 +718,9 @@ def test_extract_raster_pdf_page_zero_merges_all_pages(tmp_path, monkeypatch):
     assert rows[3]["図面番号"] == "E-022"
 
 
-def test_extract_raster_pdf_falls_back_to_legacy_when_v3_returns_no_rows(tmp_path, monkeypatch):
+def test_extract_raster_pdf_falls_back_to_legacy_when_v3_returns_no_rows(
+    tmp_path, monkeypatch
+):
     input_pdf = tmp_path / "input.pdf"
     input_pdf.write_bytes(b"%PDF-1.4\n")
     out_csv = tmp_path / "raster.csv"
@@ -662,12 +728,22 @@ def test_extract_raster_pdf_falls_back_to_legacy_when_v3_returns_no_rows(tmp_pat
     png_path = tmp_path / "dummy.png"
     Image.new("RGB", (32, 32), color=(255, 255, 255)).save(png_path)
 
-    monkeypatch.setattr("extractors.raster_extractor.build_vision_client", lambda _: object())
+    monkeypatch.setattr(
+        "extractors.raster_extractor.build_vision_client", lambda _: object()
+    )
     monkeypatch.setattr("extractors.raster_extractor.count_pdf_pages", lambda _: 1)
-    monkeypatch.setattr("extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path
+    )
     monkeypatch.setattr(
         "extractors.raster_extractor.extract_page_rows_v3",
-        lambda **kwargs: {"rows": [], "page_words": [], "headers": [], "candidates": [], "tables": []},
+        lambda **kwargs: {
+            "rows": [],
+            "page_words": [],
+            "headers": [],
+            "candidates": [],
+            "tables": [],
+        },
     )
     monkeypatch.setattr(
         "extractors.raster_extractor.legacy_side_split_extract_page",
@@ -713,10 +789,20 @@ def test_extract_raster_pdf_falls_back_to_legacy_when_v3_returns_no_rows(tmp_pat
 
 def test_normalize_row_cells_keeps_point_zero_and_fixes_over_precision_power():
     pac_row = normalize_row_cells(
-        {"機器番号": "PAC-15", "機器名称": "空調室外機", "電圧(V)": "200", "容量(kW)": "9.0"}
+        {
+            "機器番号": "PAC-15",
+            "機器名称": "空調室外機",
+            "電圧(V)": "200",
+            "容量(kW)": "9.0",
+        }
     )
     ef_row = normalize_row_cells(
-        {"機器番号": "EF-R-2", "機器名称": "排風機", "電圧(V)": "200", "容量(kW)": "0.75255"}
+        {
+            "機器番号": "EF-R-2",
+            "機器名称": "排風機",
+            "電圧(V)": "200",
+            "容量(kW)": "0.75255",
+        }
     )
 
     assert pac_row["容量(kW)"] == "9.0"
@@ -725,7 +811,12 @@ def test_normalize_row_cells_keeps_point_zero_and_fixes_over_precision_power():
 
 def test_normalize_row_cells_strips_three_phase_voltage_and_capacity_tail():
     row = normalize_row_cells(
-        {"機器番号": "PAC-15", "機器名称": "空調室外機", "電圧(V)": "3Φ200V", "容量(kW)": "9.0CVT22E8"}
+        {
+            "機器番号": "PAC-15",
+            "機器名称": "空調室外機",
+            "電圧(V)": "3Φ200V",
+            "容量(kW)": "9.0CVT22E8",
+        }
     )
     assert row["電圧(V)"] == "200"
     assert row["容量(kW)"] == "9.0"
@@ -733,14 +824,24 @@ def test_normalize_row_cells_strips_three_phase_voltage_and_capacity_tail():
 
 def test_normalize_row_cells_normalizes_pump_name_with_trailing_noise():
     row = normalize_row_cells(
-        {"機器番号": "DP-4", "機器名称": "湧水ポンプ(笑", "電圧(V)": "3φ200V", "容量(kW)": "2.2"}
+        {
+            "機器番号": "DP-4",
+            "機器名称": "湧水ポンプ(笑",
+            "電圧(V)": "3φ200V",
+            "容量(kW)": "2.2",
+        }
     )
     assert row["機器名称"] == "清水ポンプ"
 
 
 def test_normalize_row_cells_strips_leading_symbol_from_name():
     row = normalize_row_cells(
-        {"機器番号": "DP-12", "機器名称": ".汚泥引抜ポンプ", "電圧(V)": "3φ200V", "容量(kW)": "5.5"}
+        {
+            "機器番号": "DP-12",
+            "機器名称": ".汚泥引抜ポンプ",
+            "電圧(V)": "3φ200V",
+            "容量(kW)": "5.5",
+        }
     )
     assert row["機器名称"] == "汚泥引抜ポンプ"
 
@@ -753,12 +854,18 @@ def test_extract_raster_pdf_uses_legacy_first_for_page_one(tmp_path, monkeypatch
     png_path = tmp_path / "dummy.png"
     Image.new("RGB", (40, 40), color=(255, 255, 255)).save(png_path)
 
-    monkeypatch.setattr("extractors.raster_extractor.build_vision_client", lambda _: object())
+    monkeypatch.setattr(
+        "extractors.raster_extractor.build_vision_client", lambda _: object()
+    )
     monkeypatch.setattr("extractors.raster_extractor.count_pdf_pages", lambda _: 1)
-    monkeypatch.setattr("extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path)
+    monkeypatch.setattr(
+        "extractors.raster_extractor.run_pdftoppm", lambda *args, **kwargs: png_path
+    )
     monkeypatch.setattr(
         "extractors.raster_extractor.extract_page_rows_v3",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("v3 should not be called for page 1")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("v3 should not be called for page 1")
+        ),
     )
     monkeypatch.setattr(
         "extractors.raster_extractor.legacy_side_split_extract_page",

@@ -214,7 +214,10 @@ def test_extract_records_summary_continuation_keeps_single_count_and_joins_name_
 
 
 def test_normalize_summary_name_fixes_known_room_aircon_artifact():
-    assert ve._normalize_summary_name("ルームエアコ マルチタイプン") == "ルームエアコン マルチタイプ"
+    assert (
+        ve._normalize_summary_name("ルームエアコ マルチタイプン")
+        == "ルームエアコン マルチタイプ"
+    )
 
 
 def test_extract_rows_via_table_cells_supports_kigou_and_quantity_headers():
@@ -239,8 +242,44 @@ def test_extract_rows_via_table_cells_supports_kigou_and_quantity_headers():
             "備考",
             "",
         ],
-        ["", "", "", "", "", "", "相 P-V", "消費電力 (KW)", "始動", "操作", "監視", "種別", "", "階", "室名", "", ""],
-        ["PAC-1", "空 調 機", "B2F", "室内機", "", "(FAN)0.16", "1-200", "0.19", "", "", "", "", "1", "2F", "機械室", "型番", ""],
+        [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "相 P-V",
+            "消費電力 (KW)",
+            "始動",
+            "操作",
+            "監視",
+            "種別",
+            "",
+            "階",
+            "室名",
+            "",
+            "",
+        ],
+        [
+            "PAC-1",
+            "空 調 機",
+            "B2F",
+            "室内機",
+            "",
+            "(FAN)0.16",
+            "1-200",
+            "0.19",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "2F",
+            "機械室",
+            "型番",
+            "",
+        ],
     ]
     table = _FakeCellTable((0, 0, 10, 10), rows)
     page = _FakePage("fallback-page")
@@ -324,15 +363,71 @@ def test_select_power_value_candidate_prefers_precise_value_from_candidates():
     assert ve._select_power_value_candidate(current, candidates) == "(低温)9.43"
 
 
-def test_extract_pdf_to_rows_uses_cell_fallback_when_grid_detection_fails(tmp_path, monkeypatch):
+def test_extract_pdf_to_rows_uses_cell_fallback_when_grid_detection_fails(
+    tmp_path, monkeypatch
+):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
     fallback_rows = [
         ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
-        ["記 号", "名 称", "系 統", "仕 様", "", "動 力", "", "", "", "", "", "", "数量", "設置場所", "", "備考", ""],
-        ["", "", "", "", "", "", "相", "消費電力 (KW)", "", "", "", "", "", "階", "室名", "", ""],
-        ["PAC-1", "空 調 機", "B2F", "室外機", "", "", "3-200", "0.575", "", "", "", "", "1", "2F", "バルコニー", "型番", ""],
+        [
+            "記 号",
+            "名 称",
+            "系 統",
+            "仕 様",
+            "",
+            "動 力",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "数量",
+            "設置場所",
+            "",
+            "備考",
+            "",
+        ],
+        [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "相",
+            "消費電力 (KW)",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "階",
+            "室名",
+            "",
+            "",
+        ],
+        [
+            "PAC-1",
+            "空 調 機",
+            "B2F",
+            "室外機",
+            "",
+            "",
+            "3-200",
+            "0.575",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "2F",
+            "バルコニー",
+            "型番",
+            "",
+        ],
     ]
 
     page = _FakePage("page-1")
@@ -356,16 +451,90 @@ def test_extract_pdf_to_rows_uses_cell_fallback_when_grid_detection_fails(tmp_pa
     assert all(r[15] == "1" for r in rows[2:])
 
 
-def test_extract_pdf_to_rows_fallback_stops_on_black_square_note_marker(tmp_path, monkeypatch):
+def test_extract_pdf_to_rows_fallback_stops_on_black_square_note_marker(
+    tmp_path, monkeypatch
+):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
     fallback_rows = [
         ["空調機器表", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
-        ["記 号", "名 称", "系 統", "仕 様", "", "動 力", "", "", "", "", "", "", "数量", "設置場所", "", "備考", ""],
-        ["", "", "", "", "", "", "相", "消費電力 (KW)", "", "", "", "", "", "階", "室名", "", ""],
-        ["PAC-15-1", "空 調 機", "11F", "室内機", "", "", "1-200", "", "", "", "", "", "", "11F", "パーティールーム", "", ""],
-        ["", "", "", "■集中リモコン", "", "", "", "", "", "", "", "", "1組", "1F", "中央管理室", "", ""],
+        [
+            "記 号",
+            "名 称",
+            "系 統",
+            "仕 様",
+            "",
+            "動 力",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "数量",
+            "設置場所",
+            "",
+            "備考",
+            "",
+        ],
+        [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "相",
+            "消費電力 (KW)",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "階",
+            "室名",
+            "",
+            "",
+        ],
+        [
+            "PAC-15-1",
+            "空 調 機",
+            "11F",
+            "室内機",
+            "",
+            "",
+            "1-200",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "11F",
+            "パーティールーム",
+            "",
+            "",
+        ],
+        [
+            "",
+            "",
+            "",
+            "■集中リモコン",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "1組",
+            "1F",
+            "中央管理室",
+            "",
+            "",
+        ],
     ]
 
     page = _FakePage("page-1")
@@ -387,7 +556,9 @@ def test_extract_pdf_to_rows_fallback_stops_on_black_square_note_marker(tmp_path
     assert rows[2][15] == ""
 
 
-def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(tmp_path, monkeypatch):
+def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(
+    tmp_path, monkeypatch
+):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
@@ -401,7 +572,9 @@ def test_extract_pdf_to_rows_aggregates_target_tables_from_all_pages(tmp_path, m
     }
     monkeypatch.setattr(ve, "pick_target_tables", lambda page: table_map[page.name])
     monkeypatch.setattr(ve, "collect_grid_lines", lambda page, bbox: ([0.0], [0.0]))
-    monkeypatch.setattr(ve, "extract_grid_rows", lambda page, vertical, horizontal: [["raw"]])
+    monkeypatch.setattr(
+        ve, "extract_grid_rows", lambda page, vertical, horizontal: [["raw"]]
+    )
 
     header_call_count = {"count": 0}
 
@@ -461,7 +634,9 @@ def test_extract_pdf_to_rows_uses_summary_left_route_when_target_tables_are_miss
     assert rows[2][15] == "12"
 
 
-def test_extract_pdf_to_rows_raises_when_no_target_tables_in_any_page(tmp_path, monkeypatch):
+def test_extract_pdf_to_rows_raises_when_no_target_tables_in_any_page(
+    tmp_path, monkeypatch
+):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
@@ -494,16 +669,28 @@ def test_extract_drawing_number_from_page_bottom_right_word_with_punctuation():
     assert ve.extract_drawing_number_from_page(page) == "E-024"
 
 
-def test_extract_pdf_to_rows_returns_drawing_cache_without_reopening_pdf(tmp_path, monkeypatch):
+def test_extract_pdf_to_rows_returns_drawing_cache_without_reopening_pdf(
+    tmp_path, monkeypatch
+):
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
     page = _FakePage("page-1")
     monkeypatch.setattr(ve.pdfplumber, "open", lambda _: _FakePDF([page]))
-    monkeypatch.setattr(ve, "pick_target_tables", lambda _: [_FakeTable((0, 0, 1, 1)), _FakeTable((1, 0, 2, 1))])
+    monkeypatch.setattr(
+        ve,
+        "pick_target_tables",
+        lambda _: [_FakeTable((0, 0, 1, 1)), _FakeTable((1, 0, 2, 1))],
+    )
     monkeypatch.setattr(ve, "collect_grid_lines", lambda page, bbox: ([0.0], [0.0]))
-    monkeypatch.setattr(ve, "extract_grid_rows", lambda page, vertical, horizontal: [["raw"]])
-    monkeypatch.setattr(ve, "reconstruct_headers_from_pdf", lambda page, bbox, vertical: (["H1"], ["H2"]))
+    monkeypatch.setattr(
+        ve, "extract_grid_rows", lambda page, vertical, horizontal: [["raw"]]
+    )
+    monkeypatch.setattr(
+        ve,
+        "reconstruct_headers_from_pdf",
+        lambda page, bbox, vertical: (["H1"], ["H2"]),
+    )
 
     records_queue = iter(
         [
@@ -519,7 +706,9 @@ def test_extract_pdf_to_rows_returns_drawing_cache_without_reopening_pdf(tmp_pat
         draw_calls["count"] += 1
         return "M-001"
 
-    monkeypatch.setattr(ve, "extract_drawing_number_from_page", fake_extract_drawing_number_from_page)
+    monkeypatch.setattr(
+        ve, "extract_drawing_number_from_page", fake_extract_drawing_number_from_page
+    )
 
     rows, note_rows, headers, page_indexes, drawing_by_page = ve.extract_pdf_to_rows(
         pdf_path,
@@ -539,7 +728,10 @@ def test_extract_pdf_to_rows_rejects_drawing_cache_without_page_indexes(tmp_path
     pdf_path = tmp_path / "equipment.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
-    with pytest.raises(ValueError, match="include_page_drawing_numbers requires include_record_page_indexes=True"):
+    with pytest.raises(
+        ValueError,
+        match="include_page_drawing_numbers requires include_record_page_indexes=True",
+    ):
         ve.extract_pdf_to_rows(pdf_path, include_page_drawing_numbers=True)
 
 
@@ -550,5 +742,11 @@ def test_build_four_column_rows_includes_drawing_number_when_provided():
         _row("A-1", "排風機", "1.5", "1"),
     ]
     four_rows = ve.build_four_column_rows(rows, drawing_numbers=["M-001"])
-    assert four_rows[0] == ["機器番号", "名称", "動力 (50Hz)_消費電力 (KW)", "台数", "図面番号"]
+    assert four_rows[0] == [
+        "機器番号",
+        "名称",
+        "動力 (50Hz)_消費電力 (KW)",
+        "台数",
+        "図面番号",
+    ]
     assert four_rows[1] == ["A-1", "排風機", "1.5", "1", "M-001"]

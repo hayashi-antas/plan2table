@@ -12,7 +12,9 @@ from extractors.e251_extractor import (
 
 
 def _word(text: str, cx: float, cy: float = 100.0) -> WordBox:
-    return WordBox(text=text, cx=cx, cy=cy, bbox=(cx - 5.0, cy - 5.0, cx + 5.0, cy + 5.0))
+    return WordBox(
+        text=text, cx=cx, cy=cy, bbox=(cx - 5.0, cy - 5.0, cx + 5.0, cy + 5.0)
+    )
 
 
 def test_extract_candidates_from_cluster_maker_space_model():
@@ -101,8 +103,18 @@ def test_detect_anchors_keeps_d_and_l_codes_and_blanks_symbolic_markers():
 
 def test_assign_equipment_from_anchors_uses_nearest_anchor_and_blanks_symbol_rows():
     candidates = [
-        {"器具記号": "", "メーカー": "DAIKO", "相当型番": "LZD-93195XW", "row_x": 110.0},
-        {"器具記号": "", "メーカー": "Panasonic", "相当型番": "WTF4088CWK", "row_x": 720.0},
+        {
+            "器具記号": "",
+            "メーカー": "DAIKO",
+            "相当型番": "LZD-93195XW",
+            "row_x": 110.0,
+        },
+        {
+            "器具記号": "",
+            "メーカー": "Panasonic",
+            "相当型番": "WTF4088CWK",
+            "row_x": 720.0,
+        },
     ]
     anchors = [
         EquipmentAnchor(x=100.0, raw="D1", equipment="D1"),
@@ -118,9 +130,30 @@ def test_assign_equipment_from_anchors_uses_nearest_anchor_and_blanks_symbol_row
 def test_build_output_rows_keeps_d1_and_l1_and_skips_blank_rows():
     rows = build_output_rows(
         [
-            {"page": 1, "row_y": 300.0, "row_x": 120.0, "器具記号": "", "メーカー": "", "相当型番": ""},
-            {"page": 1, "row_y": 220.0, "row_x": 200.0, "器具記号": "L1(L1500)", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
-            {"page": 1, "row_y": 200.0, "row_x": 100.0, "器具記号": "D1", "メーカー": "DAIKO", "相当型番": "LZD-93195XW"},
+            {
+                "page": 1,
+                "row_y": 300.0,
+                "row_x": 120.0,
+                "器具記号": "",
+                "メーカー": "",
+                "相当型番": "",
+            },
+            {
+                "page": 1,
+                "row_y": 220.0,
+                "row_x": 200.0,
+                "器具記号": "L1(L1500)",
+                "メーカー": "DAIKO",
+                "相当型番": "DSY-4394YWG",
+            },
+            {
+                "page": 1,
+                "row_y": 200.0,
+                "row_x": 100.0,
+                "器具記号": "D1",
+                "メーカー": "DAIKO",
+                "相当型番": "LZD-93195XW",
+            },
         ]
     )
 
@@ -133,10 +166,42 @@ def test_build_output_rows_keeps_d1_and_l1_and_skips_blank_rows():
 def test_build_output_rows_prioritizes_left_to_right_blocks_before_top_to_bottom_rows():
     rows = build_output_rows(
         [
-            {"page": 1, "block_index": 1, "row_y": 100.0, "row_x": 400.0, "器具記号": "L1", "メーカー": "DAIKO", "相当型番": "DSY-4394YWG"},
-            {"page": 1, "block_index": 1, "row_y": 120.0, "row_x": 400.0, "器具記号": "L2", "メーカー": "DAIKO", "相当型番": "DSY-4393YWG"},
-            {"page": 1, "block_index": 0, "row_y": 200.0, "row_x": 100.0, "器具記号": "D1", "メーカー": "DAIKO", "相当型番": "LZD-93195XW"},
-            {"page": 1, "block_index": 2, "row_y": 90.0, "row_x": 700.0, "器具記号": "", "メーカー": "Panasonic", "相当型番": "WTF4088CWK"},
+            {
+                "page": 1,
+                "block_index": 1,
+                "row_y": 100.0,
+                "row_x": 400.0,
+                "器具記号": "L1",
+                "メーカー": "DAIKO",
+                "相当型番": "DSY-4394YWG",
+            },
+            {
+                "page": 1,
+                "block_index": 1,
+                "row_y": 120.0,
+                "row_x": 400.0,
+                "器具記号": "L2",
+                "メーカー": "DAIKO",
+                "相当型番": "DSY-4393YWG",
+            },
+            {
+                "page": 1,
+                "block_index": 0,
+                "row_y": 200.0,
+                "row_x": 100.0,
+                "器具記号": "D1",
+                "メーカー": "DAIKO",
+                "相当型番": "LZD-93195XW",
+            },
+            {
+                "page": 1,
+                "block_index": 2,
+                "row_y": 90.0,
+                "row_x": 700.0,
+                "器具記号": "",
+                "メーカー": "Panasonic",
+                "相当型番": "WTF4088CWK",
+            },
         ]
     )
     assert [row["器具記号"] for row in rows] == ["D1", "L1", "L2", ""]

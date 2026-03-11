@@ -51,7 +51,14 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert len(rows) == 2
 
     header = list(rows[0].keys())
-    assert header[:6] == ["総合判定", "台数判定", "容量判定", "名称判定", "機器ID照合", "判定理由"]
+    assert header[:6] == [
+        "総合判定",
+        "台数判定",
+        "容量判定",
+        "名称判定",
+        "機器ID照合",
+        "判定理由",
+    ]
     assert "照合結果" not in header
     assert "不一致内容" not in header
     assert "確認理由" not in header
@@ -79,8 +86,7 @@ def test_merge_outputs_fixed_judgment_columns_and_bom(tmp_path):
     assert a1["機械図 図面番号"] == "M-101"
     assert a1["電気図 図面番号"] == "E-024,E-031"
     assert (
-        a1["電気図 記載トレース"]
-        == "図面:E-024 名称:送風機 容量:1.5 || "
+        a1["電気図 記載トレース"] == "図面:E-024 名称:送風機 容量:1.5 || "
         "図面:E-031 名称:送風機 容量:2.0 || "
         "図面:E-024 名称:予備 容量:1.5"
     )
