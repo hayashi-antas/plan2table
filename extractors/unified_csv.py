@@ -55,7 +55,9 @@ OUTPUT_COLUMNS = [
 EPS_KW = 0.1
 BLANK_TOKENS = {"", "-", "－", "—"}
 THOUSANDS_PATTERN = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
-MODE_CAPACITY_PATTERN = re.compile(r"\((冷|暖|低温)\)\s*([+-]?\d+(?:,\d{3})*(?:\.\d+)?)")
+MODE_CAPACITY_PATTERN = re.compile(
+    r"\((冷|暖|低温)\)\s*([+-]?\d+(?:,\d{3})*(?:\.\d+)?)"
+)
 CAPACITY_MODE_HINTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("冷", ("冷房専用",)),
     ("暖", ("暖房専用",)),
@@ -150,7 +152,9 @@ def _collect_capacity_variants(values: Iterable[str]) -> List[CapacityVariant]:
     return variants
 
 
-def _pick_capacity_variant(variants: List[CapacityVariant], index: int) -> CapacityVariant:
+def _pick_capacity_variant(
+    variants: List[CapacityVariant], index: int
+) -> CapacityVariant:
     if not variants:
         return "", None, "blank"
     if len(variants) == 1:
@@ -212,17 +216,25 @@ def _infer_capacity_mode_from_name(name: str) -> Tuple[Optional[str], str, bool]
 
 
 def _capacity_fallback_mode() -> str:
-    mode = os.getenv("ME_CHECK_CAPACITY_FALLBACK", CAPACITY_FALLBACK_MAX).strip().lower()
+    mode = (
+        os.getenv("ME_CHECK_CAPACITY_FALLBACK", CAPACITY_FALLBACK_MAX).strip().lower()
+    )
     if mode == CAPACITY_FALLBACK_STRICT:
         return CAPACITY_FALLBACK_STRICT
     return CAPACITY_FALLBACK_MAX
 
 
-def _pick_unique_max_mode(mode_values: Dict[str, float]) -> Tuple[Optional[str], Optional[float], List[str]]:
+def _pick_unique_max_mode(
+    mode_values: Dict[str, float],
+) -> Tuple[Optional[str], Optional[float], List[str]]:
     if not mode_values:
         return None, None, []
     max_value = max(mode_values.values())
-    max_modes = [mode for mode, value in mode_values.items() if abs(value - max_value) <= MAX_MODE_TIE_EPS]
+    max_modes = [
+        mode
+        for mode, value in mode_values.items()
+        if abs(value - max_value) <= MAX_MODE_TIE_EPS
+    ]
     if len(max_modes) == 1:
         return max_modes[0], max_value, max_modes
     return None, max_value, max_modes
@@ -294,7 +306,9 @@ def _resolve_vector_capacity(raw: str, vector_name: str) -> VectorCapacityResolu
             reason_code="MODE_SINGLE_CANDIDATE",
         )
 
-    hinted_mode, hinted_keyword, hint_ambiguous = _infer_capacity_mode_from_name(vector_name)
+    hinted_mode, hinted_keyword, hint_ambiguous = _infer_capacity_mode_from_name(
+        vector_name
+    )
     if hinted_mode:
         hinted_value = mode_values.get(hinted_mode)
         if hinted_value is not None:
@@ -611,7 +625,9 @@ def merge_vector_raster_csv(
     vector_name_header = _resolve_header(vector_headers, "vector_name")
     vector_power_header = _resolve_header(vector_headers, "vector_power_per_unit_kw")
     vector_count_header = _resolve_header(vector_headers, "vector_count")
-    vector_drawing_number_header = _resolve_header(vector_headers, "vector_drawing_number")
+    vector_drawing_number_header = _resolve_header(
+        vector_headers, "vector_drawing_number"
+    )
     if not vector_id_header or not vector_power_header or not vector_count_header:
         raise ValueError("Vector CSV required headers are missing.")
 
@@ -621,13 +637,17 @@ def merge_vector_raster_csv(
             key = _normalize_key(row.get(vector_id_header, ""))
             if not key:
                 continue
-            vector_drawing_agg.setdefault(key, []).append(row.get(vector_drawing_number_header, ""))
+            vector_drawing_agg.setdefault(key, []).append(
+                row.get(vector_drawing_number_header, "")
+            )
 
     raster_id_header = _resolve_header(raster_headers, "equipment_id")
     raster_name_header = _resolve_header(raster_headers, "raster_name")
     raster_voltage_header = _resolve_header(raster_headers, "raster_voltage")
     raster_capacity_header = _resolve_header(raster_headers, "raster_capacity_kw")
-    raster_drawing_number_header = _resolve_header(raster_headers, "raster_drawing_number")
+    raster_drawing_number_header = _resolve_header(
+        raster_headers, "raster_drawing_number"
+    )
     if (
         not raster_id_header
         or not raster_name_header
@@ -645,10 +665,17 @@ def merge_vector_raster_csv(
             raster_voltage_raw = row.get(raster_voltage_header, "")
             raster_capacity_raw = row.get(raster_capacity_header, "")
             raster_drawing_raw = (
-                row.get(raster_drawing_number_header, "") if raster_drawing_number_header else ""
+                row.get(raster_drawing_number_header, "")
+                if raster_drawing_number_header
+                else ""
             )
             if not _pick_first_non_blank(
-                [raster_name_raw, raster_voltage_raw, raster_capacity_raw, raster_drawing_raw]
+                [
+                    raster_name_raw,
+                    raster_voltage_raw,
+                    raster_capacity_raw,
+                    raster_drawing_raw,
+                ]
             ):
                 continue
 
@@ -674,12 +701,19 @@ def merge_vector_raster_csv(
 
             missing_agg["count"] = int(missing_agg["count"]) + 1
             missing_agg["trace_rows"].append(  # type: ignore[index]
-                (raster_drawing_raw, raster_name_raw, raster_capacity_raw, raster_voltage_raw)
+                (
+                    raster_drawing_raw,
+                    raster_name_raw,
+                    raster_capacity_raw,
+                    raster_voltage_raw,
+                )
             )
             if not missing_agg["name"]:
                 missing_agg["name"] = _pick_first_non_blank([raster_name_raw])
             if not missing_agg["drawing_number"]:
-                missing_agg["drawing_number"] = _pick_first_non_blank([raster_drawing_raw])
+                missing_agg["drawing_number"] = _pick_first_non_blank(
+                    [raster_drawing_raw]
+                )
             continue
 
         agg = raster_agg.get(key)
@@ -696,7 +730,11 @@ def merge_vector_raster_csv(
             raster_agg[key] = agg
 
         agg["match_count"] = int(agg["match_count"]) + 1
-        raster_drawing_raw = row.get(raster_drawing_number_header, "") if raster_drawing_number_header else ""
+        raster_drawing_raw = (
+            row.get(raster_drawing_number_header, "")
+            if raster_drawing_number_header
+            else ""
+        )
         agg["equipment_ids"].append(row.get(raster_id_header, ""))  # type: ignore[index]
         agg["names"].append(row.get(raster_name_header, ""))  # type: ignore[index]
         agg["voltages"].append(row.get(raster_voltage_header, ""))  # type: ignore[index]
@@ -725,7 +763,9 @@ def merge_vector_raster_csv(
 
         power_per_unit_raw = vector_row.get(vector_power_header, "")
         vector_count = _parse_number(vector_row.get(vector_count_header, ""))
-        vector_name_raw = vector_row.get(vector_name_header, "") if vector_name_header else ""
+        vector_name_raw = (
+            vector_row.get(vector_name_header, "") if vector_name_header else ""
+        )
         vector_name = _normalize_name_for_output(vector_name_raw)
         vector_capacity = _resolve_vector_capacity(
             power_per_unit_raw,
@@ -773,7 +813,9 @@ def merge_vector_raster_csv(
             exists_code=exists_code,
         )
 
-        overall_code = _aggregate_judgments([exists_code, qty_code, capacity_code, name_code])
+        overall_code = _aggregate_judgments(
+            [exists_code, qty_code, capacity_code, name_code]
+        )
         legacy_reason = _build_legacy_reason(
             overall_code=overall_code,
             exists_code=exists_code,
@@ -808,9 +850,11 @@ def merge_vector_raster_csv(
                 "機械図 消費電力(kW)": vector_capacity.raw_display,
                 "機械図 モード容量(kW)": vector_capacity.mode_values_display,
                 "機械図 判定モード": vector_capacity.selected_mode,
-                "機械図 判定採用容量(kW)": _format_number(vector_capacity.selected_value)
-                if vector_capacity.selected_kind == "numeric"
-                else "",
+                "機械図 判定採用容量(kW)": (
+                    _format_number(vector_capacity.selected_value)
+                    if vector_capacity.selected_kind == "numeric"
+                    else ""
+                ),
                 "容量判定補足": vector_capacity.note,
                 "電気図 容量(kW)": _join_capacity_variants(raster_capacity_variants),
                 "容量差(kW)": _format_number(capacity_diff),
