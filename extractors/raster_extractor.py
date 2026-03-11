@@ -900,7 +900,7 @@ def normalize_power_text(power: str) -> str:
     # OCR occasionally appends noise digits (e.g. 0.75255). Round only these over-precision values.
     try:
         rounded = Decimal(power_norm).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    except InvalidOperation, ValueError:
+    except (InvalidOperation, ValueError):
         return power_norm
     rounded_text = format(rounded, "f")
     if "." in rounded_text:

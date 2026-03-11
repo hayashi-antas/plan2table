@@ -42,16 +42,16 @@ run: build
 test:
 	$(DOCKER_RUN) env PYTHONPATH=/app pytest -v
 
-# Lint and format (Docker 内で実行)
+# Lint and format (Docker 内で実行). Black は py313 指定で except (A,B) の括弧を維持（py314 だと PEP 758 で括弧を外す）
 lint:
 	$(DOCKER_RUN) ruff check .
 
 format:
-	$(DOCKER_RUN) black .
+	$(DOCKER_RUN) black --target-version py313 .
 
 format-check:
-	$(DOCKER_RUN) black --check .
+	$(DOCKER_RUN) black --target-version py313 --check .
 
 check-all:
-	$(DOCKER_RUN) ruff check . && $(DOCKER_RUN) black --check .
+	$(DOCKER_RUN) ruff check . && $(DOCKER_RUN) black --target-version py313 --check .
 	@echo "✔ lint and format check passed"

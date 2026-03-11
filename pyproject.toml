@@ -11,8 +11,9 @@ exclude = [".git", "__pycache__", ".venv", "static"]
 # フォーマットは Black に任せる（Ruff はリントのみ実行）
 
 [tool.black]
+# py313 にすると PEP 758 の except A, B, C 形式を Black が採用せず、except (A, B, C) のままになる（実行は 3.14）
 line-length = 88
-target-version = ["py314"]
+target-version = ["py313"]
 exclude = '\.git|__pycache__|\.venv|static'
 
 [tool.pytest.ini_options]
