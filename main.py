@@ -418,7 +418,7 @@ def _get_response_text(response):
         t = getattr(response, "text", None)
         if t and isinstance(t, str) and t.strip():
             return t
-    except ValueError, AttributeError, TypeError:
+    except (ValueError, AttributeError, TypeError):
         pass
     out = []
     for candidate in getattr(response, "candidates", None) or []:
