@@ -821,9 +821,7 @@ def _build_customer_summary_html(
         f"{html.escape(part)}</div>"
         for part in parts
     )
-    return (
-        f'<div class="customer-summary-grid mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">{summary_cells}</div>'
-    )
+    return f'<div class="customer-summary-grid mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">{summary_cells}</div>'
 
 
 def _build_customer_table_html(
