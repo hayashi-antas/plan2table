@@ -175,7 +175,10 @@ make format         # black でフォーマット
 make format-check   # フォーマットチェックのみ（CI 用）
 make check-all      # lint + format-check をまとめて実行
 make run            # アプリ起動（1Password で GCP 認証が必要）
+make install-hooks  # pre-push で make check-all を実行するフックを入れる（任意）
 ```
+
+push 前に lint/format をかけたい場合は `make install-hooks` を一度実行すると、以降 `git push` の直前に `make check-all` が走ります。失敗すると push は行われません。
 
 初回は `make build` を実行してから `make test` などを使います。以降はソースを変更しただけなら再ビルド不要で、そのまま `make test` でカレントのコードがコンテナにマウントされて実行されます。
 

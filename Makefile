@@ -12,7 +12,14 @@ VERTEX_MODEL_NAME ?= gemini-3.1-pro-preview
 # test/lint/format は Docker 内で実行（ビルド済みイメージを使用）
 DOCKER_RUN := docker run --rm -v "$$(pwd):/app" -w /app $(IMAGE)
 
-.PHONY: build check run lint format format-check check-all test
+.PHONY: build check run lint format format-check check-all test install-hooks
+
+# Install git pre-push hook that runs make check-all (optional, for local dev)
+install-hooks:
+	@mkdir -p .git/hooks
+	@cp scripts/pre-push .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "✔ Installed pre-push hook (runs make check-all before push)"
 
 build:
 	docker build -t $(IMAGE) .
