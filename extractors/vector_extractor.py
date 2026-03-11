@@ -19,9 +19,12 @@ from xml.etree import ElementTree as ET
 
 import pdfplumber
 
+from extractors.common import (
+    normalize_drawing_number_candidate as _common_normalize_drawing_number_candidate,
+)
+
 CELL_COUNT = 19
 SPLIT_SUFFIX_PATTERN = re.compile(r"^-\d+$")
-DRAWING_NO_PATTERN = re.compile(r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$")
 DRAWING_NO_SEARCH_PATTERN = re.compile(r"[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*")
 
 
@@ -44,11 +47,9 @@ def normalize_equipment_code(value: str | None) -> str:
 
 
 def normalize_drawing_number_candidate(value: str | None) -> str:
-    text = unicodedata.normalize("NFKC", normalize_cell(value or "")).upper()
-    text = text.replace(" ", "").replace("　", "")
-    text = re.sub(r"[‐‑‒–—―ー−－]", "-", text)
-    text = text.strip("|,:;[](){}<>「」『』…。．，")
-    return text if DRAWING_NO_PATTERN.fullmatch(text) else ""
+    """Return normalized drawing number or empty string (vector: pre-normalize with normalize_cell)."""
+    text = normalize_cell(value or "")
+    return _common_normalize_drawing_number_candidate(text) or ""
 
 
 def _extract_drawing_candidates_from_text(text: str) -> List[str]:

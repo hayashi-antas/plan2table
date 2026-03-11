@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import csv
-import io
 import json
 import os
 import re
 import subprocess
 import sys
 from time import perf_counter
-import unicodedata
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -28,9 +26,18 @@ try:
 except Exception:  # pragma: no cover - optional dependency at runtime
     np = None
 
+from extractors.common import (
+    RowCluster,
+    WordBox,
+    cluster_by_y,
+    compact_text,
+    normalize_text,
+    row_text_normalized,
+)
 from extractors.raster_extractor import (
     build_vision_client,
     count_pdf_pages,
+    extract_words,
     resolve_target_pages,
     run_pdftoppm,
     vision,
@@ -64,28 +71,6 @@ class LineAssistConfig:
     latency_budget_ms: int
     min_confidence: float
     debug_enabled: bool
-
-
-@dataclass
-class WordBox:
-    text: str
-    cx: float
-    cy: float
-    bbox: Tuple[float, float, float, float]
-
-
-@dataclass
-class RowCluster:
-    row_y: float
-    words: List[WordBox]
-
-
-def normalize_text(value: str) -> str:
-    return unicodedata.normalize("NFKC", value or "")
-
-
-def compact_text(value: str) -> str:
-    return normalize_text(value).replace(" ", "").replace("　", "")
 
 
 def _is_truthy_env(name: str, default: str = "0") -> bool:
@@ -216,97 +201,6 @@ def write_csv(rows: List[Dict[str, str]], out_csv: Path) -> None:
                         break
                 normalized_row[column] = value
             writer.writerow(normalized_row)
-
-
-def _extract_words(
-    client: vision.ImageAnnotatorClient, page_image: Image.Image
-) -> List[WordBox]:
-    buf = io.BytesIO()
-    page_image.save(buf, format="PNG")
-    image = vision.Image(content=buf.getvalue())
-    response = client.document_text_detection(image=image)
-    if response.error.message:
-        raise RuntimeError(f"Vision API error: {response.error.message}")
-
-    annotation = response.full_text_annotation
-    if not annotation.pages:
-        return []
-
-    words: List[WordBox] = []
-    for page in annotation.pages:
-        for block in page.blocks:
-            for paragraph in block.paragraphs:
-                for word in paragraph.words:
-                    text = "".join(symbol.text for symbol in word.symbols).strip()
-                    if not text:
-                        continue
-                    vertices = word.bounding_box.vertices
-                    xs = [v.x if v.x is not None else 0 for v in vertices]
-                    ys = [v.y if v.y is not None else 0 for v in vertices]
-                    x0, x1 = float(min(xs)), float(max(xs))
-                    y0, y1 = float(min(ys)), float(max(ys))
-                    words.append(
-                        WordBox(
-                            text=text,
-                            cx=(x0 + x1) / 2.0,
-                            cy=(y0 + y1) / 2.0,
-                            bbox=(x0, y0, x1, y1),
-                        )
-                    )
-    return words
-
-
-def _cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
-    if not words:
-        return []
-    sorted_words = sorted(words, key=lambda w: w.cy)
-    clusters: List[RowCluster] = [
-        RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])
-    ]
-    for word in sorted_words[1:]:
-        last = clusters[-1]
-        if abs(word.cy - last.row_y) <= threshold:
-            last.words.append(word)
-            size = len(last.words)
-            last.row_y = ((last.row_y * (size - 1)) + word.cy) / size
-        else:
-            clusters.append(RowCluster(row_y=word.cy, words=[word]))
-    return clusters
-
-
-def _row_text(cluster: RowCluster) -> str:
-    return " ".join(
-        normalize_text(w.text).strip()
-        for w in sorted(cluster.words, key=lambda x: x.cx)
-    ).strip()
-
-
-def _split_cluster_by_x_gap(
-    cluster: RowCluster, max_gap: float = 44.0
-) -> List[RowCluster]:
-    words = sorted(cluster.words, key=lambda w: w.cx)
-    if not words:
-        return []
-
-    groups: List[List[WordBox]] = [[words[0]]]
-    prev = words[0]
-    for word in words[1:]:
-        gap = word.bbox[0] - prev.bbox[2]
-        if gap > max_gap:
-            groups.append([word])
-        else:
-            groups[-1].append(word)
-        prev = word
-
-    split_rows = []
-    for group in groups:
-        split_rows.append(
-            RowCluster(
-                row_y=sum(w.cy for w in group) / len(group),
-                words=group,
-            )
-        )
-    return split_rows
 
 
 def _collect_column_text(words: List[WordBox]) -> str:
@@ -1189,7 +1083,7 @@ def _collect_focus_row_samples(
 ) -> List[Dict[str, object]]:
     samples: List[Dict[str, object]] = []
     for cluster in clusters:
-        row_text = _row_text(cluster)
+        row_text = row_text_normalized(cluster)
         if not _row_matches_focus(row_text, focus_terms):
             continue
         tokens = sorted(cluster.words, key=lambda x: x.cx)
@@ -1258,12 +1152,12 @@ def _extract_page_candidate_rows(
     line_assist_config: LineAssistConfig | None = None,
 ) -> List[Dict[str, object]]:
     line_assist_config = line_assist_config or _line_assist_config()
-    words = _extract_words(client, page_image)
-    clusters = _cluster_by_y(words, y_cluster)
+    words = extract_words(client, page_image)
+    clusters = cluster_by_y(words, y_cluster)
     header_indexes = [
         idx
         for idx, cluster in enumerate(clusters)
-        if _is_header_row(_row_text(cluster))
+        if _is_header_row(row_text_normalized(cluster))
     ]
     page_diag_candidates: List[Dict[str, object]] = []
     page_diag_line_assist: List[Dict[str, object]] = []

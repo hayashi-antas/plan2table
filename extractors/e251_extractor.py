@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import csv
-import io
 import re
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,9 +9,18 @@ from typing import Dict, List, Tuple
 
 from PIL import Image
 
+from extractors.common import (
+    RowCluster,
+    WordBox,
+    cluster_by_y,
+    compact_text,
+    normalize_text,
+    row_text_normalized,
+)
 from extractors.raster_extractor import (
     build_vision_client,
     count_pdf_pages,
+    extract_words,
     resolve_target_pages,
     run_pdftoppm,
     vision,
@@ -61,32 +68,10 @@ Y_CLUSTER_THRESHOLD_DEFAULT = 14.0
 
 
 @dataclass
-class WordBox:
-    text: str
-    cx: float
-    cy: float
-    bbox: Tuple[float, float, float, float]
-
-
-@dataclass
-class RowCluster:
-    row_y: float
-    words: List[WordBox]
-
-
-@dataclass
 class EquipmentAnchor:
     x: float
     raw: str
     equipment: str
-
-
-def normalize_text(value: str) -> str:
-    return unicodedata.normalize("NFKC", value or "")
-
-
-def compact_text(value: str) -> str:
-    return normalize_text(value).replace(" ", "").replace("　", "")
 
 
 def _normalize_dash(value: str) -> str:
@@ -168,67 +153,9 @@ def write_csv(rows: List[Dict[str, str]], out_csv: Path) -> None:
             )
 
 
-def _extract_words(
-    client: vision.ImageAnnotatorClient, page_image: Image.Image
-) -> List[WordBox]:
-    buf = io.BytesIO()
-    page_image.save(buf, format="PNG")
-    image = vision.Image(content=buf.getvalue())
-    response = client.document_text_detection(image=image)
-    if response.error.message:
-        raise RuntimeError(f"Vision API error: {response.error.message}")
-
-    annotation = response.full_text_annotation
-    if not annotation.pages:
-        return []
-
-    words: List[WordBox] = []
-    for page in annotation.pages:
-        for block in page.blocks:
-            for paragraph in block.paragraphs:
-                for word in paragraph.words:
-                    text = "".join(symbol.text for symbol in word.symbols).strip()
-                    if not text:
-                        continue
-                    vertices = word.bounding_box.vertices
-                    xs = [v.x if v.x is not None else 0 for v in vertices]
-                    ys = [v.y if v.y is not None else 0 for v in vertices]
-                    x0, x1 = float(min(xs)), float(max(xs))
-                    y0, y1 = float(min(ys)), float(max(ys))
-                    words.append(
-                        WordBox(
-                            text=text,
-                            cx=(x0 + x1) / 2.0,
-                            cy=(y0 + y1) / 2.0,
-                            bbox=(x0, y0, x1, y1),
-                        )
-                    )
-    return words
-
-
-def _cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
-    if not words:
-        return []
-    sorted_words = sorted(words, key=lambda w: w.cy)
-    clusters: List[RowCluster] = [
-        RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])
-    ]
-    for word in sorted_words[1:]:
-        last = clusters[-1]
-        if abs(word.cy - last.row_y) <= threshold:
-            last.words.append(word)
-            size = len(last.words)
-            last.row_y = ((last.row_y * (size - 1)) + word.cy) / size
-        else:
-            clusters.append(RowCluster(row_y=word.cy, words=[word]))
-    return clusters
-
-
 def _row_text(cluster: RowCluster) -> str:
-    return " ".join(
-        normalize_text(w.text).strip()
-        for w in sorted(cluster.words, key=lambda x: x.cx)
-    ).strip()
+    """Row text with normalized space-joined words (e251)."""
+    return row_text_normalized(cluster).strip()
 
 
 def _is_section_title(value: str) -> bool:
@@ -249,7 +176,7 @@ def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
 def _extract_section_words(
     words: List[WordBox], y_cluster: float = Y_CLUSTER_THRESHOLD_DEFAULT
 ) -> Tuple[List[WordBox], float]:
-    clusters = _cluster_by_y(words, y_cluster)
+    clusters = cluster_by_y(words, y_cluster)
     title_cluster = next(
         (cluster for cluster in clusters if _is_section_title(_row_text(cluster))), None
     )
@@ -481,12 +408,12 @@ def _extract_page_candidate_rows(
     page_number: int,
     y_cluster: float,
 ) -> List[Dict[str, object]]:
-    words = _extract_words(client, page_image)
+    words = extract_words(client, page_image)
     section_words, title_y = _extract_section_words(words, y_cluster=y_cluster)
     if not section_words:
         return []
 
-    clusters = _cluster_by_y(section_words, y_cluster)
+    clusters = cluster_by_y(section_words, y_cluster)
     anchors = _detect_anchors(clusters, title_y=title_y)
 
     candidates: List[Dict[str, object]] = []

@@ -10,13 +10,11 @@ from typing import Dict, List, Optional, Tuple
 
 from PIL import Image
 
+from extractors.common import WordBox, cluster_by_y, normalize_text
 from extractors.raster_extractor import (
-    WordBox,
     build_vision_client,
-    cluster_by_y,
     count_pdf_pages,
     extract_words,
-    normalize_text,
     resolve_target_pages,
     run_pdftoppm,
 )
