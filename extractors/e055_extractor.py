@@ -438,7 +438,7 @@ def _resolve_model_x(
     )
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0
 
 
