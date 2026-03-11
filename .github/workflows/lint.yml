@@ -1,0 +1,22 @@
+name: Lint and format check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: make build
+
+      - name: Lint and format check (Docker)
+        run: make check-all

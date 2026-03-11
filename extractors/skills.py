@@ -16,7 +16,9 @@ def calculate_tatami_area_m2(tatami: float) -> float:
     return round(tatami * 1.62, 2)
 
 
-def validate_area_sum(room_areas: List[float], expected_total: float) -> Dict[str, float | bool]:
+def validate_area_sum(
+    room_areas: List[float], expected_total: float
+) -> Dict[str, float | bool]:
     actual = round(sum(room_areas), 2)
     diff = round(abs(actual - expected_total), 2)
     return {
@@ -66,13 +68,15 @@ def calculate_composite_area(
         else:
             operation = "add"
             total_area += piece_area
-        steps.append({
-            "operation": operation,
-            "width_m": width_m,
-            "depth_m": depth_m,
-            "area_m2": piece_area,
-            "calculation": f"{width_m}m × {depth_m}m = {piece_area}㎡",
-        })
+        steps.append(
+            {
+                "operation": operation,
+                "width_m": width_m,
+                "depth_m": depth_m,
+                "area_m2": piece_area,
+                "calculation": f"{width_m}m × {depth_m}m = {piece_area}㎡",
+            }
+        )
 
     total_area = round(total_area, 2)
     tatami = round(total_area / 1.62, 1)

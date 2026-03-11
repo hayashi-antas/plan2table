@@ -19,7 +19,6 @@ from xml.etree import ElementTree as ET
 
 import pdfplumber
 
-
 CELL_COUNT = 19
 SPLIT_SUFFIX_PATTERN = re.compile(r"^-\d+$")
 DRAWING_NO_PATTERN = re.compile(r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$")
@@ -72,8 +71,14 @@ def extract_drawing_number_from_page(page: pdfplumber.page.Page) -> str:
 
     if page_text:
         for line in page_text.splitlines():
-            line_norm = unicodedata.normalize("NFKC", line or "").replace(" ", "").replace("　", "")
-            if "図面番号" not in line_norm and ("図面" not in line_norm or "番号" not in line_norm):
+            line_norm = (
+                unicodedata.normalize("NFKC", line or "")
+                .replace(" ", "")
+                .replace("　", "")
+            )
+            if "図面番号" not in line_norm and (
+                "図面" not in line_norm or "番号" not in line_norm
+            ):
                 continue
             candidates = _extract_drawing_candidates_from_text(line)
             if candidates:
@@ -263,7 +268,9 @@ def collect_grid_lines(
             f"for bbox={bbox}"
         )
     if len(horizontal) < 4:
-        raise ValueError(f"Too few horizontal borders ({len(horizontal)}) for bbox={bbox}")
+        raise ValueError(
+            f"Too few horizontal borders ({len(horizontal)}) for bbox={bbox}"
+        )
     return vertical, horizontal
 
 
@@ -345,12 +352,16 @@ def _normalize_header_for_match(text: str) -> str:
     return normalized.replace(" ", "").replace("　", "").replace("\n", "").strip()
 
 
-def _build_header_by_col(rows: Sequence[Sequence[str]], header_depth: int) -> Dict[int, str]:
+def _build_header_by_col(
+    rows: Sequence[Sequence[str]], header_depth: int
+) -> Dict[int, str]:
     max_cols = max((len(r) for r in rows), default=0)
     out: Dict[int, str] = {}
     for col_index in range(max_cols):
         blob = "".join(
-            _normalize_header_for_match(rows[row_index][col_index] if col_index < len(rows[row_index]) else "")
+            _normalize_header_for_match(
+                rows[row_index][col_index] if col_index < len(rows[row_index]) else ""
+            )
             for row_index in range(min(header_depth, len(rows)))
         )
         out[col_index] = blob
@@ -368,7 +379,9 @@ def _is_summary_data_row(row: Sequence[str], id_col: int) -> bool:
     return False
 
 
-def _detect_summary_header_depth(rows: Sequence[Sequence[str]], id_col: int, max_depth: int = 8) -> int:
+def _detect_summary_header_depth(
+    rows: Sequence[Sequence[str]], id_col: int, max_depth: int = 8
+) -> int:
     limit = min(max_depth, len(rows))
     for idx in range(limit):
         if _is_summary_data_row(rows[idx], id_col):
@@ -377,7 +390,10 @@ def _detect_summary_header_depth(rows: Sequence[Sequence[str]], id_col: int, max
 
 
 def _pick_col_from_headers(
-    header_by_col: Dict[int, str], keywords: Sequence[str], *, exclude_keywords: Sequence[str] = ()
+    header_by_col: Dict[int, str],
+    keywords: Sequence[str],
+    *,
+    exclude_keywords: Sequence[str] = (),
 ) -> int | None:
     normalized_keywords = [_normalize_header_for_match(k) for k in keywords]
     normalized_excludes = [_normalize_header_for_match(k) for k in exclude_keywords]
@@ -389,7 +405,9 @@ def _pick_col_from_headers(
     return None
 
 
-def _pick_summary_left_tables(page: pdfplumber.page.Page) -> List[pdfplumber.table.Table]:
+def _pick_summary_left_tables(
+    page: pdfplumber.page.Page,
+) -> List[pdfplumber.table.Table]:
     if not hasattr(page, "find_tables"):
         return []
 
@@ -406,7 +424,9 @@ def _pick_summary_left_tables(page: pdfplumber.page.Page) -> List[pdfplumber.tab
 
         raw_rows = table.extract() or []
         normalized_rows = [[normalize_cell(c) for c in row] for row in raw_rows]
-        id_col = _pick_col_from_headers(_build_header_by_col(normalized_rows, header_depth=4), ["機器番号", "記号"])
+        id_col = _pick_col_from_headers(
+            _build_header_by_col(normalized_rows, header_depth=4), ["機器番号", "記号"]
+        )
         if id_col is None:
             continue
         header_depth = _detect_summary_header_depth(normalized_rows, id_col=id_col)
@@ -436,7 +456,9 @@ def _extract_rows_from_summary_left_table(
             cells.extend([""] * (max_cols - len(cells)))
         normalized_rows.append(cells)
 
-    id_col = _pick_col_from_headers(_build_header_by_col(normalized_rows, header_depth=4), ["機器番号", "記号"])
+    id_col = _pick_col_from_headers(
+        _build_header_by_col(normalized_rows, header_depth=4), ["機器番号", "記号"]
+    )
     if id_col is None:
         raise ValueError("Could not resolve summary-left required id column.")
     header_depth = _detect_summary_header_depth(normalized_rows, id_col=id_col)
@@ -469,7 +491,9 @@ def _extract_rows_from_summary_left_table(
             if re.fullmatch(r"\d+", suffix):
                 equipment_id = f"{equipment_id}{suffix}"
 
-        name = "".join(normalize_cell(row[col]) for col in name_cols if col < len(row)).strip()
+        name = "".join(
+            normalize_cell(row[col]) for col in name_cols if col < len(row)
+        ).strip()
         name = _normalize_summary_name(name)
         total = normalize_cell(row[total_col]) if total_col < len(row) else ""
 
@@ -643,6 +667,7 @@ def _extract_rows_via_table_cells(
         projected_rows.append(projected)
     return projected_rows
 
+
 def reconstruct_headers_from_pdf(
     page: pdfplumber.page.Page,
     bbox: Tuple[float, float, float, float],
@@ -800,7 +825,9 @@ def extract_records(rows: Sequence[Sequence[str]]) -> Tuple[List[List[str]], int
             if current is not None and key == current[0]:
                 # Some formats repeat the same equipment id across multi-line blocks.
                 # Treat it as continuation instead of starting a new record.
-                summary_like = (not normalize_cell(current[9])) and (not normalize_cell(row[9]))
+                summary_like = (not normalize_cell(current[9])) and (
+                    not normalize_cell(row[9])
+                )
                 for i, value in enumerate(row):
                     if i == 0:
                         continue
@@ -1070,7 +1097,9 @@ def read_xlsx_rows(path: Path, max_row: int, max_col: int) -> List[List[str]]:
     return rows
 
 
-def validate_headers(actual_header: Sequence[Sequence[str]], expected_xlsx: Path) -> bool:
+def validate_headers(
+    actual_header: Sequence[Sequence[str]], expected_xlsx: Path
+) -> bool:
     expected = read_xlsx_rows(expected_xlsx, max_row=2, max_col=CELL_COUNT)
     diffs: List[str] = []
     for r in range(2):
@@ -1101,7 +1130,9 @@ def extract_pdf_to_rows(
     | Tuple[List[List[str]], int, List[List[str]], List[int], Dict[int, str]]
 ):
     if include_page_drawing_numbers and not include_record_page_indexes:
-        raise ValueError("include_page_drawing_numbers requires include_record_page_indexes=True")
+        raise ValueError(
+            "include_page_drawing_numbers requires include_record_page_indexes=True"
+        )
 
     with pdfplumber.open(str(pdf_path)) as pdf:
         if not pdf.pages:
@@ -1148,20 +1179,34 @@ def extract_pdf_to_rows(
                 merged_records.extend(records)
                 if include_record_page_indexes:
                     record_page_indexes.extend([page_index] * len(records))
-                    if include_page_drawing_numbers and records and page_index not in drawing_by_page:
-                        drawing_by_page[page_index] = extract_drawing_number_from_page(page)
+                    if (
+                        include_page_drawing_numbers
+                        and records
+                        and page_index not in drawing_by_page
+                    ):
+                        drawing_by_page[page_index] = extract_drawing_number_from_page(
+                            page
+                        )
 
         if header_rows is None:
             raise ValueError("No target tables found in any PDF page.")
         final_rows = header_rows + merged_records
         if include_record_page_indexes:
             if include_page_drawing_numbers:
-                return final_rows, note_rows_total, header_rows, record_page_indexes, drawing_by_page
+                return (
+                    final_rows,
+                    note_rows_total,
+                    header_rows,
+                    record_page_indexes,
+                    drawing_by_page,
+                )
             return final_rows, note_rows_total, header_rows, record_page_indexes
         return final_rows, note_rows_total, header_rows
 
 
-def extract_vector_pdf_four_columns(pdf_path: Path, out_csv_path: Path) -> Dict[str, object]:
+def extract_vector_pdf_four_columns(
+    pdf_path: Path, out_csv_path: Path
+) -> Dict[str, object]:
     """Extract vector PDF table and write a fixed CSV for unified merge."""
     if not pdf_path.exists():
         raise FileNotFoundError(f"Input PDF not found: {pdf_path}")
@@ -1171,7 +1216,9 @@ def extract_vector_pdf_four_columns(pdf_path: Path, out_csv_path: Path) -> Dict[
         include_record_page_indexes=True,
         include_page_drawing_numbers=True,
     )
-    drawing_numbers = [drawing_by_page.get(page_index, "") for page_index in record_page_indexes]
+    drawing_numbers = [
+        drawing_by_page.get(page_index, "") for page_index in record_page_indexes
+    ]
     four_rows = build_four_column_rows(rows, drawing_numbers=drawing_numbers)
     write_csv(out_csv_path, four_rows)
 

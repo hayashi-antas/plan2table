@@ -23,7 +23,9 @@ OUTPUT_COLUMNS = ["器具記号", "メーカー", "相当型番"]
 
 DASH_VARIANTS_PATTERN = re.compile(r"[ー―−–—‐ｰ－]")  # noqa: RUF001
 EQUIPMENT_CODE_PATTERN = re.compile(r"^[A-Z]\d{1,2}$")
-EQUIPMENT_LABEL_PATTERN = re.compile(r"^(?P<code>[A-Z]\d{1,2})(?:\((?P<suffix>[^()]+)\))?$")
+EQUIPMENT_LABEL_PATTERN = re.compile(
+    r"^(?P<code>[A-Z]\d{1,2})(?:\((?P<suffix>[^()]+)\))?$"
+)
 WATTAGE_ONLY_MODEL_PATTERN = re.compile(r"^\d+(?:\.\d+)?W$", flags=re.IGNORECASE)
 DASH_TOKEN_CLASS = r"[-‐‑‒–—―ー−－]"  # noqa: RUF001
 MODEL_TOKEN_PATTERN = (
@@ -166,7 +168,9 @@ def write_csv(rows: List[Dict[str, str]], out_csv: Path) -> None:
             )
 
 
-def _extract_words(client: vision.ImageAnnotatorClient, page_image: Image.Image) -> List[WordBox]:
+def _extract_words(
+    client: vision.ImageAnnotatorClient, page_image: Image.Image
+) -> List[WordBox]:
     buf = io.BytesIO()
     page_image.save(buf, format="PNG")
     image = vision.Image(content=buf.getvalue())
@@ -206,7 +210,9 @@ def _cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
     if not words:
         return []
     sorted_words = sorted(words, key=lambda w: w.cy)
-    clusters: List[RowCluster] = [RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])]
+    clusters: List[RowCluster] = [
+        RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])
+    ]
     for word in sorted_words[1:]:
         last = clusters[-1]
         if abs(word.cy - last.row_y) <= threshold:
@@ -219,7 +225,10 @@ def _cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
 
 
 def _row_text(cluster: RowCluster) -> str:
-    return " ".join(normalize_text(w.text).strip() for w in sorted(cluster.words, key=lambda x: x.cx)).strip()
+    return " ".join(
+        normalize_text(w.text).strip()
+        for w in sorted(cluster.words, key=lambda x: x.cx)
+    ).strip()
 
 
 def _is_section_title(value: str) -> bool:
@@ -241,27 +250,34 @@ def _extract_section_words(
     words: List[WordBox], y_cluster: float = Y_CLUSTER_THRESHOLD_DEFAULT
 ) -> Tuple[List[WordBox], float]:
     clusters = _cluster_by_y(words, y_cluster)
-    title_cluster = next((cluster for cluster in clusters if _is_section_title(_row_text(cluster))), None)
+    title_cluster = next(
+        (cluster for cluster in clusters if _is_section_title(_row_text(cluster))), None
+    )
     if title_cluster is None:
         return [], 0.0
 
-    x_min = min(word.bbox[0] for word in title_cluster.words) - SECTION_BOUNDARY_MARGIN_PX
+    x_min = (
+        min(word.bbox[0] for word in title_cluster.words) - SECTION_BOUNDARY_MARGIN_PX
+    )
     y_min = title_cluster.row_y - SECTION_BOUNDARY_MARGIN_PX
     y_max = title_cluster.row_y + SECTION_BAND_HEIGHT_BELOW_TITLE_PX
     section_words = [
-        word
-        for word in words
-        if word.bbox[0] >= x_min and y_min <= word.cy <= y_max
+        word for word in words if word.bbox[0] >= x_min and y_min <= word.cy <= y_max
     ]
     return section_words, float(title_cluster.row_y)
 
 
-def _detect_anchors(clusters: List[RowCluster], *, title_y: float) -> List[EquipmentAnchor]:
+def _detect_anchors(
+    clusters: List[RowCluster], *, title_y: float
+) -> List[EquipmentAnchor]:
     anchors: List[EquipmentAnchor] = []
     seen: set[tuple[str, int]] = set()
 
     for cluster in clusters:
-        if cluster.row_y < title_y or cluster.row_y > title_y + TITLE_SUB_BAND_HEIGHT_PX:
+        if (
+            cluster.row_y < title_y
+            or cluster.row_y > title_y + TITLE_SUB_BAND_HEIGHT_PX
+        ):
             continue
         words = sorted(cluster.words, key=lambda item: item.cx)
         idx = 0
@@ -344,7 +360,10 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
         for match in pattern.finditer(row_text):
             start = match.start()
             end = match.end()
-            if any(start < span_end and end > span_start for span_start, span_end in occupied_spans):
+            if any(
+                start < span_end and end > span_start
+                for span_start, span_end in occupied_spans
+            ):
                 continue
             maker = match.group("maker").strip()
             model = _cleanup_model(match.group("model").upper())
@@ -388,7 +407,9 @@ def _assign_equipment_from_anchors(
         if abs(nearest.x - row_x) > max_distance:
             row["器具記号"] = ""
             continue
-        row["器具記号"] = nearest.equipment if _is_equipment_code(nearest.equipment) else ""
+        row["器具記号"] = (
+            nearest.equipment if _is_equipment_code(nearest.equipment) else ""
+        )
 
 
 def _cluster_x_positions(
@@ -417,7 +438,9 @@ def _assign_block_indexes(candidates: List[Dict[str, object]]) -> None:
         return
     for row in candidates:
         x = float(row.get("row_x", 0.0))
-        row["block_index"] = min(range(len(x_centers)), key=lambda idx: abs(x - x_centers[idx]))
+        row["block_index"] = min(
+            range(len(x_centers)), key=lambda idx: abs(x - x_centers[idx])
+        )
 
 
 def build_output_rows(candidates: List[Dict[str, object]]) -> List[Dict[str, str]]:

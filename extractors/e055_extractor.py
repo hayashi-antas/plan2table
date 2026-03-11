@@ -43,8 +43,12 @@ OUTPUT_COLUMN_SOURCE_KEYS = {
     "相当型番": ("相当型番", "型番"),
 }
 MODEL_PATTERN = re.compile(r"\b([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)\b")
-MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)")  # noqa: RUF001
-COLON_MODEL_PATTERN = re.compile(r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)")  # noqa: RUF001
+MODEL_MULTIPLIER_SUFFIX_PATTERN = re.compile(
+    r"\s*(?:\(\s*[xX×✕]\s*\d+\s*\)|[xX×✕]\s*\d+)"
+)  # noqa: RUF001
+COLON_MODEL_PATTERN = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*([A-Z]{2,}(?:\s*-\s*[A-Z0-9]{1,20})+)"
+)  # noqa: RUF001
 DASH_VARIANTS_PATTERN = re.compile(r"[ー―−–—‐ｰ－]")  # noqa: RUF001
 EXCLUDED_EMERGENCY_CODES = {"EDL", "EDM", "ECL", "ECM", "ECH", "ES1", "ES2"}
 DEFAULT_DEBUG_FOCUS_TERMS = ("TP1", "TP2", "CT2G", "DL9", "同上", "TAD-", "LZD-")
@@ -116,8 +120,15 @@ def _line_assist_mode() -> str:
 
 def _line_assist_config() -> LineAssistConfig:
     mode = _line_assist_mode()
-    latency_budget_ms = max(_int_env("E055_LINE_ASSIST_LATENCY_BUDGET_MS", LINE_ASSIST_DEFAULT_LATENCY_BUDGET_MS), 1)
-    min_confidence = _float_env("E055_LINE_ASSIST_MIN_CONFIDENCE", LINE_ASSIST_DEFAULT_MIN_CONFIDENCE)
+    latency_budget_ms = max(
+        _int_env(
+            "E055_LINE_ASSIST_LATENCY_BUDGET_MS", LINE_ASSIST_DEFAULT_LATENCY_BUDGET_MS
+        ),
+        1,
+    )
+    min_confidence = _float_env(
+        "E055_LINE_ASSIST_MIN_CONFIDENCE", LINE_ASSIST_DEFAULT_MIN_CONFIDENCE
+    )
     min_confidence = min(max(min_confidence, 0.0), 1.0)
     debug_enabled = _is_truthy_env("E055_LINE_ASSIST_DEBUG")
     return LineAssistConfig(
@@ -148,7 +159,9 @@ def _command_output(command: List[str]) -> str:
 
 def _git_sha() -> str:
     repo_root = Path(__file__).resolve().parents[1]
-    result = _command_output(["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"])
+    result = _command_output(
+        ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"]
+    )
     if result.startswith("error(") or result == "not_found":
         return "unknown"
     return result.splitlines()[0].strip()
@@ -157,7 +170,9 @@ def _git_sha() -> str:
 def _debug_focus_terms() -> List[str]:
     raw = os.getenv("E055_DEBUG_FOCUS_TERMS", "").strip()
     if raw:
-        terms = [compact_text(item).upper() for item in raw.split(",") if compact_text(item)]
+        terms = [
+            compact_text(item).upper() for item in raw.split(",") if compact_text(item)
+        ]
         return terms
     return [compact_text(item).upper() for item in DEFAULT_DEBUG_FOCUS_TERMS]
 
@@ -203,7 +218,9 @@ def write_csv(rows: List[Dict[str, str]], out_csv: Path) -> None:
             writer.writerow(normalized_row)
 
 
-def _extract_words(client: vision.ImageAnnotatorClient, page_image: Image.Image) -> List[WordBox]:
+def _extract_words(
+    client: vision.ImageAnnotatorClient, page_image: Image.Image
+) -> List[WordBox]:
     buf = io.BytesIO()
     page_image.save(buf, format="PNG")
     image = vision.Image(content=buf.getvalue())
@@ -243,7 +260,9 @@ def _cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
     if not words:
         return []
     sorted_words = sorted(words, key=lambda w: w.cy)
-    clusters: List[RowCluster] = [RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])]
+    clusters: List[RowCluster] = [
+        RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])
+    ]
     for word in sorted_words[1:]:
         last = clusters[-1]
         if abs(word.cy - last.row_y) <= threshold:
@@ -256,10 +275,15 @@ def _cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
 
 
 def _row_text(cluster: RowCluster) -> str:
-    return " ".join(normalize_text(w.text).strip() for w in sorted(cluster.words, key=lambda x: x.cx)).strip()
+    return " ".join(
+        normalize_text(w.text).strip()
+        for w in sorted(cluster.words, key=lambda x: x.cx)
+    ).strip()
 
 
-def _split_cluster_by_x_gap(cluster: RowCluster, max_gap: float = 44.0) -> List[RowCluster]:
+def _split_cluster_by_x_gap(
+    cluster: RowCluster, max_gap: float = 44.0
+) -> List[RowCluster]:
     words = sorted(cluster.words, key=lambda w: w.cx)
     if not words:
         return []
@@ -286,7 +310,9 @@ def _split_cluster_by_x_gap(cluster: RowCluster, max_gap: float = 44.0) -> List[
 
 
 def _collect_column_text(words: List[WordBox]) -> str:
-    return " ".join(normalize_text(w.text).strip() for w in sorted(words, key=lambda x: x.cx)).strip()
+    return " ".join(
+        normalize_text(w.text).strip() for w in sorted(words, key=lambda x: x.cx)
+    ).strip()
 
 
 def _is_header_row(value: str) -> bool:
@@ -308,11 +334,30 @@ def _is_equipment_code_token(value: str) -> bool:
     upper = token.upper()
     if upper in EXCLUDED_EMERGENCY_CODES:
         return True
-    allowed_prefixes = ("CD", "CR", "CT", "UK", "WL", "CL", "XC", "X'C", "YC", "Y'C", "DL", "LL", "L", "TP", "GL", "SP", "ES", "EC")
+    allowed_prefixes = (
+        "CD",
+        "CR",
+        "CT",
+        "UK",
+        "WL",
+        "CL",
+        "XC",
+        "X'C",
+        "YC",
+        "Y'C",
+        "DL",
+        "LL",
+        "L",
+        "TP",
+        "GL",
+        "SP",
+        "ES",
+        "EC",
+    )
     for prefix in allowed_prefixes:
         if not upper.startswith(prefix):
             continue
-        suffix = upper[len(prefix):]
+        suffix = upper[len(prefix) :]
         if not suffix:
             return False
         if re.fullmatch(r"\d{1,2}[A-Z]?", suffix):
@@ -373,7 +418,9 @@ def _char_pos_to_token_index(tokens: List[str], char_pos: int) -> int:
 
 
 def _extract_maker_and_model(segment_text: str) -> Tuple[str, str, int]:
-    matched = re.search(r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text)  # noqa: RUF001
+    matched = re.search(
+        r"([A-Za-z][A-Za-z0-9&._-]{1,30})\s*[:：]\s*(.+)", segment_text
+    )  # noqa: RUF001
     if not matched:
         return "", "", -1
     maker = matched.group(1).strip()
@@ -381,9 +428,14 @@ def _extract_maker_and_model(segment_text: str) -> Tuple[str, str, int]:
     return maker, model, matched.start(1)
 
 
-def _resolve_model_x(source: Dict[str, object], fallback: Dict[str, object] | None = None) -> float:
+def _resolve_model_x(
+    source: Dict[str, object], fallback: Dict[str, object] | None = None
+) -> float:
     fallback = fallback or {}
-    value = source.get("model_x", source.get("row_x", fallback.get("model_x", fallback.get("row_x", 0.0))))
+    value = source.get(
+        "model_x",
+        source.get("row_x", fallback.get("model_x", fallback.get("row_x", 0.0))),
+    )
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -394,7 +446,9 @@ def _extract_model_without_colon_with_start(segment_text: str) -> Tuple[str, int
     text = _cleanup_model_text(segment_text)
     hyphen_model = MODEL_PATTERN.search(text)
     if hyphen_model:
-        return _append_multiplier_suffix(text, hyphen_model.group(1), hyphen_model.end(1)), hyphen_model.start(1)
+        return _append_multiplier_suffix(
+            text, hyphen_model.group(1), hyphen_model.end(1)
+        ), hyphen_model.start(1)
     return "", -1
 
 
@@ -407,7 +461,10 @@ def _normalize_doujou_model(segment_text: str) -> str:
     compact = compact_text(segment_text).lower()
     if "同上" not in compact:
         return ""
-    if re.search(r"(ガ[ー-]?ド|犬[-ー]?f|一卡付|卡付|カード|力[ー一-]?[f\u013e\u0142]?付)", compact):
+    if re.search(
+        r"(ガ[ー-]?ド|犬[-ー]?f|一卡付|卡付|カード|力[ー一-]?[f\u013e\u0142]?付)",
+        compact,
+    ):
         return "同上ガード付"
     return "同上"
 
@@ -435,7 +492,9 @@ def _assign_block_indexes_with_centers(
             row["block_index"] = 0
             continue
         x = float(row.get("row_x", 0.0))
-        row["block_index"] = min(range(len(x_centers)), key=lambda idx: abs(x - x_centers[idx]))
+        row["block_index"] = min(
+            range(len(x_centers)), key=lambda idx: abs(x - x_centers[idx])
+        )
 
 
 def _section_bounds_from_clusters(
@@ -481,7 +540,9 @@ def _count_unresolved_equipment(section_candidates: List[Dict[str, object]]) -> 
     return unresolved
 
 
-def _average_model_block_alignment_distance(section_candidates: List[Dict[str, object]]) -> float:
+def _average_model_block_alignment_distance(
+    section_candidates: List[Dict[str, object]],
+) -> float:
     by_block: Dict[int, List[float]] = {}
     for row in section_candidates:
         block_index = int(row.get("block_index", 0))
@@ -520,8 +581,10 @@ def _should_run_line_assist(
         return False, reasons
 
     continuation_rows = [
-        row for row in section_candidates
-        if str(row.get("相当型番", "")).strip() and not str(row.get("機器器具", "")).strip()
+        row
+        for row in section_candidates
+        if str(row.get("相当型番", "")).strip()
+        and not str(row.get("機器器具", "")).strip()
     ]
     continuation_ratio = len(continuation_rows) / max(total, 1)
     if len(continuation_rows) >= 2 and continuation_ratio >= 0.35:
@@ -542,7 +605,11 @@ def _should_run_line_assist(
     if cross_model >= 2:
         reasons.append("cross_model_x")
 
-    section_width = max(float(section_bounds.get("x_max", 0.0)) - float(section_bounds.get("x_min", 0.0)), 1.0)
+    section_width = max(
+        float(section_bounds.get("x_max", 0.0))
+        - float(section_bounds.get("x_min", 0.0)),
+        1.0,
+    )
     if total <= 2 and section_width > 900.0:
         reasons.append("sparse_candidates_in_wide_section")
 
@@ -627,9 +694,13 @@ def _collect_image_vertical_lines(
     image_arr = np.array(page_image)  # type: ignore[arg-type]
     height, width = image_arr.shape[:2]
     x_min = int(max(float(section_bounds.get("x_min", 0.0)) - 32.0, 0.0))
-    x_max = int(min(float(section_bounds.get("x_max", float(width))) + 32.0, float(width)))
+    x_max = int(
+        min(float(section_bounds.get("x_max", float(width))) + 32.0, float(width))
+    )
     y_min = int(max(float(section_bounds.get("y_min", 0.0)) - 16.0, 0.0))
-    y_max = int(min(float(section_bounds.get("y_max", float(height))) + 16.0, float(height)))
+    y_max = int(
+        min(float(section_bounds.get("y_max", float(height))) + 16.0, float(height))
+    )
     if x_max <= x_min or y_max <= y_min:
         diagnostics["error"] = "invalid_roi"
         diagnostics["elapsed_ms"] = (perf_counter() - start_time) * 1000.0
@@ -741,7 +812,9 @@ def _line_assist_confidence(
 
     line_strength = min((vector_line_count + image_line_count) / 8.0, 1.0)
     block_count_score = 1.0 if 1 <= len(line_blocks) <= 8 else 0.3
-    baseline_alignment = 1.0 if abs(len(line_blocks) - max(baseline_center_count, 1)) <= 2 else 0.5
+    baseline_alignment = (
+        1.0 if abs(len(line_blocks) - max(baseline_center_count, 1)) <= 2 else 0.5
+    )
     confidence = (
         0.45 * coverage
         + 0.25 * line_strength
@@ -791,10 +864,15 @@ def _apply_line_assist_if_confident(
         time_budget_ms=config.latency_budget_ms,
         start_time=assist_start,
     )
-    merged_lines = _merge_vertical_lines(vector_lines=vector_lines, image_lines=image_lines)
+    merged_lines = _merge_vertical_lines(
+        vector_lines=vector_lines, image_lines=image_lines
+    )
     line_blocks = _build_line_based_blocks(
         vertical_xs=merged_lines,
-        section_x_range=(float(section_bounds.get("x_min", 0.0)), float(section_bounds.get("x_max", 0.0))),
+        section_x_range=(
+            float(section_bounds.get("x_min", 0.0)),
+            float(section_bounds.get("x_max", 0.0)),
+        ),
     )
 
     info["vector_line_count"] = len(vector_lines)
@@ -839,7 +917,9 @@ def _apply_line_assist_if_confident(
         return info
 
     for index, row in enumerate(section_candidates):
-        row["block_index"] = assisted_rows[index].get("block_index", row.get("block_index", 0))
+        row["block_index"] = assisted_rows[index].get(
+            "block_index", row.get("block_index", 0)
+        )
     info["adopted"] = True
     return info
 
@@ -857,7 +937,9 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
     candidates: List[Dict[str, object]] = []
     seen: set[tuple[int, str]] = set()
     for match in MODEL_PATTERN.finditer(normalized_row_text):
-        model = _append_multiplier_suffix(normalized_row_text, match.group(1), match.end(1))
+        model = _append_multiplier_suffix(
+            normalized_row_text, match.group(1), match.end(1)
+        )
         if not model:
             continue
 
@@ -877,7 +959,9 @@ def _extract_model_only_candidates(words: List[WordBox]) -> List[Dict[str, objec
     return candidates
 
 
-def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str, object]]:
+def _extract_colon_model_only_candidates(
+    words: List[WordBox],
+) -> List[Dict[str, object]]:
     sorted_words = sorted(words, key=lambda item: item.cx)
     if len(sorted_words) < 2:
         return []
@@ -891,7 +975,9 @@ def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str,
     # maker:model text (e.g. "DAIKO:LZA-93039") and still need extraction.
     for match in COLON_MODEL_PATTERN.finditer(normalized_row_text):
         maker = match.group(1).strip()
-        model = _append_multiplier_suffix(normalized_row_text, match.group(2), match.end(2))
+        model = _append_multiplier_suffix(
+            normalized_row_text, match.group(2), match.end(2)
+        )
         if not maker or not model:
             continue
 
@@ -912,7 +998,9 @@ def _extract_colon_model_only_candidates(words: List[WordBox]) -> List[Dict[str,
     return candidates
 
 
-def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]]) -> None:
+def _propagate_equipment_in_section(
+    section_candidates: List[Dict[str, object]],
+) -> None:
     rows_by_y: Dict[float, List[Dict[str, object]]] = {}
     for row in section_candidates:
         y = float(row.get("row_y", 0.0))
@@ -920,15 +1008,21 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
 
     sorted_ys = sorted(rows_by_y.keys())
     for idx, y in enumerate(sorted_ys):
-        current_rows = sorted(rows_by_y[y], key=lambda item: float(item.get("row_x", 0.0)))
+        current_rows = sorted(
+            rows_by_y[y], key=lambda item: float(item.get("row_x", 0.0))
+        )
         if any(str(row.get("機器器具", "")).strip() for row in current_rows):
             continue
 
         source_rows: List[Dict[str, object]] = []
         source_y = None
         for prev_y in reversed(sorted_ys[:idx]):
-            prev_rows = sorted(rows_by_y[prev_y], key=lambda item: float(item.get("row_x", 0.0)))
-            prev_rows = [row for row in prev_rows if str(row.get("機器器具", "")).strip()]
+            prev_rows = sorted(
+                rows_by_y[prev_y], key=lambda item: float(item.get("row_x", 0.0))
+            )
+            prev_rows = [
+                row for row in prev_rows if str(row.get("機器器具", "")).strip()
+            ]
             if prev_rows:
                 source_rows = prev_rows
                 source_y = prev_y
@@ -942,7 +1036,9 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
             for row_index, row in enumerate(current_rows):
                 source = source_rows[row_index]
                 row["機器器具"] = source.get("機器器具", "")
-                row["block_index"] = source.get("block_index", row.get("block_index", 0))
+                row["block_index"] = source.get(
+                    "block_index", row.get("block_index", 0)
+                )
                 row["model_x"] = _resolve_model_x(source, row)
         else:
             available_sources = list(source_rows)
@@ -956,7 +1052,9 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
                     ),
                 )
                 row["機器器具"] = source.get("機器器具", "")
-                row["block_index"] = source.get("block_index", row.get("block_index", 0))
+                row["block_index"] = source.get(
+                    "block_index", row.get("block_index", 0)
+                )
                 row["model_x"] = _resolve_model_x(source, row)
                 if source in available_sources:
                     available_sources.remove(source)
@@ -967,7 +1065,12 @@ def _propagate_equipment_in_section(section_candidates: List[Dict[str, object]])
         by_block.setdefault(block_index, []).append(row)
 
     for rows in by_block.values():
-        rows.sort(key=lambda item: (float(item.get("row_y", 0.0)), float(item.get("row_x", 0.0))))
+        rows.sort(
+            key=lambda item: (
+                float(item.get("row_y", 0.0)),
+                float(item.get("row_x", 0.0)),
+            )
+        )
         last_equipment = ""
         for row in rows:
             equipment = str(row.get("機器器具", "")).strip()
@@ -983,9 +1086,11 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
     if not words:
         return []
     tokens = [normalize_text(word.text).strip() for word in words]
-    code_indexes = [idx for idx, token in enumerate(tokens) if _is_equipment_code_token(token)]
+    code_indexes = [
+        idx for idx, token in enumerate(tokens) if _is_equipment_code_token(token)
+    ]
     if not code_indexes:
-        has_colon_token = any(":" in token or "\uFF1A" in token for token in tokens)
+        has_colon_token = any(":" in token or "\uff1a" in token for token in tokens)
         if has_colon_token:
             colon_candidates = _extract_colon_model_only_candidates(words)
             if colon_candidates:
@@ -997,7 +1102,9 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
 
     candidates: List[Dict[str, object]] = []
     for index, code_start in enumerate(code_indexes):
-        code_end = code_indexes[index + 1] if index + 1 < len(code_indexes) else len(tokens)
+        code_end = (
+            code_indexes[index + 1] if index + 1 < len(code_indexes) else len(tokens)
+        )
         segment_tokens = tokens[code_start:code_end]
         segment_text = " ".join(segment_tokens).strip()
         if not segment_text:
@@ -1011,7 +1118,9 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
             maker, model, maker_start = _extract_maker_and_model(segment_text)
             if maker and model:
                 equivalent_model = f"{maker}:{model}"
-                maker_token_index = _char_pos_to_token_index(segment_tokens, maker_start)
+                maker_token_index = _char_pos_to_token_index(
+                    segment_tokens, maker_start
+                )
                 model_x = round(float(words[code_start + maker_token_index].bbox[0]), 2)
             elif model:
                 equivalent_model = model
@@ -1019,10 +1128,16 @@ def _extract_candidates_from_cluster(cluster: RowCluster) -> List[Dict[str, obje
             remainder = " ".join(segment_tokens[1:])
             equivalent_model = _normalize_doujou_model(remainder)
             if not equivalent_model:
-                equivalent_model, model_start = _extract_model_without_colon_with_start(remainder)
+                equivalent_model, model_start = _extract_model_without_colon_with_start(
+                    remainder
+                )
                 if model_start >= 0:
-                    model_token_index = 1 + _char_pos_to_token_index(segment_tokens[1:], model_start)
-                    model_x = round(float(words[code_start + model_token_index].bbox[0]), 2)
+                    model_token_index = 1 + _char_pos_to_token_index(
+                        segment_tokens[1:], model_start
+                    )
+                    model_x = round(
+                        float(words[code_start + model_token_index].bbox[0]), 2
+                    )
 
         if not equivalent_model:
             continue
@@ -1114,12 +1229,14 @@ def _print_diagnostics_summary(diagnostics: Dict[str, object]) -> None:
             f"candidate_rows={len(candidate_rows) if isinstance(candidate_rows, list) else 0}"
         )
         if isinstance(focus_rows, list):
-            for row in focus_rows[:max(row_print_limit, 0)]:
+            for row in focus_rows[: max(row_print_limit, 0)]:
                 if not isinstance(row, dict):
                     continue
-                print(f"[E055 DEBUG][focus] page={page} y={row.get('row_y')} text={row.get('row_text', '')}")
+                print(
+                    f"[E055 DEBUG][focus] page={page} y={row.get('row_y')} text={row.get('row_text', '')}"
+                )
         if isinstance(candidate_rows, list):
-            for row in candidate_rows[:max(candidate_print_limit, 0)]:
+            for row in candidate_rows[: max(candidate_print_limit, 0)]:
                 if not isinstance(row, dict):
                     continue
                 print(
@@ -1143,7 +1260,11 @@ def _extract_page_candidate_rows(
     line_assist_config = line_assist_config or _line_assist_config()
     words = _extract_words(client, page_image)
     clusters = _cluster_by_y(words, y_cluster)
-    header_indexes = [idx for idx, cluster in enumerate(clusters) if _is_header_row(_row_text(cluster))]
+    header_indexes = [
+        idx
+        for idx, cluster in enumerate(clusters)
+        if _is_header_row(_row_text(cluster))
+    ]
     page_diag_candidates: List[Dict[str, object]] = []
     page_diag_line_assist: List[Dict[str, object]] = []
     if not header_indexes:
@@ -1170,8 +1291,12 @@ def _extract_page_candidate_rows(
 
     candidates: List[Dict[str, object]] = []
     for header_pos, header_index in enumerate(header_indexes):
-        next_header_index = header_indexes[header_pos + 1] if header_pos + 1 < len(header_indexes) else len(clusters)
-        section_clusters = clusters[header_index + 1:next_header_index]
+        next_header_index = (
+            header_indexes[header_pos + 1]
+            if header_pos + 1 < len(header_indexes)
+            else len(clusters)
+        )
+        section_clusters = clusters[header_index + 1 : next_header_index]
         section_candidates: List[Dict[str, object]] = []
         for cluster in section_clusters:
             row_candidates = _extract_candidates_from_cluster(cluster)
@@ -1194,7 +1319,9 @@ def _extract_page_candidate_rows(
         x_centers = _cluster_x_positions(x_values, tolerance=220.0)
         _assign_block_indexes_with_centers(section_candidates, x_centers=x_centers)
 
-        section_bounds = _section_bounds_from_clusters(section_clusters, page_image=page_image)
+        section_bounds = _section_bounds_from_clusters(
+            section_clusters, page_image=page_image
+        )
         should_run_assist = False
         assist_reasons: List[str] = []
         if line_assist_config.mode == "force":
@@ -1234,7 +1361,9 @@ def _extract_page_candidate_rows(
         _propagate_equipment_in_section(section_candidates)
         for row in section_candidates:
             candidates.append(row)
-            if diagnostics is not None and len(page_diag_candidates) < int(diagnostics.get("candidate_limit", 120)):
+            if diagnostics is not None and len(page_diag_candidates) < int(
+                diagnostics.get("candidate_limit", 120)
+            ):
                 page_diag_candidates.append(
                     {
                         "section_index": int(row.get("section_index", 0)),
@@ -1367,5 +1496,7 @@ def extract_e055_pdf(
         print(f"[E055 DEBUG] wrote diagnostics to {diagnostics_path}")
         result["diagnostics_file"] = str(diagnostics_path)
         result["diagnostics_git_sha"] = str(diagnostics.get("git_sha", "unknown"))
-        result["diagnostics_pdftoppm_version"] = str(diagnostics.get("pdftoppm_version", "unknown"))
+        result["diagnostics_pdftoppm_version"] = str(
+            diagnostics.get("pdftoppm_version", "unknown")
+        )
     return result

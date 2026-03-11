@@ -6,7 +6,6 @@ from google.genai import types
 
 from extractors import skills
 
-
 calculate_area_func = types.FunctionDeclaration(
     name="calculate_area",
     description="幅と高さから面積(m2)を計算する。寸法線の検算に使用。",

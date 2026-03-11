@@ -1,9 +1,12 @@
 import os
 import asyncio
+import atexit
 import csv
 import io
 import json
+import re
 import html
+import tempfile
 import logging
 import unicodedata
 from datetime import datetime
@@ -17,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 import uvicorn
+import bleach
 import markdown
 from prompts import load_prompt
 from extractors.text_extractor import extract_text_from_pdf
@@ -39,29 +43,62 @@ logger = logging.getLogger(__name__)
 # We use the environment variable GOOGLE_CLOUD_PROJECT as requested.
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
 location = os.getenv("VERTEX_LOCATION", "global")
-MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3-pro-preview")
+MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3.1-pro-preview")
 genai_client = None
-vision_service_account_json = os.getenv("VISION_SERVICE_ACCOUNT_KEY", "")
-# 固定の必須部屋リストは削除 - 図面から読み取れる情報を柔軟に処理
+# 1つのサービスアカウントキーで Vertex AI と Vision API の両方を使用（GCP_SERVICE_ACCOUNT_KEY 優先）
+_gcp_service_account_json = (
+    os.getenv("GCP_SERVICE_ACCOUNT_KEY")
+    or os.getenv("VERTEX_SERVICE_ACCOUNT_KEY")
+    or os.getenv("VISION_SERVICE_ACCOUNT_KEY")
+    or ""
+)
+vertex_service_account_json = _gcp_service_account_json
+vision_service_account_json = _gcp_service_account_json
 
-# Handle Credentials for Hugging Face Spaces
-# If VERTEX_SERVICE_ACCOUNT_KEY env var exists (JSON content), write it to a file.
-# Backward compatibility: fallback to GCP_SERVICE_ACCOUNT_KEY.
-vertex_service_account_json = os.getenv("VERTEX_SERVICE_ACCOUNT_KEY") or os.getenv("GCP_SERVICE_ACCOUNT_KEY")
+# Handle Credentials for Hugging Face Spaces / Vertex AI (secure temp file, 0o600, cleanup on exit)
+_cred_temp_paths = []
+
+
+def _cleanup_cred_temp_files():
+    for p in _cred_temp_paths:
+        try:
+            if os.path.exists(p):
+                os.unlink(p)
+        except OSError:
+            pass
+    _cred_temp_paths.clear()
+
+
 if vertex_service_account_json:
-    cred_file_path = "gcp_credentials.json"
-    with open(cred_file_path, "w") as f:
-        f.write(vertex_service_account_json)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
-    print(f"Credentials saved to {cred_file_path}")
+    fd, cred_file_path = tempfile.mkstemp(suffix=".json", prefix="gcp_credentials_")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(vertex_service_account_json)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
+        _cred_temp_paths.append(cred_file_path)
+        atexit.register(_cleanup_cred_temp_files)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(cred_file_path)
+        except OSError:
+            pass
+        raise
 
 try:
     if project_id:
-        genai_client = genai.Client(vertexai=True, project=project_id, location=location)
+        genai_client = genai.Client(
+            vertexai=True, project=project_id, location=location
+        )
     else:
         genai_client = genai.Client(vertexai=True, location=location)
 except Exception as exc:
     print(f"Failed to initialize Vertex AI client: {exc}")
+
 
 def _stringify_cell(value):
     if value is None:
@@ -74,6 +111,7 @@ def _stringify_cell(value):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
 
+
 def _extract_json(raw_text):
     if not raw_text:
         return None
@@ -85,11 +123,12 @@ def _extract_json(raw_text):
         end = cleaned.rfind("}")
         if start == -1 or end == -1 or end <= start:
             return None
-        candidate = cleaned[start:end + 1]
+        candidate = cleaned[start : end + 1]
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
             return None
+
 
 def _normalize_columns(columns, rows):
     normalized = []
@@ -104,11 +143,13 @@ def _normalize_columns(columns, rows):
         key = str(key)
         if key in seen:
             key = f"{key}_{len(normalized) + 1}"
-        normalized.append({
-            "key": key,
-            "label": str(label) if label is not None else key,
-            "hint": str(col.get("hint") or "")
-        })
+        normalized.append(
+            {
+                "key": key,
+                "label": str(label) if label is not None else key,
+                "hint": str(col.get("hint") or ""),
+            }
+        )
         seen.add(key)
     if not normalized:
         for row in rows:
@@ -122,29 +163,34 @@ def _normalize_columns(columns, rows):
                 seen.add(key)
     return normalized
 
+
 def _build_table_html(columns, rows):
     safe_columns = _normalize_columns(columns, rows)
     safe_rows = [row for row in rows if isinstance(row, dict)]
     if not safe_columns:
         safe_columns = [{"key": "_empty", "label": "データなし", "hint": ""}]
 
-    table_class = "min-w-full table-auto border border-stone/30 overflow-hidden bg-paper text-ink"
+    table_class = (
+        "min-w-full table-auto border border-stone/30 overflow-hidden bg-paper text-ink"
+    )
     thead_class = "bg-paper-dark"
     th_class = "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-wood-dark border-b border-wood"
-    td_class = "px-4 py-3 text-sm text-ink-light border-b border-stone/20 whitespace-pre-wrap"
+    td_class = (
+        "px-4 py-3 text-sm text-ink-light border-b border-stone/20 whitespace-pre-wrap"
+    )
     row_class = "hover:bg-paper-dark/50"
     empty_td_class = "px-4 py-6 text-sm text-ink-muted text-center"
 
     header_cells = []
     for col in safe_columns:
         label = html.escape(col["label"], quote=True)
-        header_cells.append(f"<th class=\"{th_class}\">{label}</th>")
+        header_cells.append(f'<th class="{th_class}">{label}</th>')
 
     body_rows = []
     if not safe_rows:
         colspan = len(safe_columns)
         body_rows.append(
-            f"<tr class=\"{row_class}\"><td colspan=\"{colspan}\" class=\"{empty_td_class}\">データがありません</td></tr>"
+            f'<tr class="{row_class}"><td colspan="{colspan}" class="{empty_td_class}">データがありません</td></tr>'
         )
     else:
         for row in safe_rows:
@@ -153,15 +199,16 @@ def _build_table_html(columns, rows):
                 key = col["key"]
                 value = _stringify_cell(row.get(key, ""))
                 cell_text = html.escape(value, quote=True)
-                cells.append(f"<td class=\"{td_class}\">{cell_text}</td>")
-            body_rows.append(f"<tr class=\"{row_class}\">" + "".join(cells) + "</tr>")
+                cells.append(f'<td class="{td_class}">{cell_text}</td>')
+            body_rows.append(f'<tr class="{row_class}">' + "".join(cells) + "</tr>")
 
     return (
-        f"<table class=\"{table_class}\">"
+        f'<table class="{table_class}">'
         f"<thead class=\"{thead_class}\"><tr>{''.join(header_cells)}</tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody>"
         f"</table>"
     )
+
 
 def _build_summary_html(summary):
     if not isinstance(summary, dict) or not summary:
@@ -191,15 +238,16 @@ def _build_summary_html(summary):
     items = []
     for label, value in rows:
         items.append(
-            f"<div><div class=\"{label_class}\">{html.escape(label)}</div>"
-            f"<div class=\"{value_class}\">{html.escape(str(value))}</div></div>"
+            f'<div><div class="{label_class}">{html.escape(label)}</div>'
+            f'<div class="{value_class}">{html.escape(str(value))}</div></div>'
         )
     return (
-        f"<section class=\"{card_class}\">"
-        f"<div class=\"{title_class}\">住戸概要</div>"
+        f'<section class="{card_class}">'
+        f'<div class="{title_class}">住戸概要</div>'
         f"<div class=\"{grid_class}\">{''.join(items)}</div>"
         f"</section>"
     )
+
 
 def _render_parse_error(raw_text, reason):
     snippet = (raw_text or "").strip() or "(empty response)"
@@ -214,6 +262,7 @@ def _render_parse_error(raw_text, reason):
     </div>
     """
 
+
 def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=None):
     """Build a script tag that logs debug info to browser console."""
     text_snippet = (extracted_text or "").strip() or "(no text extracted)"
@@ -225,17 +274,15 @@ def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=
     if len(raw_snippet) > 5000:
         raw_snippet = raw_snippet[:5000] + "\n... (truncated)"
 
-    # Escape for JavaScript string (handle quotes, newlines, backslashes)
+    # Escape for JavaScript string (prevent XSS: </script>, backslashes, backticks, ${)
     def js_escape(s):
-        return (s
-            .replace("\\", "\\\\")
-            .replace("`", "\\`")
-            .replace("${", "\\${"))
+        s = re.sub(r"(?i)</script>", "<\\/script>", s)
+        return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
     text_escaped = js_escape(text_snippet)
     regex_escaped = js_escape(regex_json_str)
     raw_escaped = js_escape(raw_snippet)
-    
+
     # Build tool calls log script
     tool_calls_script = ""
     if tool_calls_log:
@@ -282,6 +329,7 @@ def _is_empty_value(value):
         return v == "" or v == "-" or v == "－" or v == "—"
     return False
 
+
 def _get_diagram_type(data):
     """Get the diagram type from the parsed data."""
     if not isinstance(data, dict):
@@ -291,12 +339,13 @@ def _get_diagram_type(data):
         return diagram_type
     return "unknown"
 
+
 def _validate_room_areas(data):
     """Validate room_areas based on diagram type.
-    
+
     For 'detailed' diagrams: Check if rooms have empty area_m2 when calculation is possible.
     For 'simple' diagrams: Only check if calculation/tatami exists but area_m2 is empty.
-    
+
     Returns:
         tuple: (warnings, found_rooms, warning_rooms) where:
                - warnings is a list of warning messages
@@ -306,35 +355,35 @@ def _validate_room_areas(data):
     warnings = []
     found_rooms = []
     warning_rooms = []
-    
+
     if not isinstance(data, dict):
         return warnings, found_rooms, warning_rooms
-    
+
     diagram_type = _get_diagram_type(data)
     room_rows = data.get("data", {}).get("room_areas", [])
     if not isinstance(room_rows, list):
         return warnings, found_rooms, warning_rooms
-    
+
     for row in room_rows:
         if not isinstance(row, dict):
             continue
         name = str(row.get("room_name") or "").strip()
         if not name:
             continue
-        
+
         found_rooms.append(name)
         area_m2 = row.get("area_m2")
         calculation = str(row.get("calculation") or "").strip()
         tatami = row.get("tatami")
-        
+
         # area_m2が空欄かどうかを判定
         area_is_empty = _is_empty_value(area_m2)
         tatami_is_empty = _is_empty_value(tatami)
-        
+
         if not area_is_empty:
             # area_m2がある場合はOK
             continue
-        
+
         # area_m2が空欄の場合の検証
         # 1. calculationがある場合は必ず警告（どちらのタイプでも）
         if calculation:
@@ -353,7 +402,16 @@ def _validate_room_areas(data):
             # 仕上表に記載があるかどうかをチェック（床、壁、天井などの情報があるか）
             has_finish_info = any(
                 not _is_empty_value(row.get(key))
-                for key in ["floor", "wall", "ceiling", "baseboard", "床", "壁", "天井", "巾木"]
+                for key in [
+                    "floor",
+                    "wall",
+                    "ceiling",
+                    "baseboard",
+                    "床",
+                    "壁",
+                    "天井",
+                    "巾木",
+                ]
             )
             if has_finish_info:
                 warnings.append(
@@ -361,7 +419,7 @@ def _validate_room_areas(data):
                 )
                 warning_rooms.append(name)
         # simple図面の場合は、記載がなければ空欄でもOK
-    
+
     return warnings, found_rooms, warning_rooms
 
 
@@ -382,6 +440,29 @@ def _get_function_calls(response):
     return func_calls
 
 
+def _get_response_text(response):
+    """Get full text from the model response. Uses parts when response.text is empty or raises.
+    Gemini may return mixed parts (e.g. thought + text or function_call + text); .text can then
+    be empty or raise ValueError. This helper concatenates text from all text parts.
+    """
+    try:
+        t = getattr(response, "text", None)
+        if t and isinstance(t, str) and t.strip():
+            return t
+    except (ValueError, AttributeError, TypeError):
+        pass
+    out = []
+    for candidate in getattr(response, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        if not content:
+            continue
+        for part in getattr(content, "parts", None) or []:
+            text = getattr(part, "text", None)
+            if text and isinstance(text, str):
+                out.append(text)
+    return "".join(out).strip() if out else ""
+
+
 def _execute_function_call(func_call):
     name = getattr(func_call, "name", "")
     args = getattr(func_call, "args", None) or {}
@@ -397,7 +478,7 @@ def _execute_function_call(func_call):
 
 def _generate_with_tools(client, model_name, parts, generation_config):
     """Handle chat + tool execution loop with the google-genai models API.
-    
+
     Returns:
         tuple: (response, tool_calls_log) where tool_calls_log is a list of dicts
                containing name, args, and result for each tool call.
@@ -429,13 +510,15 @@ def _generate_with_tools(client, model_name, parts, generation_config):
             name, args, payload = _execute_function_call(func_call)
             tool_part = types.Part.from_function_response(name=name, response=payload)
             tool_responses.append(tool_part)
-            
+
             # Log the tool call
-            tool_calls_log.append({
-                "name": name,
-                "args": dict(args) if args else {},
-                "result": payload,
-            })
+            tool_calls_log.append(
+                {
+                    "name": name,
+                    "args": dict(args) if args else {},
+                    "result": payload,
+                }
+            )
             print(f"[Tool Call] {name}({args}) -> {payload}")
 
         # Append model turn and tool responses to the conversation history
@@ -448,6 +531,7 @@ def _generate_with_tools(client, model_name, parts, generation_config):
             config=config,
         )
     return response, tool_calls_log
+
 
 def _csv_profile(csv_path: Path) -> dict:
     with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
@@ -469,7 +553,9 @@ def _csv_profile_no_header(csv_path: Path) -> dict:
     }
 
 
-def _render_job_result_html(kind: str, job_id: str, rows: int, columns: list[str]) -> str:
+def _render_job_result_html(
+    kind: str, job_id: str, rows: int, columns: list[str]
+) -> str:
     label_map = {
         "raster": "Raster",
         "vector": "Vector",
@@ -514,7 +600,10 @@ CUSTOMER_SUMMARY_COLUMNS = [
     ("機器ID", ["機器ID", "機器番号", "機械番号"]),
     ("電気図 台数", ["電気図 台数", "raster_match_count", "raster_台数_calc"]),
     ("電気図 記載名", ["電気図 記載名", "電気図記載名"]),
-    ("電気図 容量(kW)", ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"]),
+    (
+        "電気図 容量(kW)",
+        ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"],
+    ),
     ("電気図 図面番号", ["電気図 図面番号", "図面番号", "図番"]),
     ("電気図 記載トレース", ["電気図 記載トレース"]),
 ]
@@ -535,7 +624,11 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
     (
         "容量（KW）",
         [
-            ("容量_電気図", "電気図", ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"]),
+            (
+                "容量_電気図",
+                "電気図",
+                ["電気図 容量(kW)", "電気図 容量合計(kW)", "raster_容量(kW)_sum"],
+            ),
             (
                 "容量_機械図",
                 "機械図",
@@ -552,7 +645,11 @@ CUSTOMER_DISPLAY_GROUP_COLUMNS = [
     (
         "台数",
         [
-            ("台数_電気図", "電気図", ["電気図 台数", "raster_match_count", "raster_台数_calc"]),
+            (
+                "台数_電気図",
+                "電気図",
+                ["電気図 台数", "raster_match_count", "raster_台数_calc"],
+            ),
             ("台数_機械図", "機械図", ["機械図 台数", "台数", "vector_台数_numeric"]),
             ("台数_差分", "差分", ["台数差", "台数差（電気図-機械図）", "台数差分"]),
         ],
@@ -637,18 +734,18 @@ def _build_customer_table_header_html() -> str:
     top_row_cells = []
     for _key, label, _candidates in CUSTOMER_DISPLAY_SINGLE_COLUMNS:
         top_row_cells.append(
-            f"<th class=\"{th_class}\" style=\"{th_style}\" rowspan=\"2\">{html.escape(label)}</th>"
+            f'<th class="{th_class}" style="{th_style}" rowspan="2">{html.escape(label)}</th>'
         )
     for group_label, children in CUSTOMER_DISPLAY_GROUP_COLUMNS:
         top_row_cells.append(
-            f"<th class=\"{th_class}\" style=\"{th_style}\" colspan=\"{len(children)}\">{html.escape(group_label)}</th>"
+            f'<th class="{th_class}" style="{th_style}" colspan="{len(children)}">{html.escape(group_label)}</th>'
         )
 
     bottom_row_cells = []
     for _group_label, children in CUSTOMER_DISPLAY_GROUP_COLUMNS:
         for _key, child_label, _candidates in children:
             bottom_row_cells.append(
-                f"<th class=\"{th_class}\" style=\"{th_style}\">{html.escape(child_label)}</th>"
+                f'<th class="{th_class}" style="{th_style}">{html.escape(child_label)}</th>'
             )
 
     return f"<tr>{''.join(top_row_cells)}</tr><tr>{''.join(bottom_row_cells)}</tr>"
@@ -697,13 +794,20 @@ def _compute_customer_summary(
 
         panel_has_detail = any(
             str(row.get(key, "") or "").strip()
-            for key in ["電気図 記載名", "電気図 容量(kW)", "電気図 図面番号", "電気図 記載トレース"]
+            for key in [
+                "電気図 記載名",
+                "電気図 容量(kW)",
+                "電気図 図面番号",
+                "電気図 記載トレース",
+            ]
         )
 
         if vector_row_count is None and equipment_id and reason != "機械図に記載なし":
             equipment_count += 1
 
-        if raster_row_count is None and (panel_has_detail or (panel_units is not None and panel_units > 0)):
+        if raster_row_count is None and (
+            panel_has_detail or (panel_units is not None and panel_units > 0)
+        ):
             panel_count += 1
 
         if id_match == "◯":
@@ -744,11 +848,11 @@ def _build_customer_summary_html(
         for label in ["機械図記載", "電気図記載", "ID照合一致", "不一致", "要確認"]
     ]
     summary_cells = "".join(
-        f"<div class=\"rounded border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-900\">"
+        f'<div class="rounded border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-900">'
         f"{html.escape(part)}</div>"
         for part in parts
     )
-    return f"<div class=\"mb-3 grid grid-cols-2 gap-2 md:grid-cols-5\">{summary_cells}</div>"
+    return f'<div class="customer-summary-grid mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">{summary_cells}</div>'
 
 
 def _build_customer_table_html(
@@ -758,7 +862,9 @@ def _build_customer_table_html(
     raster_row_count: Optional[int] = None,
 ) -> str:
     rows = _read_csv_dict_rows(unified_csv_path)
-    diff_note_html = f'<p class="mt-2 text-xs text-stone-600">{html.escape(DIFF_NOTE_TEXT)}</p>'
+    diff_note_html = (
+        f'<p class="mt-2 text-xs text-stone-600">{html.escape(DIFF_NOTE_TEXT)}</p>'
+    )
     header_html = _build_customer_table_header_html()
     display_columns = _customer_display_leaf_columns()
     display_column_count = len(display_columns)
@@ -773,10 +879,10 @@ def _build_customer_table_html(
         )
         return (
             summary_html
-            + "<table class=\"customer-compare-table w-full border-collapse border border-stone-300 text-sm\">"
+            + '<table class="customer-compare-table w-full border-collapse border border-stone-300 text-sm">'
             f"<thead>{header_html}</thead>"
-            "<tbody><tr><td class=\"border border-stone-300 px-3 py-6 text-center text-stone-500\""
-            f" colspan=\"{display_column_count}\">データがありません</td></tr></tbody></table>"
+            '<tbody><tr><td class="border border-stone-300 px-3 py-6 text-center text-stone-500"'
+            f' colspan="{display_column_count}">データがありません</td></tr></tbody></table>'
             f"{diff_note_html}"
         )
 
@@ -793,13 +899,13 @@ def _build_customer_table_html(
             value = mapped_row[key]
             align_class = "text-left" if key == "機器ID" else "text-center"
             mapped_cells.append(
-                f"<td class=\"border border-stone-300 px-3 py-2 text-sm {align_class}\">{html.escape(value)}</td>"
+                f'<td class="border border-stone-300 px-3 py-2 text-sm {align_class}">{html.escape(value)}</td>'
             )
         body_rows.append("<tr>" + "".join(mapped_cells) + "</tr>")
 
     return (
         summary_html
-        + "<table class=\"customer-compare-table w-full border-collapse border border-stone-300 text-sm\">"
+        + '<table class="customer-compare-table w-full border-collapse border border-stone-300 text-sm">'
         f"<thead>{header_html}</thead>"
         f"<tbody>{''.join(body_rows)}</tbody></table>"
         f"{diff_note_html}"
@@ -902,8 +1008,7 @@ E251_TABLE_COLUMN_SOURCE_KEYS = {
 def _build_e055_table_html(e055_csv_path: Path) -> str:
     rows = _read_csv_dict_rows(e055_csv_path)
     columns = [
-        {"key": column, "label": column, "hint": ""}
-        for column in E055_TABLE_COLUMNS
+        {"key": column, "label": column, "hint": ""} for column in E055_TABLE_COLUMNS
     ]
     normalized_rows = []
     for row in rows:
@@ -922,8 +1027,7 @@ def _build_e055_table_html(e055_csv_path: Path) -> str:
 def _build_e251_table_html(e251_csv_path: Path) -> str:
     rows = _read_csv_dict_rows(e251_csv_path)
     columns = [
-        {"key": column, "label": column, "hint": ""}
-        for column in E251_TABLE_COLUMNS
+        {"key": column, "label": column, "hint": ""} for column in E251_TABLE_COLUMNS
     ]
     normalized_rows = []
     for row in rows:
@@ -943,7 +1047,7 @@ def _build_e142_rows_html(e142_csv_path: Path) -> str:
     rows = _read_csv_rows(e142_csv_path)
     if not rows:
         return (
-            "<div class=\"rounded border border-stone-300 bg-white px-4 py-6 text-center text-sm text-stone-500\">"
+            '<div class="rounded border border-stone-300 bg-white px-4 py-6 text-center text-sm text-stone-500">'
             "データがありません"
             "</div>"
         )
@@ -953,7 +1057,7 @@ def _build_e142_rows_html(e142_csv_path: Path) -> str:
         csv.writer(row_buffer).writerow(row)
         text = row_buffer.getvalue().rstrip("\r\n")
         line_items.append(
-            "<li class=\"rounded border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-ink-light\">"
+            '<li class="rounded border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-ink-light">'
             f"{html.escape(text)}"
             "</li>"
         )
@@ -1274,37 +1378,37 @@ def _run_unified_job(raster_job_id: str, vector_job_id: str):
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/me-check", response_class=HTMLResponse)
 async def read_me_check(request: Request):
-    return templates.TemplateResponse("me-check.html", {"request": request})
+    return templates.TemplateResponse(request, "me-check.html")
 
 
 @app.get("/me-check/develop", response_class=HTMLResponse)
 async def read_develop(request: Request):
-    return templates.TemplateResponse("develop.html", {"request": request})
+    return templates.TemplateResponse(request, "develop.html")
 
 
 @app.get("/e-055", response_class=HTMLResponse)
 async def read_e055(request: Request):
-    return templates.TemplateResponse("e-055.html", {"request": request})
+    return templates.TemplateResponse(request, "e-055.html")
 
 
 @app.get("/e-251", response_class=HTMLResponse)
 async def read_e251(request: Request):
-    return templates.TemplateResponse("e-251.html", {"request": request})
+    return templates.TemplateResponse(request, "e-251.html")
 
 
 @app.get("/e-142", response_class=HTMLResponse)
 async def read_e142(request: Request):
-    return templates.TemplateResponse("e-142.html", {"request": request})
+    return templates.TemplateResponse(request, "e-142.html")
 
 
 @app.get("/area", response_class=HTMLResponse)
 async def read_area(request: Request):
-    return templates.TemplateResponse("area.html", {"request": request})
+    return templates.TemplateResponse(request, "area.html")
 
 
 @app.post("/area/upload", response_class=HTMLResponse)
@@ -1315,18 +1419,18 @@ async def handle_area_upload(file: UploadFile = File(...)):
             <strong>Error:</strong> Please upload a valid PDF file.
         </div>
         """
-    
+
     try:
         # Read file content
         file_bytes = await file.read()
-        
+
         # Extract text from PDF for rule-based fallback
         extracted_text = extract_text_from_pdf(file_bytes)
         regex_summary = extract_summary_areas(extracted_text)
 
         # Prepare the request for Vertex AI
         pdf_part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
-        
+
         prompt_text = load_prompt("area_extract")
 
         generation_config = {
@@ -1345,26 +1449,26 @@ async def handle_area_upload(file: UploadFile = File(...)):
                 [pdf_part, combined_prompt_part],
                 generation_config=generation_config,
             )
-            raw_text = response.text or ""
+            raw_text = _get_response_text(response) or ""
             data = _extract_json(raw_text)
             return response, tool_calls_log, raw_text, data
 
-        response, tool_calls_log, raw_text, data = _run_generation()
+        _response, tool_calls_log, raw_text, data = _run_generation()
         if not isinstance(data, dict):
             return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
 
         # 図面タイプを取得
         diagram_type = _get_diagram_type(data)
         print(f"[Debug] 図面タイプ: {diagram_type}")
-        
+
         # 柔軟な検証: 読み取れる情報があるのに空欄になっている場合のみ警告
         warnings, found_rooms, warning_rooms = _validate_room_areas(data)
-        
+
         if warnings:
             # Debug: log warnings
             print(f"[Debug] 検出された室: {found_rooms}")
             print(f"[Debug] 警告: {warnings}")
-            
+
             # 警告がある場合のみ、再生成を試みる（detailed図面のみ）
             if diagram_type == "detailed":
                 extra_instruction = (
@@ -1381,37 +1485,71 @@ async def handle_area_upload(file: UploadFile = File(...)):
                     "推測や一般値は禁止。寸法(mm)を明示してください。\n"
                     "「-」や空欄にせず、必ず数値で埋めてください。"
                 )
-                response, tool_calls_log, raw_text, data = _run_generation(extra_instruction)
+                _response, tool_calls_log, raw_text, data = _run_generation(
+                    extra_instruction
+                )
                 if not isinstance(data, dict):
-                    return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
-                
+                    return _render_parse_error(
+                        raw_text, "JSONオブジェクトが見つかりません。"
+                    )
+
                 # 再検証
                 warnings, found_rooms, warning_rooms = _validate_room_areas(data)
-            
+
             if warnings:
                 # 警告があってもエラーにはしない（柔軟性のため）
                 print(f"[Warning] 以下の警告がありますが、処理を続行します: {warnings}")
 
         report_md = data.get("report_markdown", "")
         if not report_md:
-            return _render_parse_error(raw_text, "レポート内容（report_markdown）が空です。")
+            return _render_parse_error(
+                raw_text, "レポート内容（report_markdown）が空です。"
+            )
 
-        # Convert Markdown to HTML
-        report_html = markdown.markdown(
-            report_md,
-            extensions=['tables', 'fenced_code']
+        # Convert Markdown to HTML and sanitize (markdown does not strip raw HTML)
+        report_html = markdown.markdown(report_md, extensions=["tables", "fenced_code"])
+        report_html = bleach.clean(
+            report_html,
+            tags={
+                "p",
+                "ul",
+                "ol",
+                "li",
+                "strong",
+                "em",
+                "code",
+                "pre",
+                "table",
+                "thead",
+                "tbody",
+                "tr",
+                "th",
+                "td",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "a",
+            },
+            attributes={"a": ["href"]},
+            protocols={"http", "https", "mailto"},
+            strip=True,
         )
 
         # Build debug info (outputs to browser console)
-        debug_script = _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log)
-        
+        debug_script = _build_debug_script(
+            extracted_text, regex_summary, raw_text, tool_calls_log
+        )
+
         # Wrapping in a styled div for better look
         styled_report = f"""
         <div class="prose max-w-5xl mx-auto bg-paper p-6 rounded-sm border border-stone/30 space-y-6">
             {report_html}
         </div>
         """
-        
+
         return styled_report + debug_script
 
     except Exception as e:
@@ -1505,7 +1643,9 @@ async def handle_e142_upload(file: UploadFile = File(...)):
         )
     except Exception:
         logger.exception("E-142 extraction failed")
-        return _render_e142_error_html("An internal error occurred while processing your request.")
+        return _render_e142_error_html(
+            "An internal error occurred while processing your request."
+        )
 
 
 @app.post("/customer/run", response_class=HTMLResponse)

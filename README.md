@@ -18,7 +18,7 @@ license: mit
 建築図面（PDF）から部屋情報を自動抽出し、Markdownレポートを生成します。  
 寸法線がある詳細図面と面積が記載されている簡易図面の両方に対応し、AIエージェント（Function Calling）で高精度な抽出・検証を行います。
 
-📄 **[Plan2Table 詳細ドキュメント](docs/plan2table.md)**
+📄 **[Plan2Table 詳細ドキュメント](docs/plan2table.md)**（開発環境のセットアップ手順も記載）
   
 📄 **[How To Parse（境界信号ベース）](docs/how-to-parse.md)**
 

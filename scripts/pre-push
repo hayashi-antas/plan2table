@@ -1,0 +1,6 @@
+#!/bin/sh
+# Pre-push hook: run make check-all so lint/format is enforced before push.
+# Install with: make install-hooks
+set -e
+echo "Running make check-all before push..."
+exec make check-all

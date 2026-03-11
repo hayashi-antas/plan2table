@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Set, Tuple
 try:
     from google.cloud import vision
     from google.oauth2 import service_account
+
     _VISION_IMPORT_ERROR = None
 except Exception as exc:  # pragma: no cover - depends on local env
     vision = None
@@ -28,11 +29,12 @@ except Exception as exc:  # pragma: no cover - depends on local env
 from PIL import Image, ImageDraw
 import pdfplumber
 
-
 CORE_COLUMNS = ["機器番号", "機器名称", "電圧(V)", "容量(kW)"]
 DRAWING_NUMBER_COLUMN = "図面番号"
 OUTPUT_COLUMNS = CORE_COLUMNS + [DRAWING_NUMBER_COLUMN]
-RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+RESAMPLE_LANCZOS = (
+    Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+)
 
 SIDE_SPLITS = {
     "L": (0.0, 0.0, 0.5, 1.0),
@@ -72,9 +74,7 @@ DRAWING_NO_LABEL_X_TOLERANCE_RIGHT = 320.0
 DRAWING_NO_VALUE_Y_CLUSTER = 12.0
 DRAWING_NO_BOTTOM_REGION_Y_RATIO = 0.70
 DRAWING_NO_BOTTOM_REGION_X_RATIO = 0.70
-DRAWING_NO_PATTERN = re.compile(
-    r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$"
-)
+DRAWING_NO_PATTERN = re.compile(r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$")
 
 ROW_FILTER_NAME_KEYWORDS = [
     "ポンプ",
@@ -183,7 +183,9 @@ def parse_args() -> argparse.Namespace:
         description="Google Cloud Vision APIでPDF表と図面番号を抽出する"
     )
     parser.add_argument("--pdf", default="/data/電気図1.pdf", help="入力PDFパス")
-    parser.add_argument("--page", type=int, default=1, help="1始まりのページ番号（0以下で全ページ）")
+    parser.add_argument(
+        "--page", type=int, default=1, help="1始まりのページ番号（0以下で全ページ）"
+    )
     parser.add_argument("--dpi", type=int, default=300, help="pdftoppmのDPI")
     parser.add_argument("--out", default="/data/vision_output.csv", help="出力CSVパス")
     parser.add_argument("--debug-dir", default="/debug", help="デバッグ画像保存先")
@@ -328,7 +330,9 @@ def resolve_drawing_number(
     if drawing_number:
         return drawing_number, "vision"
 
-    drawing_number = extract_drawing_number_from_text_layer(pdf_path=pdf_path, page=page)
+    drawing_number = extract_drawing_number_from_text_layer(
+        pdf_path=pdf_path, page=page
+    )
     if drawing_number:
         return drawing_number, "text_layer"
     return "", "none"
@@ -374,7 +378,9 @@ def resolve_target_pages(total_pages: int, page: int) -> List[int]:
     if page <= 0:
         return list(range(1, total_pages + 1))
     if page > total_pages:
-        raise ValueError(f"指定ページがPDF範囲外です: page={page}, total_pages={total_pages}")
+        raise ValueError(
+            f"指定ページがPDF範囲外です: page={page}, total_pages={total_pages}"
+        )
     return [page]
 
 
@@ -434,7 +440,9 @@ def cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
     if not words:
         return []
     sorted_words = sorted(words, key=lambda w: w.cy)
-    clusters: List[RowCluster] = [RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])]
+    clusters: List[RowCluster] = [
+        RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])
+    ]
     for word in sorted_words[1:]:
         last = clusters[-1]
         if abs(word.cy - last.row_y) <= threshold:
@@ -474,7 +482,12 @@ def _header_categories_from_text(text: str) -> Set[str]:
         categories.add("code")
     if "機器" in normalized and ("番号" in normalized or "記号" in normalized):
         categories.add("code")
-    if ("機" in normalized and "器" in normalized and "番" in normalized and "号" in normalized):
+    if (
+        "機" in normalized
+        and "器" in normalized
+        and "番" in normalized
+        and "号" in normalized
+    ):
         categories.add("code")
 
     if "名称" in normalized or ("名" in normalized and "称" in normalized):
@@ -500,7 +513,9 @@ def _cluster_bbox(cluster: RowCluster) -> Tuple[float, float, float, float]:
     return (min(xs0), min(ys0), max(xs1), max(ys1))
 
 
-def _bbox_intersection(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+def _bbox_intersection(
+    a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]
+) -> float:
     ax0, ay0, ax1, ay1 = a
     bx0, by0, bx1, by1 = b
     w = max(0.0, min(ax1, bx1) - max(ax0, bx0))
@@ -512,7 +527,9 @@ def _bbox_area(b: Tuple[float, float, float, float]) -> float:
     return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
 
-def _bbox_iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+def _bbox_iou(
+    a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]
+) -> float:
     inter = _bbox_intersection(a, b)
     if inter <= 0:
         return 0.0
@@ -522,17 +539,23 @@ def _bbox_iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float
     return inter / union
 
 
-def _bbox_union(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+def _bbox_union(
+    a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]
+) -> Tuple[float, float, float, float]:
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
-def _x_overlap_ratio(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+def _x_overlap_ratio(
+    a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]
+) -> float:
     w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     base = max(1.0, min(a[2] - a[0], b[2] - b[0]))
     return w / base
 
 
-def detect_header_anchors(words: List[WordBox], y_cluster: float = HEADER_Y_CLUSTER) -> List[HeaderAnchor]:
+def detect_header_anchors(
+    words: List[WordBox], y_cluster: float = HEADER_Y_CLUSTER
+) -> List[HeaderAnchor]:
     clusters = cluster_by_y(words, y_cluster)
     anchors: List[HeaderAnchor] = []
     for cluster in clusters:
@@ -562,7 +585,9 @@ def detect_header_anchors(words: List[WordBox], y_cluster: float = HEADER_Y_CLUS
         if same_row and same_x:
             prev_score = len(prev.categories)
             cur_score = len(anchor.categories)
-            if cur_score > prev_score or (cur_score == prev_score and len(anchor.text) > len(prev.text)):
+            if cur_score > prev_score or (
+                cur_score == prev_score and len(anchor.text) > len(prev.text)
+            ):
                 deduped[-1] = anchor
             continue
         deduped.append(anchor)
@@ -584,15 +609,14 @@ def _infer_candidate_bbox(
         for w in words
         if (left - 20.0) <= w.cx <= (right + 20.0)
         and (y0 - 10.0) <= w.cy
-        and (
-            w.cy <= scan_bottom
-            or (w.bbox[1] <= scan_bottom <= w.bbox[3])
-        )
+        and (w.cy <= scan_bottom or (w.bbox[1] <= scan_bottom <= w.bbox[3]))
     ]
     if nearby:
         left = max(0.0, min(left, min(w.bbox[0] for w in nearby) - 12.0))
         right = min(float(frame_w), max(right, max(w.bbox[2] for w in nearby) + 12.0))
-        bottom = min(float(frame_h), max(max(w.bbox[3] for w in nearby) + 20.0, y1 + 80.0))
+        bottom = min(
+            float(frame_h), max(max(w.bbox[3] for w in nearby) + 20.0, y1 + 80.0)
+        )
     else:
         bottom = min(float(frame_h), y1 + 220.0)
     bottom = max(bottom, y1 + TABLE_MIN_HEIGHT)
@@ -613,12 +637,18 @@ def _merge_close_candidates(candidates: List[TableCandidate]) -> List[TableCandi
         overlap = _bbox_iou(candidate.bbox, last.bbox) >= TABLE_MERGE_IOU
         if near_header or overlap:
             union_bbox = _bbox_union(candidate.bbox, last.bbox)
-            preferred_text = candidate.header_text if len(candidate.header_text) > len(last.header_text) else last.header_text
+            preferred_text = (
+                candidate.header_text
+                if len(candidate.header_text) > len(last.header_text)
+                else last.header_text
+            )
             merged[-1] = TableCandidate(
                 bbox=union_bbox,
                 header_y=min(candidate.header_y, last.header_y),
                 header_text=preferred_text,
-                categories=tuple(sorted(set(candidate.categories) | set(last.categories))),
+                categories=tuple(
+                    sorted(set(candidate.categories) | set(last.categories))
+                ),
             )
             continue
         merged.append(candidate)
@@ -626,7 +656,9 @@ def _merge_close_candidates(candidates: List[TableCandidate]) -> List[TableCandi
 
 
 def detect_table_candidates_from_page_words(
-    words: List[WordBox], frame_size: Tuple[int, int], y_cluster: float = HEADER_Y_CLUSTER
+    words: List[WordBox],
+    frame_size: Tuple[int, int],
+    y_cluster: float = HEADER_Y_CLUSTER,
 ) -> List[TableCandidate]:
     anchors = detect_header_anchors(words, y_cluster=y_cluster)
     if not anchors:
@@ -654,7 +686,7 @@ def detect_table_candidates_from_page_words(
     for idx, base in enumerate(candidates):
         bx0, by0, bx1, by1 = base.bbox
         next_top = by1
-        for later in candidates[idx + 1:]:
+        for later in candidates[idx + 1 :]:
             if later.header_y <= base.header_y:
                 continue
             if _x_overlap_ratio(base.bbox, later.bbox) < 0.2:
@@ -908,7 +940,9 @@ def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
     if code_match:
         pure_code = code_match.group(1)
         tail = normalize_text(code)[len(pure_code) :]
-        if tail and (contains_japanese(tail) or any(k in tail for k in ROW_FILTER_NAME_KEYWORDS)):
+        if tail and (
+            contains_japanese(tail) or any(k in tail for k in ROW_FILTER_NAME_KEYWORDS)
+        ):
             code = pure_code
             name = f"{tail}{name}"
 
@@ -920,7 +954,9 @@ def normalize_row_cells(row: Dict[str, str]) -> Dict[str, str]:
             code = m.group(1)
             code_upper = code
 
-    if code and not re.search(r"[A-Z]{1,4}-[A-Z0-9]{1,6}", normalize_text(code).upper()):
+    if code and not re.search(
+        r"[A-Z]{1,4}-[A-Z0-9]{1,6}", normalize_text(code).upper()
+    ):
         if name:
             name = f"{code}{name}"
             code = ""
@@ -994,7 +1030,9 @@ def is_data_row(row: Dict[str, str]) -> bool:
 
     if has_code and (has_name or has_voltage_num or has_power_num):
         return True
-    if any(k in name for k in ROW_FILTER_NAME_KEYWORDS) and (has_voltage_num or has_power_num):
+    if any(k in name for k in ROW_FILTER_NAME_KEYWORDS) and (
+        has_voltage_num or has_power_num
+    ):
         return True
     if "同上用フロートスイッチ" in name or "操作電源" in name:
         return True
@@ -1038,7 +1076,9 @@ def infer_dynamic_data_start_y(words: List[WordBox], header_y: float) -> float:
     header_bottom = max(w.bbox[3] for w in header_words)
     heights = [max(1.0, w.bbox[3] - w.bbox[1]) for w in header_words]
     median_height = float(median(heights)) if heights else 0.0
-    offset = min(TABLE_MAX_START_OFFSET, max(TABLE_MIN_START_OFFSET, median_height * 1.2))
+    offset = min(
+        TABLE_MAX_START_OFFSET, max(TABLE_MIN_START_OFFSET, median_height * 1.2)
+    )
     return header_bottom + offset
 
 
@@ -1074,7 +1114,8 @@ def _rows_from_words_with_meta(
         if (
             cluster.row_y >= start_y
             or (
-                min(w.bbox[1] for w in cluster.words) <= start_y
+                min(w.bbox[1] for w in cluster.words)
+                <= start_y
                 <= max(w.bbox[3] for w in cluster.words)
             )
         )
@@ -1107,14 +1148,22 @@ def _rows_from_words_with_meta(
                     for w in power_words
                     if not (
                         (w.bbox[3] - w.bbox[1]) > max_noise_height
-                        and re.fullmatch(r"\d{2,}", normalize_text(w.text).replace(" ", ""))
+                        and re.fullmatch(
+                            r"\d{2,}", normalize_text(w.text).replace(" ", "")
+                        )
                     )
                 ] or power_words
 
         row = {
-            "機器番号": clean_cell("".join(w.text for w in sorted(cols["機器番号"], key=lambda x: x.cx))),
-            "機器名称": clean_cell("".join(w.text for w in sorted(cols["機器名称"], key=lambda x: x.cx))),
-            "電圧(V)": clean_cell("".join(w.text for w in sorted(cols["電圧(V)"], key=lambda x: x.cx))),
+            "機器番号": clean_cell(
+                "".join(w.text for w in sorted(cols["機器番号"], key=lambda x: x.cx))
+            ),
+            "機器名称": clean_cell(
+                "".join(w.text for w in sorted(cols["機器名称"], key=lambda x: x.cx))
+            ),
+            "電圧(V)": clean_cell(
+                "".join(w.text for w in sorted(cols["電圧(V)"], key=lambda x: x.cx))
+            ),
             "容量(kW)": clean_cell("".join(w.text for w in power_words)),
         }
         row = normalize_row_cells(row)
@@ -1198,7 +1247,9 @@ def save_header_debug_image(
     for header in headers:
         x0, y0, x1, y1 = header.bbox
         draw.rectangle((x0, y0, x1, y1), outline=(255, 180, 0), width=3)
-        draw.text((x0, max(0.0, y0 - 14.0)), "/".join(header.categories), fill=(255, 120, 0))
+        draw.text(
+            (x0, max(0.0, y0 - 14.0)), "/".join(header.categories), fill=(255, 120, 0)
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     debug.save(out_path)
 
@@ -1314,7 +1365,9 @@ def parse_table_candidate(
         if words:
             bounds = infer_column_bounds(words, crop_image.width)
             start_y = infer_dynamic_data_start_y(words, bounds.header_y)
-            rows_result = _rows_from_words_with_meta(words, bounds, y_cluster, start_y=start_y)
+            rows_result = _rows_from_words_with_meta(
+                words, bounds, y_cluster, start_y=start_y
+            )
         else:
             rows_result = RowsFromWordsResult(
                 rows=[],
@@ -1340,9 +1393,15 @@ def parse_table_candidate(
         near_bottom_edge = False
         near_edge_threshold = max(TABLE_BOTTOM_NEAR_EDGE_PX, float(y_cluster) * 3.0)
         if rows_result.last_data_cluster_bottom is not None:
-            last_data_bottom_on_page = float(crop_bbox[1]) + rows_result.last_data_cluster_bottom
-            near_bottom_edge = (float(crop_bbox[3]) - last_data_bottom_on_page) <= near_edge_threshold
-        unstable_tail = rows_result.trailing_non_data_count >= TABLE_TRAILING_NON_DATA_GAP
+            last_data_bottom_on_page = (
+                float(crop_bbox[1]) + rows_result.last_data_cluster_bottom
+            )
+            near_bottom_edge = (
+                float(crop_bbox[3]) - last_data_bottom_on_page
+            ) <= near_edge_threshold
+        unstable_tail = (
+            rows_result.trailing_non_data_count >= TABLE_TRAILING_NON_DATA_GAP
+        )
         should_expand = rows_result.saw_data and (near_bottom_edge or unstable_tail)
         if not should_expand:
             break
@@ -1355,7 +1414,10 @@ def parse_table_candidate(
         prev_row_count = row_count
         # When the last data row is still touching the crop bottom, keep extending
         # even if row count has not increased yet; tails may appear after extra steps.
-        if no_growth_streak >= TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK and not near_bottom_edge:
+        if (
+            no_growth_streak >= TABLE_BOTTOM_EXPAND_NO_GROWTH_STREAK
+            and not near_bottom_edge
+        ):
             break
 
         next_bottom = min(max_bottom, float(crop_bbox[3]) + TABLE_BOTTOM_EXPAND_STEP_PX)
@@ -1397,8 +1459,12 @@ def extract_page_rows_v3(
     headers = detect_header_anchors(page_words)
     candidates = detect_table_candidates_from_page_words(page_words, page_image.size)
 
-    save_header_debug_image(page_image, headers, debug_dir / f"p{page_number}_headers.png")
-    save_table_candidates_debug_image(page_image, candidates, debug_dir / f"p{page_number}_tables.png")
+    save_header_debug_image(
+        page_image, headers, debug_dir / f"p{page_number}_headers.png"
+    )
+    save_table_candidates_debug_image(
+        page_image, candidates, debug_dir / f"p{page_number}_tables.png"
+    )
 
     parsed_tables: List[TableParseResult] = []
     page_rows: List[Dict[str, object]] = []
@@ -1492,7 +1558,9 @@ def write_csv(rows: List[Dict[str, object]], out_csv: Path) -> None:
 
 def build_vision_client(service_account_json: str) -> vision.ImageAnnotatorClient:
     if _VISION_IMPORT_ERROR is not None:
-        raise ImportError(f"google-cloud-vision is not available: {_VISION_IMPORT_ERROR}")
+        raise ImportError(
+            f"google-cloud-vision is not available: {_VISION_IMPORT_ERROR}"
+        )
     if not service_account_json:
         raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not set.")
     info = json.loads(service_account_json)
@@ -1608,9 +1676,13 @@ def extract_raster_pdf(
         candidate = drawing_number_by_page.get(target_page, "")
         if candidate:
             summary_drawing_number = candidate
-            summary_drawing_source = drawing_number_source_by_page.get(target_page, "none")
+            summary_drawing_source = drawing_number_source_by_page.get(
+                target_page, "none"
+            )
             break
-    all_rows.sort(key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"])))
+    all_rows.sort(
+        key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"]))
+    )
     write_csv(all_rows, out_csv)
     return {
         "rows": len(all_rows),
@@ -1710,7 +1782,9 @@ def main() -> int:
                     all_rows.append(row)
             finally:
                 page_image.close()
-    all_rows.sort(key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"])))
+    all_rows.sort(
+        key=lambda r: (int(r.get("page", 0)), str(r["side"]), int(r["row_index"]))
+    )
     write_csv(all_rows, out_csv)
     return 0
 

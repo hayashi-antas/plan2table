@@ -7,10 +7,9 @@
 | 変数名 | 必須 | 説明 |
 |--------|------|------|
 | `GOOGLE_CLOUD_PROJECT` | ✅ | Google CloudプロジェクトID |
-| `GCP_SERVICE_ACCOUNT_KEY` | ✅ | サービスアカウントJSONキーの**内容全体** |
-| `VISION_SERVICE_ACCOUNT_KEY` | ✅ | Raster OCR（Vision API）用サービスアカウントJSONキーの**内容全体** |
+| `GCP_SERVICE_ACCOUNT_KEY` | ✅ | サービスアカウントJSONキーの**内容全体**（Vertex AI と Vision API の両方に使用。`VERTEX_SERVICE_ACCOUNT_KEY` / `VISION_SERVICE_ACCOUNT_KEY` もフォールバックで読む） |
 | `VERTEX_LOCATION` | - | Vertex AIのロケーション（デフォルト: `global`） |
-| `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3-pro-preview`） |
+| `VERTEX_MODEL_NAME` | - | 使用するモデル名（デフォルト: `gemini-3.1-pro-preview`） |
 
 ### ローカル開発（Docker + 1Password）
 
@@ -33,7 +32,7 @@ make run VERTEX_LOCATION=us-central1 VERTEX_MODEL_NAME=gemini-3-flash-preview
 
 ### Hugging Face Spacesへのデプロイ
 
-1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`、`VISION_SERVICE_ACCOUNT_KEY`を設定
+1. SpaceのSettingsで`GOOGLE_CLOUD_PROJECT`、`GCP_SERVICE_ACCOUNT_KEY`を設定
 2. Dockerfileが自動的にビルド・デプロイされます
 
 > [!TIP]

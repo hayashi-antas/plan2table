@@ -276,6 +276,19 @@
             font-family: 'Source Sans 3', sans-serif;
         }
 
+        /* M-E Check: サマリー5件を横並び（PCで1行、スマホで2列） */
+        .customer-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+        @media (min-width: 768px) {
+            .customer-summary-grid {
+                grid-template-columns: repeat(5, 1fr);
+            }
+        }
+
         /* Keep customer comparison header centered even with global table th defaults. */
         #customer-result table.customer-compare-table th,
         #customer-table-modal-content table.customer-compare-table th {

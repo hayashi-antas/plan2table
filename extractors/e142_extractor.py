@@ -171,7 +171,9 @@ def _compact_text(value: str) -> str:
     return unicodedata.normalize("NFKC", value or "").replace(" ", "").replace("　", "")
 
 
-def _split_row_cluster_by_x_gap(words: List[WordBox], max_gap: float = 70.0) -> List[List[WordBox]]:
+def _split_row_cluster_by_x_gap(
+    words: List[WordBox], max_gap: float = 70.0
+) -> List[List[WordBox]]:
     ordered = sorted(words, key=lambda item: item.cx)
     if not ordered:
         return []
@@ -200,7 +202,10 @@ def build_segments_from_words(
     for cluster in clusters:
         groups = _split_row_cluster_by_x_gap(cluster.words, max_gap=x_gap)
         for group in groups:
-            tokens = [normalize_text(word.text).strip() for word in sorted(group, key=lambda item: item.cx)]
+            tokens = [
+                normalize_text(word.text).strip()
+                for word in sorted(group, key=lambda item: item.cx)
+            ]
             tokens = [token for token in tokens if token]
             if not tokens:
                 continue
@@ -253,9 +258,16 @@ def _is_layout_label_segment(segment: Segment) -> bool:
         return False
     if _find_code_in_segment(segment):
         return False
-    if any(keyword in _normalize_for_label_detection(compact) for keyword in LABEL_KEYWORDS_COMPACT):
+    if any(
+        keyword in _normalize_for_label_detection(compact)
+        for keyword in LABEL_KEYWORDS_COMPACT
+    ):
         return False
-    if re.fullmatch(r"[0-9０-９]+(?:[.,][0-9０-９]+)?(?:mm|cm|m|kg|g|v|a|w|hz|℃|%|φ)?", compact, re.IGNORECASE):
+    if re.fullmatch(
+        r"[0-9０-９]+(?:[.,][0-9０-９]+)?(?:mm|cm|m|kg|g|v|a|w|hz|℃|%|φ)?",
+        compact,
+        re.IGNORECASE,
+    ):
         return False
     if re.fullmatch(r"[^ぁ-んァ-ン一-龥A-Za-z0-9]+", compact):
         return False
@@ -297,7 +309,9 @@ def _find_layout_row_pairs(segments: List[Segment]) -> List[LayoutRowPair]:
                 continue
             if not _is_layout_value_segment(right):
                 continue
-            if _is_layout_label_segment(right) and not re.search(r"\d|[%℃°/()（）~〜]", right.text_compact):
+            if _is_layout_label_segment(right) and not re.search(
+                r"\d|[%℃°/()（）~〜]", right.text_compact
+            ):
                 continue
 
             score = gap + row_diff * 8.0
@@ -338,7 +352,9 @@ def _build_layout_fallback_blocks(segments: List[Segment]) -> List[ParsedTableBl
         return []
 
     blocks: List[dict] = []
-    for pair in sorted(row_pairs, key=lambda item: (item.page, item.row_y, item.left.x0)):
+    for pair in sorted(
+        row_pairs, key=lambda item: (item.page, item.row_y, item.left.x0)
+    ):
         matched: dict | None = None
         for block in blocks:
             if block["page"] != pair.page:
@@ -347,7 +363,9 @@ def _build_layout_fallback_blocks(segments: List[Segment]) -> List[ParsedTableBl
                 continue
             left_diff = abs(pair.left.x0 - block["left_x"])
             right_diff = abs(pair.right.x0 - block["right_x"])
-            overlap = _x_overlap_ratio((pair.left.x0, pair.right.x1), (block["x0"], block["x1"]))
+            overlap = _x_overlap_ratio(
+                (pair.left.x0, pair.right.x1), (block["x0"], block["x1"])
+            )
             if left_diff > 260.0 or right_diff > 360.0:
                 continue
             if overlap < 0.05 and left_diff > 180.0:
@@ -376,7 +394,9 @@ def _build_layout_fallback_blocks(segments: List[Segment]) -> List[ParsedTableBl
         matched["bottom"] = max(matched["bottom"], pair.left.bottom, pair.right.bottom)
         count = float(len(matched["pairs"]))
         matched["left_x"] = (matched["left_x"] * count + pair.left.x0) / (count + 1.0)
-        matched["right_x"] = (matched["right_x"] * count + pair.right.x0) / (count + 1.0)
+        matched["right_x"] = (matched["right_x"] * count + pair.right.x0) / (
+            count + 1.0
+        )
         matched["pairs"].append(pair)
 
     parsed_blocks: List[ParsedTableBlock] = []
@@ -384,11 +404,19 @@ def _build_layout_fallback_blocks(segments: List[Segment]) -> List[ParsedTableBl
         row_pairs_in_block: List[LayoutRowPair] = block["pairs"]
         if len(row_pairs_in_block) < LAYOUT_BLOCK_MIN_ROWS:
             continue
-        pairs = [(pair.label, pair.value) for pair in row_pairs_in_block if pair.label and pair.value]
+        pairs = [
+            (pair.label, pair.value)
+            for pair in row_pairs_in_block
+            if pair.label and pair.value
+        ]
         if len(pairs) < LAYOUT_BLOCK_MIN_ROWS:
             continue
         labels = {label for label, _ in pairs}
-        segments_in_block = [segment for pair in row_pairs_in_block for segment in (pair.left, pair.right)]
+        segments_in_block = [
+            segment
+            for pair in row_pairs_in_block
+            for segment in (pair.left, pair.right)
+        ]
         parsed_blocks.append(
             ParsedTableBlock(
                 block=TableBlock(
@@ -432,7 +460,9 @@ def _is_title_candidate(segment: Segment) -> bool:
 
 
 def _cluster_table_segments(segments: List[Segment]) -> List[TableBlock]:
-    sorted_segments = sorted(segments, key=lambda item: (item.page, item.row_y, item.x0))
+    sorted_segments = sorted(
+        segments, key=lambda item: (item.page, item.row_y, item.x0)
+    )
     blocks: List[TableBlock] = []
     for segment in sorted_segments:
         matched: TableBlock | None = None
@@ -495,7 +525,9 @@ def _is_code_candidate_segment(segment: Segment) -> bool:
     return True
 
 
-def _cluster_y_values(values: List[float], tolerance: float = 24.0) -> List[Tuple[float, int]]:
+def _cluster_y_values(
+    values: List[float], tolerance: float = 24.0
+) -> List[Tuple[float, int]]:
     if not values:
         return []
     sorted_values = sorted(values)
@@ -509,7 +541,11 @@ def _cluster_y_values(values: List[float], tolerance: float = 24.0) -> List[Tupl
 
 
 def _header_row_centers_from_codes(code_segments: List[Segment]) -> List[float]:
-    values = [segment.row_y for segment in code_segments if _is_code_candidate_segment(segment)]
+    values = [
+        segment.row_y
+        for segment in code_segments
+        if _is_code_candidate_segment(segment)
+    ]
     clusters = _cluster_y_values(values, tolerance=24.0)
     return [center for center, count in clusters if count >= 3]
 
@@ -523,14 +559,21 @@ def _filter_title_candidates_by_header_rows(
 
     filtered = []
     for segment in title_candidates:
-        if any(TITLE_CODE_ROW_MIN_DIFF <= (row_y - segment.row_y) <= TITLE_CODE_ROW_MAX_DIFF for row_y in code_row_centers):
+        if any(
+            TITLE_CODE_ROW_MIN_DIFF
+            <= (row_y - segment.row_y)
+            <= TITLE_CODE_ROW_MAX_DIFF
+            for row_y in code_row_centers
+        ):
             filtered.append(segment)
     if filtered:
         return filtered
     return title_candidates
 
 
-def _estimate_header_y_for_block(block: TableBlock, code_row_centers: List[float]) -> float:
+def _estimate_header_y_for_block(
+    block: TableBlock, code_row_centers: List[float]
+) -> float:
     if not code_row_centers:
         return max(0.0, block.top - 420.0)
     usable = [row_y for row_y in code_row_centers if row_y < block.top + 40.0]
@@ -541,7 +584,12 @@ def _estimate_header_y_for_block(block: TableBlock, code_row_centers: List[float
 
 
 def _block_key(block: TableBlock) -> Tuple[int, int, int, int]:
-    return (block.page, int(round(block.top)), int(round(block.x0)), int(round(block.x1)))
+    return (
+        block.page,
+        int(round(block.top)),
+        int(round(block.x0)),
+        int(round(block.x1)),
+    )
 
 
 def _pick_title_for_block(
@@ -558,7 +606,9 @@ def _pick_title_for_block(
             continue
         if (block.top - segment.row_y) > TITLE_MAX_DISTANCE_TO_TABLE:
             continue
-        overlap = _x_overlap_ratio((segment.x0, segment.x1), (block.x0 - 140.0, block.x1 + 140.0))
+        overlap = _x_overlap_ratio(
+            (segment.x0, segment.x1), (block.x0 - 140.0, block.x1 + 140.0)
+        )
         if overlap < min_overlap:
             continue
         block_center = (block.x0 + block.x1) / 2.0
@@ -597,7 +647,11 @@ def _pick_code_for_anchor(
         if overlap < min_overlap:
             continue
         seg_center = (segment.x0 + segment.x1) / 2.0
-        score = abs(segment.row_y - anchor_y) * 1.2 + abs(seg_center - anchor_center) + (1.0 - overlap) * 120.0
+        score = (
+            abs(segment.row_y - anchor_y) * 1.2
+            + abs(seg_center - anchor_center)
+            + (1.0 - overlap) * 120.0
+        )
         candidates.append((score, code))
     if not candidates:
         return ""
@@ -613,7 +667,10 @@ def _pick_code_for_title(
     lower_y = header_y + 18.0
     upper_y = header_y + 190.0
     block_center = (block.x0 + block.x1) / 2.0
-    target_range = (block.x0 - CODE_TARGET_LEFT_MARGIN, block.x1 + CODE_TARGET_RIGHT_MARGIN)
+    target_range = (
+        block.x0 - CODE_TARGET_LEFT_MARGIN,
+        block.x1 + CODE_TARGET_RIGHT_MARGIN,
+    )
     candidates: List[Tuple[float, str, float]] = []
 
     for segment in code_segments:
@@ -638,20 +695,30 @@ def _pick_code_for_title(
         penalty = 0.0
         if len(text) > len(code) + 12:
             penalty += 120.0
-        if re.search(r"[ぁ-んァ-ン一-龥:：]", text) and not (is_product_code or is_special_identifier):
+        if re.search(r"[ぁ-んァ-ン一-龥:：]", text) and not (
+            is_product_code or is_special_identifier
+        ):
             penalty += 80.0
         if segment.row_y > 3000.0:
             penalty += 200.0
         penalty += (1.0 - overlap) * CODE_OVERLAP_PENALTY_WEIGHT
 
         seg_center = (segment.x0 + segment.x1) / 2.0
-        score = abs(seg_center - block_center) + abs(segment.row_y - lower_y) * 2.0 + penalty
+        score = (
+            abs(seg_center - block_center)
+            + abs(segment.row_y - lower_y) * 2.0
+            + penalty
+        )
         candidates.append((score, code, overlap))
 
     if not candidates:
         return ""
     best_score, best_code, best_overlap = min(candidates, key=lambda item: item[0])
-    threshold = PRODUCT_CODE_ASSIGN_MAX_SCORE if "商品コード:" in best_code else CODE_ASSIGN_MAX_SCORE
+    threshold = (
+        PRODUCT_CODE_ASSIGN_MAX_SCORE
+        if "商品コード:" in best_code
+        else CODE_ASSIGN_MAX_SCORE
+    )
     if best_score > threshold:
         if (
             "商品コード:" not in best_code
@@ -681,7 +748,9 @@ def _title_chunks_from_compact(compact: str) -> List[str]:
 def _normalize_title(title: str) -> str:
     normalized = title.strip("[]|")
     normalized = re.sub(r"^\d+\|", "", normalized)
-    normalized = re.sub(r"^[A-Za-z]{1,4}\d{0,3}(?=[ぁ-んァ-ン一-龥（(])", "", normalized)
+    normalized = re.sub(
+        r"^[A-Za-z]{1,4}\d{0,3}(?=[ぁ-んァ-ン一-龥（(])", "", normalized
+    )
     normalized = re.sub(r"^[A-Za-z]{1,4}(?=[ぁ-んァ-ン一-龥（(])", "", normalized)
     normalized = re.sub(r"^[◎○●◯◇◆□■△▲▽▼⊙⊗◉]+", "", normalized)
     normalized = normalized.lstrip("|・")
@@ -715,7 +784,9 @@ def _snap_split_boundary(text: str, index: int) -> int:
     return best
 
 
-def _split_title_text_by_blocks(title_segment: Segment, blocks: List[TableBlock]) -> Dict[Tuple[int, int, int, int], str]:
+def _split_title_text_by_blocks(
+    title_segment: Segment, blocks: List[TableBlock]
+) -> Dict[Tuple[int, int, int, int], str]:
     if not blocks:
         return {}
 
@@ -863,7 +934,9 @@ def _is_code_prefixed_value_continuation(text: str) -> bool:
     compact = _normalize_for_label_detection(text)
     if "商品コード" in compact:
         return False
-    return bool(re.match(r"^(?:\([^)]+\)|（[^）]+）)?[A-Z]{1,4}-[A-Z0-9-]{1,}[:：]", compact))
+    return bool(
+        re.match(r"^(?:\([^)]+\)|（[^）]+）)?[A-Z]{1,4}-[A-Z0-9-]{1,}[:：]", compact)
+    )
 
 
 def _is_embedded_value_label(normalized: str, start: int, label: str) -> bool:
@@ -917,7 +990,11 @@ def extract_label_value_pairs(text: str) -> List[Tuple[str, str]]:
     if len(selected) >= 2:
         last_start, last_end, last_label = selected[-1]
         _prev_start, _prev_end, prev_label = selected[-2]
-        if last_end >= len(normalized) and last_label == prev_label and last_start < len(normalized):
+        if (
+            last_end >= len(normalized)
+            and last_label == prev_label
+            and last_start < len(normalized)
+        ):
             selected = selected[:-1]
 
     pairs: List[Tuple[str, str]] = []
@@ -975,14 +1052,22 @@ def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]],
             pending_label = compact
             prev_row_y = segment.row_y
             continue
-        if pending_label and row_gap <= CONTINUATION_MAX_ROW_GAP and _is_continuation_text(segment.text_compact):
+        if (
+            pending_label
+            and row_gap <= CONTINUATION_MAX_ROW_GAP
+            and _is_continuation_text(segment.text_compact)
+        ):
             value = _clean_value(segment.text_compact)
             if value:
                 pairs.append((pending_label, value))
             pending_label = ""
             prev_row_y = segment.row_y
             continue
-        if pairs and row_gap <= CONTINUATION_MAX_ROW_GAP and _is_continuation_text(segment.text_compact):
+        if (
+            pairs
+            and row_gap <= CONTINUATION_MAX_ROW_GAP
+            and _is_continuation_text(segment.text_compact)
+        ):
             label, prev = pairs[-1]
             continuation = segment.text_compact
             if label == "塗色":
@@ -1002,7 +1087,9 @@ def _extract_pairs_from_block(block: TableBlock) -> Tuple[List[Tuple[str, str]],
     return filtered, len(labels)
 
 
-def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: List[Segment]) -> None:
+def _attach_continuation_segments_to_blocks(
+    blocks: List[TableBlock], segments: List[Segment]
+) -> None:
     if not blocks:
         return
 
@@ -1033,7 +1120,10 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
             if segment.row_y < block.top - 8.0 or segment.row_y > block.bottom + 40.0:
                 continue
             compact = _normalize_for_label_detection(segment.text_compact)
-            supplemental_like = bool(_extract_supplemental_inline_pair(compact)) or compact in SUPPLEMENTAL_INLINE_LABELS
+            supplemental_like = (
+                bool(_extract_supplemental_inline_pair(compact))
+                or compact in SUPPLEMENTAL_INLINE_LABELS
+            )
             overlap = _x_overlap_ratio((segment.x0, segment.x1), (block.x0, block.x1))
             if overlap < 0.35:
                 if not supplemental_like:
@@ -1043,7 +1133,9 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
                 candidate_blocks = _eligible_candidate_blocks_for_segment(segment)
                 if candidate_blocks:
                     overlaps = [
-                        _x_overlap_ratio((segment.x0, segment.x1), (candidate.x0, candidate.x1))
+                        _x_overlap_ratio(
+                            (segment.x0, segment.x1), (candidate.x0, candidate.x1)
+                        )
                         for candidate in candidate_blocks
                     ]
                     best_overlap = max(overlaps)
@@ -1053,13 +1145,19 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
                         seg_center = (segment.x0 + segment.x1) / 2.0
                         nearest = min(
                             candidate_blocks,
-                            key=lambda candidate: abs(((candidate.x0 + candidate.x1) / 2.0) - seg_center),
+                            key=lambda candidate: abs(
+                                ((candidate.x0 + candidate.x1) / 2.0) - seg_center
+                            ),
                         )
                         if nearest is not block:
                             continue
-            if HEADER_MARKER_PATTERN.search(segment.text_compact) and not _is_code_prefixed_value_continuation(segment.text_compact):
+            if HEADER_MARKER_PATTERN.search(
+                segment.text_compact
+            ) and not _is_code_prefixed_value_continuation(segment.text_compact):
                 continue
-            if _find_code_in_segment(segment) and not _is_code_prefixed_value_continuation(segment.text_compact):
+            if _find_code_in_segment(
+                segment
+            ) and not _is_code_prefixed_value_continuation(segment.text_compact):
                 continue
             if (
                 _is_title_candidate(segment)
@@ -1067,7 +1165,9 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
                 and not supplemental_like
             ):
                 continue
-            if not supplemental_like and not _is_continuation_text(segment.text_compact):
+            if not supplemental_like and not _is_continuation_text(
+                segment.text_compact
+            ):
                 continue
             block.segments.append(segment)
             known.add(signature)
@@ -1077,7 +1177,9 @@ def _attach_continuation_segments_to_blocks(blocks: List[TableBlock], segments: 
             block.bottom = max(block.bottom, segment.bottom)
 
 
-def _filter_extreme_wide_blocks(blocks: List[ParsedTableBlock]) -> List[ParsedTableBlock]:
+def _filter_extreme_wide_blocks(
+    blocks: List[ParsedTableBlock],
+) -> List[ParsedTableBlock]:
     if len(blocks) < 2:
         return blocks
 
@@ -1142,7 +1244,11 @@ def _refine_titles_for_reference_rows(rows: List[FrameRow]) -> None:
         if "取付" not in note_text:
             continue
 
-        sibling_y_gap = REFERENCE_SIBLING_Y_GAP_TSUSENKO if "通線孔" in row.title else REFERENCE_SIBLING_Y_GAP_DEFAULT
+        sibling_y_gap = (
+            REFERENCE_SIBLING_Y_GAP_TSUSENKO
+            if "通線孔" in row.title
+            else REFERENCE_SIBLING_Y_GAP_DEFAULT
+        )
         sibling_candidates = [
             candidate
             for candidate in rows
@@ -1176,19 +1282,29 @@ def build_frame_rows_from_segments(
     blocks = _cluster_table_segments(table_segments)
     _attach_continuation_segments_to_blocks(blocks, segments)
     title_source = title_segments if title_segments is not None else segments
-    all_title_candidates = [segment for segment in title_source if _is_title_candidate(segment)]
+    all_title_candidates = [
+        segment for segment in title_source if _is_title_candidate(segment)
+    ]
     code_source = code_segments if code_segments is not None else segments
-    code_segments = [segment for segment in code_source if _find_code_in_segment(segment)]
+    code_segments = [
+        segment for segment in code_source if _find_code_in_segment(segment)
+    ]
     code_row_centers = _header_row_centers_from_codes(code_segments)
-    title_candidates = _filter_title_candidates_by_header_rows(all_title_candidates, code_row_centers)
+    title_candidates = _filter_title_candidates_by_header_rows(
+        all_title_candidates, code_row_centers
+    )
     parsed_blocks: List[ParsedTableBlock] = []
     for block in blocks:
         pairs, label_count = _extract_pairs_from_block(block)
         if label_count >= TABLE_MIN_LABEL_COUNT:
-            parsed_blocks.append(ParsedTableBlock(block=block, pairs=pairs, label_count=label_count))
+            parsed_blocks.append(
+                ParsedTableBlock(block=block, pairs=pairs, label_count=label_count)
+            )
     parsed_blocks = _filter_extreme_wide_blocks(parsed_blocks)
     if not parsed_blocks:
-        parsed_blocks = _filter_extreme_wide_blocks(_build_layout_fallback_blocks(segments))
+        parsed_blocks = _filter_extreme_wide_blocks(
+            _build_layout_fallback_blocks(segments)
+        )
 
     frame_rows: List[FrameRow] = []
     used_titles: set[Tuple[int, float, float, str]] = set()
@@ -1196,11 +1312,15 @@ def build_frame_rows_from_segments(
     split_title_by_block: Dict[Tuple[int, int, int, int], str] = {}
 
     assignments: Dict[Segment, List[TableBlock]] = {}
-    for parsed_block in sorted(parsed_blocks, key=lambda item: (item.block.page, item.block.top, item.block.x0)):
+    for parsed_block in sorted(
+        parsed_blocks, key=lambda item: (item.block.page, item.block.top, item.block.x0)
+    ):
         block = parsed_block.block
         title_segment = _pick_title_for_block(block, title_candidates, min_overlap=0.15)
         if title_segment is None:
-            title_segment = _pick_title_for_block(block, all_title_candidates, min_overlap=0.05)
+            title_segment = _pick_title_for_block(
+                block, all_title_candidates, min_overlap=0.05
+            )
         if title_segment is None:
             continue
         title_segment_by_block[_block_key(block)] = title_segment
@@ -1209,17 +1329,30 @@ def build_frame_rows_from_segments(
     for title_segment, assigned_blocks in assignments.items():
         if len(assigned_blocks) == 1:
             block = assigned_blocks[0]
-            split_title_by_block[_block_key(block)] = _resolve_title_text_for_block(title_segment, block)
+            split_title_by_block[_block_key(block)] = _resolve_title_text_for_block(
+                title_segment, block
+            )
             continue
-        split_title_by_block.update(_split_title_text_by_blocks(title_segment, assigned_blocks))
+        split_title_by_block.update(
+            _split_title_text_by_blocks(title_segment, assigned_blocks)
+        )
 
-    for parsed_block in sorted(parsed_blocks, key=lambda item: (item.block.page, item.block.top, item.block.x0)):
+    for parsed_block in sorted(
+        parsed_blocks, key=lambda item: (item.block.page, item.block.top, item.block.x0)
+    ):
         block = parsed_block.block
         block_key = _block_key(block)
         title_segment = title_segment_by_block.get(block_key)
         title = split_title_by_block.get(block_key, "")
         if title_segment is not None:
-            used_titles.add((title_segment.page, title_segment.row_y, title_segment.x0, title_segment.text_compact))
+            used_titles.add(
+                (
+                    title_segment.page,
+                    title_segment.row_y,
+                    title_segment.x0,
+                    title_segment.text_compact,
+                )
+            )
 
         if not title:
             header_y_estimate = _estimate_header_y_for_block(block, code_row_centers)
@@ -1230,15 +1363,28 @@ def build_frame_rows_from_segments(
                 and segment.row_y < block.top
                 and abs(segment.row_y - header_y_estimate) <= 150.0
             ]
-            fallback_pool = nearby_header_titles if nearby_header_titles else all_title_candidates
-            fallback_segment = _pick_title_for_block(block, fallback_pool, min_overlap=0.02)
+            fallback_pool = (
+                nearby_header_titles if nearby_header_titles else all_title_candidates
+            )
+            fallback_segment = _pick_title_for_block(
+                block, fallback_pool, min_overlap=0.02
+            )
             if fallback_segment is not None:
                 title = _resolve_title_text_for_block(fallback_segment, block)
                 title_segment = fallback_segment
-                used_titles.add((fallback_segment.page, fallback_segment.row_y, fallback_segment.x0, fallback_segment.text_compact))
+                used_titles.add(
+                    (
+                        fallback_segment.page,
+                        fallback_segment.row_y,
+                        fallback_segment.x0,
+                        fallback_segment.text_compact,
+                    )
+                )
 
         code = (
-            _pick_code_for_title(block=block, header_y=title_segment.row_y, code_segments=code_segments)
+            _pick_code_for_title(
+                block=block, header_y=title_segment.row_y, code_segments=code_segments
+            )
             if title_segment
             else ""
         )
@@ -1386,7 +1532,9 @@ def extract_e142_pdf(
     with TemporaryDirectory() as tmp_dir_raw:
         tmp_dir = Path(tmp_dir_raw)
         for target_page in target_pages:
-            png_path = run_pdftoppm(pdf_path=pdf_path, page=target_page, dpi=dpi, work_dir=tmp_dir)
+            png_path = run_pdftoppm(
+                pdf_path=pdf_path, page=target_page, dpi=dpi, work_dir=tmp_dir
+            )
             with Image.open(png_path) as source_image:
                 page_image = source_image.convert("RGB")
             try:

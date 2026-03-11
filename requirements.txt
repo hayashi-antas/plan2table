@@ -9,6 +9,7 @@ pdfplumber
 pytest
 markdown
 markupsafe
+bleach
 Pillow
-numpy>=1.26.0,<2.0.0
-opencv-python-headless>=4.8.0,<5.0.0
+numpy>=2.0.0
+opencv-python-headless>=4.9.0,<5.0.0

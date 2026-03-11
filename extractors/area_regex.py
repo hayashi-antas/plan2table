@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Dict, Iterable, Optional, Tuple
 
-
 _FULLWIDTH_DIGITS = str.maketrans(
     {
         "０": "0",
@@ -47,7 +46,9 @@ def _parse_area(value: str, unit: str) -> Optional[str]:
     return _format_number(numeric)
 
 
-def _scan_patterns(text: str, patterns: Iterable[Tuple[str, re.Pattern]]) -> Dict[str, str]:
+def _scan_patterns(
+    text: str, patterns: Iterable[Tuple[str, re.Pattern]]
+) -> Dict[str, str]:
     results: Dict[str, str] = {}
     for key, pattern in patterns:
         match = pattern.search(text)

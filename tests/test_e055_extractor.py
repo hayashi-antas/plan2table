@@ -73,14 +73,40 @@ def test_split_equivalent_model_keeps_multi_pair_in_single_cell():
 
 
 def _word(text: str, cx: float, cy: float = 100.0) -> WordBox:
-    return WordBox(text=text, cx=cx, cy=cy, bbox=(cx - 5.0, cy - 5.0, cx + 5.0, cy + 5.0))
+    return WordBox(
+        text=text, cx=cx, cy=cy, bbox=(cx - 5.0, cy - 5.0, cx + 5.0, cy + 5.0)
+    )
 
 
 def test_build_output_rows_keeps_duplicates_and_page_order():
     input_rows = [
-        {"page": 2, "section_index": 0, "block_index": 0, "row_y": 40.0, "row_x": 10.0, "機器器具": "器具B", "相当型番": "B:BBB"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 30.0, "row_x": 10.0, "機器器具": "器具A", "相当型番": "A:AAA"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 30.0, "row_x": 10.0, "機器器具": "器具A", "相当型番": "A:AAA"},
+        {
+            "page": 2,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 40.0,
+            "row_x": 10.0,
+            "機器器具": "器具B",
+            "相当型番": "B:BBB",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 30.0,
+            "row_x": 10.0,
+            "機器器具": "器具A",
+            "相当型番": "A:AAA",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 30.0,
+            "row_x": 10.0,
+            "機器器具": "器具A",
+            "相当型番": "A:AAA",
+        },
     ]
     rows = build_output_rows(input_rows)
     assert rows == [
@@ -92,11 +118,51 @@ def test_build_output_rows_keeps_duplicates_and_page_order():
 
 def test_build_output_rows_prioritizes_block_then_row_for_human_reading_order():
     input_rows = [
-        {"page": 1, "section_index": 0, "block_index": 1, "row_y": 100.0, "row_x": 900.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 120.0, "row_x": 120.0, "機器器具": "CT2", "相当型番": "Panasonic:XLX420NENP-LE9"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 110.0, "機器器具": "CT1", "相当型番": "Panasonic:XLX210NENC-LE9"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 115.0, "機器器具": "CT1g", "相当型番": "同上ガード付"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 140.0, "row_x": 125.0, "機器器具": "CT2g", "相当型番": "同上ガード付"},
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 1,
+            "row_y": 100.0,
+            "row_x": 900.0,
+            "機器器具": "UK1",
+            "相当型番": "Panasonic:XLX420PENT-LE9",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 120.0,
+            "row_x": 120.0,
+            "機器器具": "CT2",
+            "相当型番": "Panasonic:XLX420NENP-LE9",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 80.0,
+            "row_x": 110.0,
+            "機器器具": "CT1",
+            "相当型番": "Panasonic:XLX210NENC-LE9",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 100.0,
+            "row_x": 115.0,
+            "機器器具": "CT1g",
+            "相当型番": "同上ガード付",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 140.0,
+            "row_x": 125.0,
+            "機器器具": "CT2g",
+            "相当型番": "同上ガード付",
+        },
     ]
     rows = build_output_rows(input_rows)
     assert [row["機器器具"] for row in rows] == ["CT1", "CT1g", "CT2", "CT2g", "UK1"]
@@ -104,9 +170,33 @@ def test_build_output_rows_prioritizes_block_then_row_for_human_reading_order():
 
 def test_build_output_rows_skips_emergency_certification_rows():
     input_rows = [
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 100.0, "機器器具": "EDL", "相当型番": "LALE-004"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 90.0, "row_x": 110.0, "機器器具": "ES1", "相当型番": "LALE-015"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 120.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 80.0,
+            "row_x": 100.0,
+            "機器器具": "EDL",
+            "相当型番": "LALE-004",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 90.0,
+            "row_x": 110.0,
+            "機器器具": "ES1",
+            "相当型番": "LALE-015",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 100.0,
+            "row_x": 120.0,
+            "機器器具": "UK1",
+            "相当型番": "Panasonic:XLX420PENT-LE9",
+        },
     ]
     rows = build_output_rows(input_rows)
     assert rows == [
@@ -116,8 +206,24 @@ def test_build_output_rows_skips_emergency_certification_rows():
 
 def test_build_output_rows_skips_lale_model_even_for_non_excluded_equipment():
     input_rows = [
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 100.0, "機器器具": "TP1", "相当型番": "LALE-004"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 120.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 80.0,
+            "row_x": 100.0,
+            "機器器具": "TP1",
+            "相当型番": "LALE-004",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 100.0,
+            "row_x": 120.0,
+            "機器器具": "UK1",
+            "相当型番": "Panasonic:XLX420PENT-LE9",
+        },
     ]
     rows = build_output_rows(input_rows)
     assert rows == [
@@ -127,9 +233,33 @@ def test_build_output_rows_skips_lale_model_even_for_non_excluded_equipment():
 
 def test_build_output_rows_skips_empty_model_rows():
     input_rows = [
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 80.0, "row_x": 100.0, "機器器具": "TP1", "相当型番": ""},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 90.0, "row_x": 110.0, "機器器具": "TP2", "相当型番": "Panasonic:"},
-        {"page": 1, "section_index": 0, "block_index": 0, "row_y": 100.0, "row_x": 120.0, "機器器具": "UK1", "相当型番": "Panasonic:XLX420PENT-LE9"},
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 80.0,
+            "row_x": 100.0,
+            "機器器具": "TP1",
+            "相当型番": "",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 90.0,
+            "row_x": 110.0,
+            "機器器具": "TP2",
+            "相当型番": "Panasonic:",
+        },
+        {
+            "page": 1,
+            "section_index": 0,
+            "block_index": 0,
+            "row_y": 100.0,
+            "row_x": 120.0,
+            "機器器具": "UK1",
+            "相当型番": "Panasonic:XLX420PENT-LE9",
+        },
     ]
     rows = build_output_rows(input_rows)
     assert rows == [
@@ -358,8 +488,20 @@ def test_extract_candidates_from_cluster_sets_model_x_to_model_column_for_non_co
 
 def test_build_output_rows_assigns_dl9_to_colon_model_only_continuation_row():
     section_candidates = [
-        {"row_y": 100.0, "row_x": 100.0, "block_index": 0, "機器器具": "DL9", "相当型番": "DAIKO:LZD-93548ABB × 3"},
-        {"row_y": 120.0, "row_x": 240.0, "block_index": 0, "機器器具": "", "相当型番": "DAIKO:LZA-93039"},
+        {
+            "row_y": 100.0,
+            "row_x": 100.0,
+            "block_index": 0,
+            "機器器具": "DL9",
+            "相当型番": "DAIKO:LZD-93548ABB × 3",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 240.0,
+            "block_index": 0,
+            "機器器具": "",
+            "相当型番": "DAIKO:LZA-93039",
+        },
     ]
     _propagate_equipment_in_section(section_candidates)
     rows = build_output_rows(section_candidates)
@@ -371,10 +513,34 @@ def test_build_output_rows_assigns_dl9_to_colon_model_only_continuation_row():
 
 def test_propagate_equipment_in_section_assigns_previous_equipment_in_same_block():
     section_candidates = [
-        {"row_y": 100.0, "row_x": 100.0, "block_index": 0, "機器器具": "TP1", "相当型番": "TAD-ELT7W1-146J27-24A"},
-        {"row_y": 120.0, "row_x": 120.0, "block_index": 0, "機器器具": "", "相当型番": "TAD-ELT7W1-122J27-24A"},
-        {"row_y": 100.0, "row_x": 600.0, "block_index": 1, "機器器具": "TP2", "相当型番": "TAD-ELT7W1-146J27-24A"},
-        {"row_y": 120.0, "row_x": 620.0, "block_index": 1, "機器器具": "", "相当型番": "TAD-ELT7W1-026J27-24A"},
+        {
+            "row_y": 100.0,
+            "row_x": 100.0,
+            "block_index": 0,
+            "機器器具": "TP1",
+            "相当型番": "TAD-ELT7W1-146J27-24A",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 120.0,
+            "block_index": 0,
+            "機器器具": "",
+            "相当型番": "TAD-ELT7W1-122J27-24A",
+        },
+        {
+            "row_y": 100.0,
+            "row_x": 600.0,
+            "block_index": 1,
+            "機器器具": "TP2",
+            "相当型番": "TAD-ELT7W1-146J27-24A",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 620.0,
+            "block_index": 1,
+            "機器器具": "",
+            "相当型番": "TAD-ELT7W1-026J27-24A",
+        },
     ]
     _propagate_equipment_in_section(section_candidates)
     assert section_candidates[1]["機器器具"] == "TP1"
@@ -383,10 +549,34 @@ def test_propagate_equipment_in_section_assigns_previous_equipment_in_same_block
 
 def test_propagate_equipment_in_section_maps_continuation_row_by_left_to_right_order():
     section_candidates = [
-        {"row_y": 100.0, "row_x": 260.0, "block_index": 0, "機器器具": "TP1", "相当型番": "TAD-ELT7W1-146J27-24A"},
-        {"row_y": 100.0, "row_x": 820.0, "block_index": 1, "機器器具": "TP2", "相当型番": "TAD-ELT7W1-146J27-24A"},
-        {"row_y": 120.0, "row_x": 640.0, "block_index": 1, "機器器具": "", "相当型番": "TAD-ELT7W1-122J27-24A"},
-        {"row_y": 120.0, "row_x": 1140.0, "block_index": 2, "機器器具": "", "相当型番": "TAD-ELT7W1-026J27-24A"},
+        {
+            "row_y": 100.0,
+            "row_x": 260.0,
+            "block_index": 0,
+            "機器器具": "TP1",
+            "相当型番": "TAD-ELT7W1-146J27-24A",
+        },
+        {
+            "row_y": 100.0,
+            "row_x": 820.0,
+            "block_index": 1,
+            "機器器具": "TP2",
+            "相当型番": "TAD-ELT7W1-146J27-24A",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 640.0,
+            "block_index": 1,
+            "機器器具": "",
+            "相当型番": "TAD-ELT7W1-122J27-24A",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 1140.0,
+            "block_index": 2,
+            "機器器具": "",
+            "相当型番": "TAD-ELT7W1-026J27-24A",
+        },
     ]
     _propagate_equipment_in_section(section_candidates)
     continuation_rows = sorted(
@@ -399,10 +589,38 @@ def test_propagate_equipment_in_section_maps_continuation_row_by_left_to_right_o
 
 def test_propagate_equipment_in_section_maps_single_continuation_row_by_nearest_model_x():
     section_candidates = [
-        {"row_y": 100.0, "row_x": 273.0, "model_x": 640.0, "block_index": 0, "機器器具": "DL8", "相当型番": "DAIKO:LZD-93561LWM"},
-        {"row_y": 100.0, "row_x": 829.0, "model_x": 1198.0, "block_index": 1, "機器器具": "DL9", "相当型番": "DAIKO:LZD-93548ABB × 3"},
-        {"row_y": 100.0, "row_x": 1389.0, "model_x": 1755.0, "block_index": 2, "機器器具": "DL10", "相当型番": "DAIKO:LLD-7141LUM3"},
-        {"row_y": 120.0, "row_x": 1176.0, "model_x": 1198.0, "block_index": 2, "機器器具": "", "相当型番": "DAIKO:LZA-93039"},
+        {
+            "row_y": 100.0,
+            "row_x": 273.0,
+            "model_x": 640.0,
+            "block_index": 0,
+            "機器器具": "DL8",
+            "相当型番": "DAIKO:LZD-93561LWM",
+        },
+        {
+            "row_y": 100.0,
+            "row_x": 829.0,
+            "model_x": 1198.0,
+            "block_index": 1,
+            "機器器具": "DL9",
+            "相当型番": "DAIKO:LZD-93548ABB × 3",
+        },
+        {
+            "row_y": 100.0,
+            "row_x": 1389.0,
+            "model_x": 1755.0,
+            "block_index": 2,
+            "機器器具": "DL10",
+            "相当型番": "DAIKO:LLD-7141LUM3",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 1176.0,
+            "model_x": 1198.0,
+            "block_index": 2,
+            "機器器具": "",
+            "相当型番": "DAIKO:LZA-93039",
+        },
     ]
     _propagate_equipment_in_section(section_candidates)
     continuation = next(row for row in section_candidates if row["row_y"] == 120.0)
@@ -411,11 +629,46 @@ def test_propagate_equipment_in_section_maps_single_continuation_row_by_nearest_
 
 def test_propagate_equipment_in_section_avoids_duplicate_source_assignment_when_possible():
     section_candidates = [
-        {"row_y": 100.0, "row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "A1", "相当型番": "A:AA-001"},
-        {"row_y": 100.0, "row_x": 300.0, "model_x": 300.0, "block_index": 1, "機器器具": "A2", "相当型番": "A:AA-002"},
-        {"row_y": 100.0, "row_x": 500.0, "model_x": 500.0, "block_index": 2, "機器器具": "A3", "相当型番": "A:AA-003"},
-        {"row_y": 120.0, "row_x": 320.0, "model_x": 320.0, "block_index": 3, "機器器具": "", "相当型番": "A:AA-101"},
-        {"row_y": 120.0, "row_x": 340.0, "model_x": 340.0, "block_index": 4, "機器器具": "", "相当型番": "A:AA-102"},
+        {
+            "row_y": 100.0,
+            "row_x": 100.0,
+            "model_x": 100.0,
+            "block_index": 0,
+            "機器器具": "A1",
+            "相当型番": "A:AA-001",
+        },
+        {
+            "row_y": 100.0,
+            "row_x": 300.0,
+            "model_x": 300.0,
+            "block_index": 1,
+            "機器器具": "A2",
+            "相当型番": "A:AA-002",
+        },
+        {
+            "row_y": 100.0,
+            "row_x": 500.0,
+            "model_x": 500.0,
+            "block_index": 2,
+            "機器器具": "A3",
+            "相当型番": "A:AA-003",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 320.0,
+            "model_x": 320.0,
+            "block_index": 3,
+            "機器器具": "",
+            "相当型番": "A:AA-101",
+        },
+        {
+            "row_y": 120.0,
+            "row_x": 340.0,
+            "model_x": 340.0,
+            "block_index": 4,
+            "機器器具": "",
+            "相当型番": "A:AA-102",
+        },
     ]
     _propagate_equipment_in_section(section_candidates)
     continuation_rows = sorted(
@@ -429,7 +682,12 @@ def test_should_run_line_assist_when_continuation_ratio_is_high():
     section_candidates = [
         {"row_x": 100.0, "model_x": 350.0, "機器器具": "TP1", "相当型番": "TAD-001"},
         {"row_x": 120.0, "model_x": 360.0, "機器器具": "", "相当型番": "TAD-002"},
-        {"row_x": 640.0, "model_x": 860.0, "機器器具": "", "相当型番": "DAIKO:LZA-93039"},
+        {
+            "row_x": 640.0,
+            "model_x": 860.0,
+            "機器器具": "",
+            "相当型番": "DAIKO:LZA-93039",
+        },
     ]
     should_run, reasons = _should_run_line_assist(
         section_candidates,
@@ -457,18 +715,48 @@ def test_should_not_run_line_assist_for_stable_section():
 
 def test_apply_line_assist_if_confident_adopts_when_quality_improves(monkeypatch):
     section_candidates = [
-        {"row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "TP1", "相当型番": "A:AA-001"},
-        {"row_x": 620.0, "model_x": 620.0, "block_index": 0, "機器器具": "TP2", "相当型番": "A:AA-002"},
-        {"row_x": 610.0, "model_x": 620.0, "block_index": 0, "機器器具": "", "相当型番": "A:AA-101"},
+        {
+            "row_x": 100.0,
+            "model_x": 100.0,
+            "block_index": 0,
+            "機器器具": "TP1",
+            "相当型番": "A:AA-001",
+        },
+        {
+            "row_x": 620.0,
+            "model_x": 620.0,
+            "block_index": 0,
+            "機器器具": "TP2",
+            "相当型番": "A:AA-002",
+        },
+        {
+            "row_x": 610.0,
+            "model_x": 620.0,
+            "block_index": 0,
+            "機器器具": "",
+            "相当型番": "A:AA-101",
+        },
     ]
 
     monkeypatch.setattr(
         "extractors.e055_extractor._collect_vector_vertical_lines",
-        lambda **kwargs: ([80.0, 400.0, 900.0], {"source": "vector", "raw_lines": 3, "error": ""}),
+        lambda **kwargs: (
+            [80.0, 400.0, 900.0],
+            {"source": "vector", "raw_lines": 3, "error": ""},
+        ),
     )
     monkeypatch.setattr(
         "extractors.e055_extractor._collect_image_vertical_lines",
-        lambda **kwargs: ([82.0, 398.0, 902.0], {"source": "image", "raw_lines": 3, "elapsed_ms": 12.0, "timed_out": False, "error": ""}),
+        lambda **kwargs: (
+            [82.0, 398.0, 902.0],
+            {
+                "source": "image",
+                "raw_lines": 3,
+                "elapsed_ms": 12.0,
+                "timed_out": False,
+                "error": "",
+            },
+        ),
     )
 
     info = _apply_line_assist_if_confident(
@@ -478,7 +766,9 @@ def test_apply_line_assist_if_confident_adopts_when_quality_improves(monkeypatch
         page_image=Image.new("RGB", (1600, 900), "white"),
         pdf_path=Path("/tmp/non-existent.pdf"),
         page_number=1,
-        config=LineAssistConfig(mode="auto", latency_budget_ms=300, min_confidence=0.1, debug_enabled=False),
+        config=LineAssistConfig(
+            mode="auto", latency_budget_ms=300, min_confidence=0.1, debug_enabled=False
+        ),
     )
     assert info["adopted"] is True
     assert int(section_candidates[2]["block_index"]) != 0
@@ -486,8 +776,20 @@ def test_apply_line_assist_if_confident_adopts_when_quality_improves(monkeypatch
 
 def test_apply_line_assist_if_confident_rejects_when_confidence_low(monkeypatch):
     section_candidates = [
-        {"row_x": 100.0, "model_x": 100.0, "block_index": 0, "機器器具": "TP1", "相当型番": "A:AA-001"},
-        {"row_x": 620.0, "model_x": 620.0, "block_index": 0, "機器器具": "", "相当型番": "A:AA-101"},
+        {
+            "row_x": 100.0,
+            "model_x": 100.0,
+            "block_index": 0,
+            "機器器具": "TP1",
+            "相当型番": "A:AA-001",
+        },
+        {
+            "row_x": 620.0,
+            "model_x": 620.0,
+            "block_index": 0,
+            "機器器具": "",
+            "相当型番": "A:AA-101",
+        },
     ]
 
     monkeypatch.setattr(
@@ -496,7 +798,16 @@ def test_apply_line_assist_if_confident_rejects_when_confidence_low(monkeypatch)
     )
     monkeypatch.setattr(
         "extractors.e055_extractor._collect_image_vertical_lines",
-        lambda **kwargs: ([], {"source": "image", "raw_lines": 0, "elapsed_ms": 20.0, "timed_out": False, "error": ""}),
+        lambda **kwargs: (
+            [],
+            {
+                "source": "image",
+                "raw_lines": 0,
+                "elapsed_ms": 20.0,
+                "timed_out": False,
+                "error": "",
+            },
+        ),
     )
 
     info = _apply_line_assist_if_confident(
@@ -506,7 +817,9 @@ def test_apply_line_assist_if_confident_rejects_when_confidence_low(monkeypatch)
         page_image=Image.new("RGB", (1600, 900), "white"),
         pdf_path=Path("/tmp/non-existent.pdf"),
         page_number=1,
-        config=LineAssistConfig(mode="auto", latency_budget_ms=300, min_confidence=0.9, debug_enabled=False),
+        config=LineAssistConfig(
+            mode="auto", latency_budget_ms=300, min_confidence=0.9, debug_enabled=False
+        ),
     )
     assert info["adopted"] is False
     assert info["rejected_reason"] in {"confidence_below_threshold", "no_line_blocks"}
