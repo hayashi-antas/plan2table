@@ -1,27 +1,27 @@
-import os
 import asyncio
-import atexit
-import csv
-import io
-import json
-import re
 import html
-import tempfile
+import json
 import logging
+import os
 import unicodedata
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
-from google import genai
-from google.genai import types
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Form
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, FileResponse
-import uvicorn
+
 import bleach
 import markdown
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+import uvicorn
+
+from google.genai import types
+
+from config import (
+    MODEL_NAME,
+    genai_client,
+    vision_service_account_json,
+)
 from prompts import load_prompt
 from extractors.text_extractor import extract_text_from_pdf
 from extractors.area_regex import extract_summary_areas
@@ -33,83 +33,32 @@ from extractors.e251_extractor import extract_e251_pdf
 from extractors.e142_extractor import extract_e142_pdf
 from extractors.job_store import create_job, resolve_job_csv_path, save_metadata
 from extractors.unified_csv import merge_vector_raster_csv
+from extractors.csv_utils import read_csv_dict_rows
+from services.job_runner import csv_profile, csv_profile_no_header
+from routers import downloads, pages
+from utils import exception_message as _exception_message_util, parse_float_or_none
+from renderers import (
+    build_debug_script,
+    build_equipment_table_html,
+    build_e142_rows_html,
+    render_extractor_error_html,
+    render_extractor_success_html,
+    render_job_result_html,
+    render_parse_error,
+    single_line_message as _single_line_message_renderer,
+    stringify_cell,
+)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.include_router(pages.router)
+app.include_router(downloads.router)
 logger = logging.getLogger(__name__)
-
-# Initialize Vertex AI (new google-genai client)
-# We use the environment variable GOOGLE_CLOUD_PROJECT as requested.
-project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-location = os.getenv("VERTEX_LOCATION", "global")
-MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3.1-pro-preview")
-genai_client = None
-# 1つのサービスアカウントキーで Vertex AI と Vision API の両方を使用（GCP_SERVICE_ACCOUNT_KEY 優先）
-_gcp_service_account_json = (
-    os.getenv("GCP_SERVICE_ACCOUNT_KEY")
-    or os.getenv("VERTEX_SERVICE_ACCOUNT_KEY")
-    or os.getenv("VISION_SERVICE_ACCOUNT_KEY")
-    or ""
-)
-vertex_service_account_json = _gcp_service_account_json
-vision_service_account_json = _gcp_service_account_json
-
-# Handle Credentials for Hugging Face Spaces / Vertex AI (secure temp file, 0o600, cleanup on exit)
-_cred_temp_paths = []
-
-
-def _cleanup_cred_temp_files():
-    for p in _cred_temp_paths:
-        try:
-            if os.path.exists(p):
-                os.unlink(p)
-        except OSError:
-            pass
-    _cred_temp_paths.clear()
-
-
-if vertex_service_account_json:
-    fd, cred_file_path = tempfile.mkstemp(suffix=".json", prefix="gcp_credentials_")
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(vertex_service_account_json)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_file_path
-        _cred_temp_paths.append(cred_file_path)
-        atexit.register(_cleanup_cred_temp_files)
-    except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        try:
-            os.unlink(cred_file_path)
-        except OSError:
-            pass
-        raise
-
-try:
-    if project_id:
-        genai_client = genai.Client(
-            vertexai=True, project=project_id, location=location
-        )
-    else:
-        genai_client = genai.Client(vertexai=True, location=location)
-except Exception as exc:
-    print(f"Failed to initialize Vertex AI client: {exc}")
 
 
 def _stringify_cell(value):
-    if value is None:
-        return ""
-    if isinstance(value, (str, int, float)):
-        return str(value)
-    if isinstance(value, list):
-        return ", ".join(str(item) for item in value)
-    if isinstance(value, dict):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
+    """Backward-compat alias."""
+    return stringify_cell(value)
 
 
 def _extract_json(raw_text):
@@ -128,196 +77,6 @@ def _extract_json(raw_text):
             return json.loads(candidate)
         except json.JSONDecodeError:
             return None
-
-
-def _normalize_columns(columns, rows):
-    normalized = []
-    seen = set()
-    for col in columns:
-        if not isinstance(col, dict):
-            continue
-        key = col.get("key") or ""
-        label = col.get("label") or key
-        if not key:
-            key = f"col_{len(normalized) + 1}"
-        key = str(key)
-        if key in seen:
-            key = f"{key}_{len(normalized) + 1}"
-        normalized.append(
-            {
-                "key": key,
-                "label": str(label) if label is not None else key,
-                "hint": str(col.get("hint") or ""),
-            }
-        )
-        seen.add(key)
-    if not normalized:
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            for key in row.keys():
-                key = str(key)
-                if key in seen:
-                    continue
-                normalized.append({"key": key, "label": key, "hint": ""})
-                seen.add(key)
-    return normalized
-
-
-def _build_table_html(columns, rows):
-    safe_columns = _normalize_columns(columns, rows)
-    safe_rows = [row for row in rows if isinstance(row, dict)]
-    if not safe_columns:
-        safe_columns = [{"key": "_empty", "label": "データなし", "hint": ""}]
-
-    table_class = (
-        "min-w-full table-auto border border-stone/30 overflow-hidden bg-paper text-ink"
-    )
-    thead_class = "bg-paper-dark"
-    th_class = "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-wood-dark border-b border-wood"
-    td_class = (
-        "px-4 py-3 text-sm text-ink-light border-b border-stone/20 whitespace-pre-wrap"
-    )
-    row_class = "hover:bg-paper-dark/50"
-    empty_td_class = "px-4 py-6 text-sm text-ink-muted text-center"
-
-    header_cells = []
-    for col in safe_columns:
-        label = html.escape(col["label"], quote=True)
-        header_cells.append(f'<th class="{th_class}">{label}</th>')
-
-    body_rows = []
-    if not safe_rows:
-        colspan = len(safe_columns)
-        body_rows.append(
-            f'<tr class="{row_class}"><td colspan="{colspan}" class="{empty_td_class}">データがありません</td></tr>'
-        )
-    else:
-        for row in safe_rows:
-            cells = []
-            for col in safe_columns:
-                key = col["key"]
-                value = _stringify_cell(row.get(key, ""))
-                cell_text = html.escape(value, quote=True)
-                cells.append(f'<td class="{td_class}">{cell_text}</td>')
-            body_rows.append(f'<tr class="{row_class}">' + "".join(cells) + "</tr>")
-
-    return (
-        f'<table class="{table_class}">'
-        f"<thead class=\"{thead_class}\"><tr>{''.join(header_cells)}</tr></thead>"
-        f"<tbody>{''.join(body_rows)}</tbody>"
-        f"</table>"
-    )
-
-
-def _build_summary_html(summary):
-    if not isinstance(summary, dict) or not summary:
-        return ""
-    labels = {
-        "exclusive_area_m2": "住戸専用面積(m2)",
-        "balcony_area_m2": "バルコニー面積(m2)",
-        "total_area_m2": "延床面積(m2)",
-        "unit_type": "間取りタイプ",
-        "floor": "階数",
-        "orientation": "方位",
-    }
-    rows = []
-    for key, label in labels.items():
-        value = _stringify_cell(summary.get(key, ""))
-        if value == "":
-            continue
-        rows.append((label, value))
-    if not rows:
-        return ""
-
-    card_class = "mb-6 rounded-sm border border-stone/30 bg-paper-dark p-4 text-ink"
-    title_class = "mb-3 text-sm font-semibold uppercase tracking-wider text-wood-dark"
-    grid_class = "grid grid-cols-1 gap-3 md:grid-cols-2"
-    label_class = "text-xs uppercase tracking-wider text-ink-muted"
-    value_class = "text-sm text-ink-light"
-    items = []
-    for label, value in rows:
-        items.append(
-            f'<div><div class="{label_class}">{html.escape(label)}</div>'
-            f'<div class="{value_class}">{html.escape(str(value))}</div></div>'
-        )
-    return (
-        f'<section class="{card_class}">'
-        f'<div class="{title_class}">住戸概要</div>'
-        f"<div class=\"{grid_class}\">{''.join(items)}</div>"
-        f"</section>"
-    )
-
-
-def _render_parse_error(raw_text, reason):
-    snippet = (raw_text or "").strip() or "(empty response)"
-    if len(snippet) > 2000:
-        snippet = snippet[:2000] + "\n... (truncated)"
-    snippet = html.escape(snippet, quote=True)
-    reason = html.escape(reason, quote=True)
-    return f"""
-    <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
-        <strong>JSON解析に失敗しました:</strong> {reason}
-        <pre class="mt-3 max-h-72 overflow-auto rounded-sm bg-paper-dark p-3 text-xs text-ink-light">{snippet}</pre>
-    </div>
-    """
-
-
-def _build_debug_script(extracted_text, regex_summary, raw_text, tool_calls_log=None):
-    """Build a script tag that logs debug info to browser console."""
-    text_snippet = (extracted_text or "").strip() or "(no text extracted)"
-    if len(text_snippet) > 5000:
-        text_snippet = text_snippet[:5000] + "\n... (truncated)"
-
-    regex_json_str = json.dumps(regex_summary, ensure_ascii=False, indent=2)
-    raw_snippet = (raw_text or "").strip() or "(empty response)"
-    if len(raw_snippet) > 5000:
-        raw_snippet = raw_snippet[:5000] + "\n... (truncated)"
-
-    # Escape for JavaScript string (prevent XSS: </script>, backslashes, backticks, ${)
-    def js_escape(s):
-        s = re.sub(r"(?i)</script>", "<\\/script>", s)
-        return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
-
-    text_escaped = js_escape(text_snippet)
-    regex_escaped = js_escape(regex_json_str)
-    raw_escaped = js_escape(raw_snippet)
-
-    # Build tool calls log script
-    tool_calls_script = ""
-    if tool_calls_log:
-        tool_calls_json = json.dumps(tool_calls_log, ensure_ascii=False, indent=2)
-        tool_calls_escaped = js_escape(tool_calls_json)
-        tool_calls_script = f"""
-    console.group('%c🔧 Function Calling (ツール呼び出し)', 'font-weight: bold; font-size: 14px; color: #2d5a8a;');
-    console.log('%c呼び出されたツール数:', 'font-weight: bold; color: #1e3a5f;', {len(tool_calls_log)});
-    const toolCalls = JSON.parse(`{tool_calls_escaped}`);
-    toolCalls.forEach((call, index) => {{
-        console.group('%c[' + (index + 1) + '] ' + call.name, 'font-weight: bold; color: #b87333;');
-        console.log('%c引数:', 'color: #5c5243;', call.args);
-        console.log('%c結果:', 'color: #5c5243;', call.result);
-        console.groupEnd();
-    }});
-    console.groupEnd();
-"""
-    else:
-        tool_calls_script = """
-    console.log('%c🔧 Function Calling: ツールは呼び出されませんでした', 'font-weight: bold; font-size: 14px; color: #8a8072;');
-"""
-
-    return f"""
-    <script>
-    console.group('%c📐 図面解析デバッグ情報', 'font-weight: bold; font-size: 14px; color: #8b5a2b;');
-    console.log('%c抽出テキスト:', 'font-weight: bold; color: #6b4423;');
-    console.log(`{text_escaped}`);
-    console.log('%c正規表現ヒット:', 'font-weight: bold; color: #6b4423;');
-    console.log(`{regex_escaped}`);
-    console.log('%cLLM生レスポンス:', 'font-weight: bold; color: #6b4423;');
-    console.log(`{raw_escaped}`);
-    console.groupEnd();
-    {tool_calls_script}
-    </script>
-    """
 
 
 def _is_empty_value(value):
@@ -533,53 +292,6 @@ def _generate_with_tools(client, model_name, parts, generation_config):
     return response, tool_calls_log
 
 
-def _csv_profile(csv_path: Path) -> dict:
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
-        rows = list(reader)
-    if not rows:
-        return {"rows": 0, "columns": []}
-    return {"rows": max(0, len(rows) - 1), "columns": rows[0]}
-
-
-def _csv_profile_no_header(csv_path: Path) -> dict:
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
-        rows = list(reader)
-    max_columns = max((len(row) for row in rows), default=0)
-    return {
-        "rows": len(rows),
-        "columns": [f"column_{index + 1}" for index in range(max_columns)],
-    }
-
-
-def _render_job_result_html(
-    kind: str, job_id: str, rows: int, columns: list[str]
-) -> str:
-    label_map = {
-        "raster": "Raster",
-        "vector": "Vector",
-        "unified": "Unified",
-        "e055": "E-055",
-        "e251": "E-251",
-        "e142": "E-142",
-    }
-    label = label_map.get(kind, kind.capitalize())
-    download_path = f"/jobs/{job_id}/{kind}.csv"
-    columns_html = ", ".join(html.escape(c) for c in columns) if columns else "-"
-    return f"""
-    <section class="mt-4 rounded-sm border border-stone/30 bg-paper-dark p-4 text-ink" data-kind="{html.escape(kind)}" data-job-id="{html.escape(job_id)}">
-        <div class="text-sm font-semibold text-wood-dark">{label} CSV作成完了</div>
-        <div class="mt-2 text-sm">Job ID: <code class="font-mono">{html.escape(job_id)}</code></div>
-        <div class="mt-1 text-sm">Rows: {rows}</div>
-        <div class="mt-1 text-sm">Columns: {columns_html}</div>
-        <a href="{download_path}" class="mt-3 inline-block rounded-sm border border-wood px-3 py-2 text-sm font-semibold text-wood hover:bg-paper">
-            CSVをダウンロード
-        </a>
-    </section>
-    """
-
-
 def _is_pdf_upload(file: UploadFile) -> bool:
     name = (file.filename or "").lower()
     return name.endswith(".pdf")
@@ -751,28 +463,6 @@ def _build_customer_table_header_html() -> str:
     return f"<tr>{''.join(top_row_cells)}</tr><tr>{''.join(bottom_row_cells)}</tr>"
 
 
-def _read_csv_dict_rows(csv_path: Path) -> list[dict[str, str]]:
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        return [dict(row) for row in reader]
-
-
-def _read_csv_rows(csv_path: Path) -> list[list[str]]:
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
-        return [list(row) for row in reader]
-
-
-def _parse_float_or_none(value: str) -> Optional[float]:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
 def _compute_customer_summary(
     mapped_rows: list[dict[str, str]],
     *,
@@ -790,7 +480,7 @@ def _compute_customer_summary(
         id_match = _normalize_judgment(row.get("機器ID照合", ""))
         reason = str(row.get("判定理由", "") or "").strip()
         equipment_id = str(row.get("機器ID", "") or "").strip()
-        panel_units = _parse_float_or_none(row.get("電気図 台数", ""))
+        panel_units = parse_float_or_none(row.get("電気図 台数", ""))
 
         panel_has_detail = any(
             str(row.get(key, "") or "").strip()
@@ -861,7 +551,7 @@ def _build_customer_table_html(
     vector_row_count: Optional[int] = None,
     raster_row_count: Optional[int] = None,
 ) -> str:
-    rows = _read_csv_dict_rows(unified_csv_path)
+    rows = read_csv_dict_rows(unified_csv_path)
     diff_note_html = (
         f'<p class="mt-2 text-xs text-stone-600">{html.escape(DIFF_NOTE_TEXT)}</p>'
     )
@@ -913,16 +603,13 @@ def _build_customer_table_html(
 
 
 def _single_line_message(message: object) -> str:
-    return " ".join(str(message or "").split())
+    """Backward-compat alias."""
+    return _single_line_message_renderer(message)
 
 
 def _exception_message(exc: Exception) -> str:
-    if isinstance(exc, HTTPException):
-        return _single_line_message(exc.detail)
-    text = _single_line_message(str(exc))
-    if text:
-        return text
-    return exc.__class__.__name__
+    """Backward-compat alias."""
+    return _exception_message_util(exc)
 
 
 def _is_parallel_extract_enabled() -> bool:
@@ -991,193 +678,6 @@ def _render_customer_error_html(stage: str, message: str) -> str:
     """
 
 
-E055_TABLE_COLUMNS = ["器具記号", "メーカー", "相当型番"]
-E055_TABLE_COLUMN_SOURCE_KEYS = {
-    "器具記号": ("器具記号", "機器器具"),
-    "メーカー": ("メーカー",),
-    "相当型番": ("相当型番", "型番"),
-}
-E251_TABLE_COLUMNS = ["器具記号", "メーカー", "相当型番"]
-E251_TABLE_COLUMN_SOURCE_KEYS = {
-    "器具記号": ("器具記号", "機器器具"),
-    "メーカー": ("メーカー",),
-    "相当型番": ("相当型番", "型番"),
-}
-
-
-def _build_e055_table_html(e055_csv_path: Path) -> str:
-    rows = _read_csv_dict_rows(e055_csv_path)
-    columns = [
-        {"key": column, "label": column, "hint": ""} for column in E055_TABLE_COLUMNS
-    ]
-    normalized_rows = []
-    for row in rows:
-        normalized_row = {}
-        for column in E055_TABLE_COLUMNS:
-            value = ""
-            for source_key in E055_TABLE_COLUMN_SOURCE_KEYS[column]:
-                if source_key in row:
-                    value = str(row.get(source_key, "") or "")
-                    break
-            normalized_row[column] = value
-        normalized_rows.append(normalized_row)
-    return _build_table_html(columns, normalized_rows)
-
-
-def _build_e251_table_html(e251_csv_path: Path) -> str:
-    rows = _read_csv_dict_rows(e251_csv_path)
-    columns = [
-        {"key": column, "label": column, "hint": ""} for column in E251_TABLE_COLUMNS
-    ]
-    normalized_rows = []
-    for row in rows:
-        normalized_row = {}
-        for column in E251_TABLE_COLUMNS:
-            value = ""
-            for source_key in E251_TABLE_COLUMN_SOURCE_KEYS[column]:
-                if source_key in row:
-                    value = str(row.get(source_key, "") or "")
-                    break
-            normalized_row[column] = value
-        normalized_rows.append(normalized_row)
-    return _build_table_html(columns, normalized_rows)
-
-
-def _build_e142_rows_html(e142_csv_path: Path) -> str:
-    rows = _read_csv_rows(e142_csv_path)
-    if not rows:
-        return (
-            '<div class="rounded border border-stone-300 bg-white px-4 py-6 text-center text-sm text-stone-500">'
-            "データがありません"
-            "</div>"
-        )
-    line_items = []
-    for row in rows:
-        row_buffer = io.StringIO()
-        csv.writer(row_buffer).writerow(row)
-        text = row_buffer.getvalue().rstrip("\r\n")
-        line_items.append(
-            '<li class="rounded border border-stone-200 bg-white px-3 py-2 font-mono text-xs text-ink-light">'
-            f"{html.escape(text)}"
-            "</li>"
-        )
-    return f"<ol class=\"space-y-2\">{''.join(line_items)}</ol>"
-
-
-def _render_e055_success_html(job_id: str, table_html: str, row_count: int) -> str:
-    safe_job_id = html.escape(job_id, quote=True)
-    download_url = f"/jobs/{job_id}/e055.csv"
-    safe_download_url = html.escape(download_url, quote=True)
-    return f"""
-    <section class="relative rounded-lg border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
-      data-status="success"
-      data-kind="e055"
-      data-job-id="{safe_job_id}">
-      <a
-        href="{safe_download_url}"
-        title="CSVをダウンロード"
-        aria-label="CSVをダウンロード"
-        class="group absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
-          <path d="M12 3v11"></path>
-          <path d="m8 10 4 4 4-4"></path>
-          <path d="M4 20h16"></path>
-        </svg>
-      </a>
-      <div class="text-sm font-semibold text-emerald-800">抽出が完了しました</div>
-      <div class="mt-1 text-sm text-emerald-900">Rows: {int(row_count)}</div>
-      <div class="mt-4 overflow-x-auto">{table_html}</div>
-    </section>
-    """
-
-
-def _render_e055_error_html(message: str) -> str:
-    safe_message = html.escape(_single_line_message(message), quote=True)
-    return f"""
-    <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm" data-status="error" data-kind="e055">
-      <div class="text-sm font-semibold text-red-800">処理に失敗しました</div>
-      <div class="mt-1 text-sm">message: {safe_message}</div>
-    </section>
-    """
-
-
-def _render_e251_success_html(job_id: str, table_html: str, row_count: int) -> str:
-    safe_job_id = html.escape(job_id, quote=True)
-    download_url = f"/jobs/{job_id}/e251.csv"
-    safe_download_url = html.escape(download_url, quote=True)
-    return f"""
-    <section class="relative rounded-lg border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
-      data-status="success"
-      data-kind="e251"
-      data-job-id="{safe_job_id}">
-      <a
-        href="{safe_download_url}"
-        title="CSVをダウンロード"
-        aria-label="CSVをダウンロード"
-        class="group absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
-          <path d="M12 3v11"></path>
-          <path d="m8 10 4 4 4-4"></path>
-          <path d="M4 20h16"></path>
-        </svg>
-      </a>
-      <div class="text-sm font-semibold text-emerald-800">抽出が完了しました</div>
-      <div class="mt-1 text-sm text-emerald-900">Rows: {int(row_count)}</div>
-      <div class="mt-4 overflow-x-auto">{table_html}</div>
-    </section>
-    """
-
-
-def _render_e251_error_html(message: str) -> str:
-    safe_message = html.escape(_single_line_message(message), quote=True)
-    return f"""
-    <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm" data-status="error" data-kind="e251">
-      <div class="text-sm font-semibold text-red-800">処理に失敗しました</div>
-      <div class="mt-1 text-sm">message: {safe_message}</div>
-    </section>
-    """
-
-
-def _render_e142_success_html(job_id: str, rows_html: str, row_count: int) -> str:
-    safe_job_id = html.escape(job_id, quote=True)
-    download_url = f"/jobs/{job_id}/e142.csv"
-    safe_download_url = html.escape(download_url, quote=True)
-    return f"""
-    <section class="relative rounded-lg border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
-      data-status="success"
-      data-kind="e142"
-      data-job-id="{safe_job_id}">
-      <a
-        href="{safe_download_url}"
-        title="CSVをダウンロード"
-        aria-label="CSVをダウンロード"
-        class="group absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded border border-emerald-700 bg-white text-emerald-700 hover:bg-emerald-100"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
-          <path d="M12 3v11"></path>
-          <path d="m8 10 4 4 4-4"></path>
-          <path d="M4 20h16"></path>
-        </svg>
-      </a>
-      <div class="text-sm font-semibold text-emerald-800">抽出が完了しました</div>
-      <div class="mt-1 text-sm text-emerald-900">Rows: {int(row_count)}</div>
-      <div class="mt-4 overflow-x-auto">{rows_html}</div>
-    </section>
-    """
-
-
-def _render_e142_error_html(message: str) -> str:
-    safe_message = html.escape(_single_line_message(message), quote=True)
-    return f"""
-    <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm" data-status="error" data-kind="e142">
-      <div class="text-sm font-semibold text-red-800">処理に失敗しました</div>
-      <div class="mt-1 text-sm">message: {safe_message}</div>
-    </section>
-    """
-
-
 def _run_e055_job(file_bytes: bytes, source_filename: str):
     if not vision_service_account_json:
         raise ValueError("VISION_SERVICE_ACCOUNT_KEY is not configured.")
@@ -1196,7 +696,7 @@ def _run_e055_job(file_bytes: bytes, source_filename: str):
         dpi=300,
         y_cluster=18.0,
     )
-    profile = _csv_profile(csv_path)
+    profile = csv_profile(csv_path)
     save_metadata(
         job,
         {
@@ -1228,7 +728,7 @@ def _run_e251_job(file_bytes: bytes, source_filename: str):
         dpi=300,
         y_cluster=14.0,
     )
-    profile = _csv_profile(csv_path)
+    profile = csv_profile(csv_path)
     save_metadata(
         job,
         {
@@ -1262,7 +762,7 @@ def _run_e142_job(file_bytes: bytes, source_filename: str):
         y_cluster=12.0,
         x_gap=70.0,
     )
-    profile = _csv_profile_no_header(csv_path)
+    profile = csv_profile_no_header(csv_path)
     save_metadata(
         job,
         {
@@ -1295,7 +795,7 @@ def _run_raster_job(file_bytes: bytes, source_filename: str):
         dpi=300,
         y_cluster=20.0,
     )
-    profile = _csv_profile(csv_path)
+    profile = csv_profile(csv_path)
     save_metadata(
         job,
         {
@@ -1319,7 +819,7 @@ def _run_vector_job(file_bytes: bytes, source_filename: str):
         pdf_path=input_pdf_path,
         out_csv_path=csv_path,
     )
-    profile = _csv_profile(csv_path)
+    profile = csv_profile(csv_path)
     save_metadata(
         job,
         {
@@ -1358,7 +858,7 @@ def _run_unified_job(raster_job_id: str, vector_job_id: str):
         raster_csv_path=raster_csv_path,
         out_csv_path=out_csv_path,
     )
-    profile = _csv_profile(out_csv_path)
+    profile = csv_profile(out_csv_path)
     save_metadata(
         job,
         {
@@ -1374,41 +874,6 @@ def _run_unified_job(raster_job_id: str, vector_job_id: str):
         },
     )
     return job, profile
-
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    return templates.TemplateResponse(request, "index.html")
-
-
-@app.get("/me-check", response_class=HTMLResponse)
-async def read_me_check(request: Request):
-    return templates.TemplateResponse(request, "me-check.html")
-
-
-@app.get("/me-check/develop", response_class=HTMLResponse)
-async def read_develop(request: Request):
-    return templates.TemplateResponse(request, "develop.html")
-
-
-@app.get("/e-055", response_class=HTMLResponse)
-async def read_e055(request: Request):
-    return templates.TemplateResponse(request, "e-055.html")
-
-
-@app.get("/e-251", response_class=HTMLResponse)
-async def read_e251(request: Request):
-    return templates.TemplateResponse(request, "e-251.html")
-
-
-@app.get("/e-142", response_class=HTMLResponse)
-async def read_e142(request: Request):
-    return templates.TemplateResponse(request, "e-142.html")
-
-
-@app.get("/area", response_class=HTMLResponse)
-async def read_area(request: Request):
-    return templates.TemplateResponse(request, "area.html")
 
 
 @app.post("/area/upload", response_class=HTMLResponse)
@@ -1455,7 +920,7 @@ async def handle_area_upload(file: UploadFile = File(...)):
 
         _response, tool_calls_log, raw_text, data = _run_generation()
         if not isinstance(data, dict):
-            return _render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
+            return render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
 
         # 図面タイプを取得
         diagram_type = _get_diagram_type(data)
@@ -1489,7 +954,7 @@ async def handle_area_upload(file: UploadFile = File(...)):
                     extra_instruction
                 )
                 if not isinstance(data, dict):
-                    return _render_parse_error(
+                    return render_parse_error(
                         raw_text, "JSONオブジェクトが見つかりません。"
                     )
 
@@ -1502,7 +967,7 @@ async def handle_area_upload(file: UploadFile = File(...)):
 
         report_md = data.get("report_markdown", "")
         if not report_md:
-            return _render_parse_error(
+            return render_parse_error(
                 raw_text, "レポート内容（report_markdown）が空です。"
             )
 
@@ -1539,7 +1004,7 @@ async def handle_area_upload(file: UploadFile = File(...)):
         )
 
         # Build debug info (outputs to browser console)
-        debug_script = _build_debug_script(
+        debug_script = build_debug_script(
             extracted_text, regex_summary, raw_text, tool_calls_log
         )
 
@@ -1573,9 +1038,9 @@ async def handle_upload_compat(file: UploadFile = File(...)):
 @app.post("/e-055/upload", response_class=HTMLResponse)
 async def handle_e055_upload(file: UploadFile = File(...)):
     if not _is_pdf_upload(file):
-        return _render_e055_error_html("Please upload a valid PDF file.")
+        return render_extractor_error_html("e055", "Please upload a valid PDF file.")
     if not vision_service_account_json:
-        return _render_e055_error_html("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+        return render_extractor_error_html("e055", "VISION_SERVICE_ACCOUNT_KEY is not configured.")
 
     try:
         file_bytes = await file.read()
@@ -1583,23 +1048,21 @@ async def handle_e055_upload(file: UploadFile = File(...)):
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
-        table_html = _build_e055_table_html(job.job_dir / "e055.csv")
-        return _render_e055_success_html(
-            job_id=job.job_id,
-            table_html=table_html,
-            row_count=int(profile["rows"]),
+        table_html = build_equipment_table_html(job.job_dir / "e055.csv", "e055")
+        return render_extractor_success_html(
+            "e055", job.job_id, table_html, int(profile["rows"])
         )
     except Exception as exc:
         print(f"E-055 extraction failed: {exc}")
-        return _render_e055_error_html(str(exc))
+        return render_extractor_error_html("e055", str(exc))
 
 
 @app.post("/e-251/upload", response_class=HTMLResponse)
 async def handle_e251_upload(file: UploadFile = File(...)):
     if not _is_pdf_upload(file):
-        return _render_e251_error_html("Please upload a valid PDF file.")
+        return render_extractor_error_html("e251", "Please upload a valid PDF file.")
     if not vision_service_account_json:
-        return _render_e251_error_html("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+        return render_extractor_error_html("e251", "VISION_SERVICE_ACCOUNT_KEY is not configured.")
 
     try:
         file_bytes = await file.read()
@@ -1607,23 +1070,21 @@ async def handle_e251_upload(file: UploadFile = File(...)):
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
-        table_html = _build_e251_table_html(job.job_dir / "e251.csv")
-        return _render_e251_success_html(
-            job_id=job.job_id,
-            table_html=table_html,
-            row_count=int(profile["rows"]),
+        table_html = build_equipment_table_html(job.job_dir / "e251.csv", "e251")
+        return render_extractor_success_html(
+            "e251", job.job_id, table_html, int(profile["rows"])
         )
     except Exception as exc:
         print(f"E-251 extraction failed: {exc}")
-        return _render_e251_error_html(str(exc))
+        return render_extractor_error_html("e251", str(exc))
 
 
 @app.post("/e-142/upload", response_class=HTMLResponse)
 async def handle_e142_upload(file: UploadFile = File(...)):
     if not _is_pdf_upload(file):
-        return _render_e142_error_html("Please upload a valid PDF file.")
+        return render_extractor_error_html("e142", "Please upload a valid PDF file.")
     if not vision_service_account_json:
-        return _render_e142_error_html("VISION_SERVICE_ACCOUNT_KEY is not configured.")
+        return render_extractor_error_html("e142", "VISION_SERVICE_ACCOUNT_KEY is not configured.")
 
     try:
         file_bytes = await file.read()
@@ -1633,18 +1094,16 @@ async def handle_e142_upload(file: UploadFile = File(...)):
             source_filename=file.filename or "upload.pdf",
         )
         rows_html = await asyncio.to_thread(
-            _build_e142_rows_html,
+            build_e142_rows_html,
             job.job_dir / "e142.csv",
         )
-        return _render_e142_success_html(
-            job_id=job.job_id,
-            rows_html=rows_html,
-            row_count=int(profile["rows"]),
+        return render_extractor_success_html(
+            "e142", job.job_id, rows_html, int(profile["rows"])
         )
     except Exception:
         logger.exception("E-142 extraction failed")
-        return _render_e142_error_html(
-            "An internal error occurred while processing your request."
+        return render_extractor_error_html(
+            "e142", "An internal error occurred while processing your request."
         )
 
 
@@ -1785,7 +1244,7 @@ async def handle_raster_upload(file: UploadFile = File(...)):
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
-        return _render_job_result_html(
+        return render_job_result_html(
             kind="raster",
             job_id=job.job_id,
             rows=int(profile["rows"]),
@@ -1817,7 +1276,7 @@ async def handle_vector_upload(file: UploadFile = File(...)):
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
-        return _render_job_result_html(
+        return render_job_result_html(
             kind="vector",
             job_id=job.job_id,
             rows=int(profile["rows"]),
@@ -1847,7 +1306,7 @@ async def handle_unified_merge(
             raster_job_id=raster_job_id_str,
             vector_job_id=vector_job_id_str,
         )
-        return _render_job_result_html(
+        return render_job_result_html(
             kind="unified",
             job_id=job.job_id,
             rows=int(profile["rows"]),
@@ -1864,57 +1323,6 @@ async def handle_unified_merge(
             {safe_error}
         </div>
         """
-
-
-def _download_job_csv(job_id: UUID, kind: str):
-    job_id_str = str(job_id)
-    try:
-        csv_path = resolve_job_csv_path(job_id=job_id_str, kind=kind)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if not csv_path.parent.exists():
-        raise HTTPException(status_code=404, detail="Job not found")
-    if not csv_path.exists():
-        raise HTTPException(status_code=404, detail="CSV not found")
-    download_filename = f"{kind}.csv"
-    if kind == "unified":
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        download_filename = f"me-check_照合結果_{timestamp}.csv"
-    return FileResponse(
-        path=csv_path,
-        media_type="text/csv; charset=utf-8",
-        filename=download_filename,
-    )
-
-
-@app.get("/jobs/{job_id}/raster.csv")
-async def download_raster_csv(job_id: UUID):
-    return _download_job_csv(job_id=job_id, kind="raster")
-
-
-@app.get("/jobs/{job_id}/e055.csv")
-async def download_e055_csv(job_id: UUID):
-    return _download_job_csv(job_id=job_id, kind="e055")
-
-
-@app.get("/jobs/{job_id}/e251.csv")
-async def download_e251_csv(job_id: UUID):
-    return _download_job_csv(job_id=job_id, kind="e251")
-
-
-@app.get("/jobs/{job_id}/e142.csv")
-async def download_e142_csv(job_id: UUID):
-    return _download_job_csv(job_id=job_id, kind="e142")
-
-
-@app.get("/jobs/{job_id}/vector.csv")
-async def download_vector_csv(job_id: UUID):
-    return _download_job_csv(job_id=job_id, kind="vector")
-
-
-@app.get("/jobs/{job_id}/unified.csv")
-async def download_unified_csv(job_id: UUID):
-    return _download_job_csv(job_id=job_id, kind="unified")
 
 
 if __name__ == "__main__":
