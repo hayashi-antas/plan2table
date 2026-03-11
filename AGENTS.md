@@ -21,14 +21,14 @@
 - After secret-based commands, clear related environment variables in the same shell session when possible.
 - Never commit secrets, secret-derived files, or credential dumps.
 
-## 1Password workflow for Vision API
+## 1Password workflow for GCP (Vertex AI + Vision API)
 - Prerequisite: user signs in to 1Password first.
 - Account: `my.1password.com`
-- Secret reference: `op://antas/vision api me check/me-check-487106-03df4ceb885d.json`
+- Project ID: `op://antas/me check service account json key file/add more/project ID`
+- Service account JSON (Vertex + Vision 共通): `op://antas/me check service account json key file/me-check-487106-61fe11f85a91.json`
 - Recommended login command:
   - `eval "$(op signin --account my.1password.com)"`
-- Recommended secret read command:
-  - `VISION_SERVICE_ACCOUNT_KEY="$(op read 'op://antas/vision api me check/me-check-487106-03df4ceb885d.json')"`
+- Recommended secret read: use `op read '...'` for project ID and for the JSON key; pass to `GOOGLE_CLOUD_PROJECT` and `GCP_SERVICE_ACCOUNT_KEY`. See Makefile.
 - Use it directly for command execution in the same shell, and avoid persisting the value.
 
 ## If file-based secret handling is unavoidable
