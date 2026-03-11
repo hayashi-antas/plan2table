@@ -1,0 +1,8 @@
+#!/bin/sh
+# Pre-commit hook: run make lint and make format so code is linted and formatted before commit.
+# Install with: make install-hooks
+set -e
+echo "Running make lint and make format before commit..."
+make lint
+make format
+echo "✔ lint and format done"
