@@ -32,19 +32,18 @@ async def handle_customer_run(
     panel_file: UploadFile = File(...),
     equipment_file: UploadFile = File(...),
 ):
-    if not is_pdf_upload(panel_file):
+    panel_file_bytes = await panel_file.read()
+    equipment_file_bytes = await equipment_file.read()
+    if not is_pdf_upload(panel_file, first_bytes=panel_file_bytes):
         return render_customer_error_html(
             stage="panel->raster",
             message="Please upload a valid PDF file for panel_file.",
         )
-    if not is_pdf_upload(equipment_file):
+    if not is_pdf_upload(equipment_file, first_bytes=equipment_file_bytes):
         return render_customer_error_html(
             stage="equipment->vector",
             message="Please upload a valid PDF file for equipment_file.",
         )
-
-    panel_file_bytes = await panel_file.read()
-    equipment_file_bytes = await equipment_file.read()
     parallel_extract_enabled = is_parallel_extract_enabled()
     raster_profile: Optional[dict] = None
     vector_profile: Optional[dict] = None
@@ -145,12 +144,6 @@ async def handle_customer_run(
 
 @router.post("/raster/upload", response_class=HTMLResponse)
 async def handle_raster_upload(file: UploadFile = File(...)):
-    if not is_pdf_upload(file):
-        return """
-        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
-            <strong>Error:</strong> Please upload a valid PDF file.
-        </div>
-        """
     if not vision_service_account_json:
         return """
         <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
@@ -160,7 +153,14 @@ async def handle_raster_upload(file: UploadFile = File(...)):
 
     try:
         file_bytes = await file.read()
-        job, profile = run_raster_job(
+        if not is_pdf_upload(file, first_bytes=file_bytes):
+            return """
+            <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+                <strong>Error:</strong> Please upload a valid PDF file.
+            </div>
+            """
+        job, profile = await asyncio.to_thread(
+            run_raster_job,
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
@@ -183,16 +183,16 @@ async def handle_raster_upload(file: UploadFile = File(...)):
 
 @router.post("/vector/upload", response_class=HTMLResponse)
 async def handle_vector_upload(file: UploadFile = File(...)):
-    if not is_pdf_upload(file):
-        return """
-        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
-            <strong>Error:</strong> Please upload a valid PDF file.
-        </div>
-        """
-
     try:
         file_bytes = await file.read()
-        job, profile = run_vector_job(
+        if not is_pdf_upload(file, first_bytes=file_bytes):
+            return """
+            <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+                <strong>Error:</strong> Please upload a valid PDF file.
+            </div>
+            """
+        job, profile = await asyncio.to_thread(
+            run_vector_job,
             file_bytes=file_bytes,
             source_filename=file.filename or "upload.pdf",
         )
@@ -222,9 +222,10 @@ async def handle_unified_merge(
     vector_job_id_str = str(vector_job_id)
 
     try:
-        job, profile = run_unified_job(
-            raster_job_id=raster_job_id_str,
-            vector_job_id=vector_job_id_str,
+        job, profile = await asyncio.to_thread(
+            run_unified_job,
+            raster_job_id_str,
+            vector_job_id_str,
         )
         return render_job_result_html(
             kind="unified",

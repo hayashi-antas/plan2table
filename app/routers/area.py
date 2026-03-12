@@ -1,5 +1,6 @@
 """POST routes for area (diagram) extraction upload."""
 
+import asyncio
 import html
 
 import bleach
@@ -22,17 +23,16 @@ router = APIRouter()
 
 @router.post("/area/upload", response_class=HTMLResponse)
 async def handle_area_upload(file: UploadFile = File(...)):
-    if not is_pdf_upload(file):
-        return """
-        <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
-            <strong>Error:</strong> Please upload a valid PDF file.
-        </div>
-        """
-
     try:
         file_bytes = await file.read()
+        if not is_pdf_upload(file, first_bytes=file_bytes):
+            return """
+            <div class="p-4 bg-copper-light/20 border border-copper text-wood-dark rounded-sm">
+                <strong>Error:</strong> Please upload a valid PDF file.
+            </div>
+            """
 
-        extracted_text = extract_text_from_pdf(file_bytes)
+        extracted_text = await asyncio.to_thread(extract_text_from_pdf, file_bytes)
         regex_summary = extract_summary_areas(extracted_text)
 
         pdf_part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
@@ -58,7 +58,9 @@ async def handle_area_upload(file: UploadFile = File(...)):
             data = extract_json(raw_text)
             return response, tool_calls_log, raw_text, data
 
-        _response, tool_calls_log, raw_text, data = _run_generation()
+        _response, tool_calls_log, raw_text, data = await asyncio.to_thread(
+            _run_generation
+        )
         if not isinstance(data, dict):
             return render_parse_error(raw_text, "JSONオブジェクトが見つかりません。")
 
@@ -86,8 +88,8 @@ async def handle_area_upload(file: UploadFile = File(...)):
                     "推測や一般値は禁止。寸法(mm)を明示してください。\n"
                     "「-」や空欄にせず、必ず数値で埋めてください。"
                 )
-                _response, tool_calls_log, raw_text, data = _run_generation(
-                    extra_instruction
+                _response, tool_calls_log, raw_text, data = await asyncio.to_thread(
+                    _run_generation, extra_instruction
                 )
                 if not isinstance(data, dict):
                     return render_parse_error(
