@@ -20,9 +20,18 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
 
-def is_pdf_upload(file: "UploadFile") -> bool:
+def is_pdf_upload(file: "UploadFile", first_bytes: bytes | None = None) -> bool:
+    """Return True if the upload looks like a PDF (filename, content_type, and optional magic)."""
+    if first_bytes is not None and len(first_bytes) >= 5:
+        if not first_bytes.startswith(b"%PDF"):
+            return False
     name = (file.filename or "").lower()
-    return name.endswith(".pdf")
+    if not name.endswith(".pdf"):
+        return False
+    ct = (getattr(file, "content_type", None) or "").strip().lower()
+    if ct and not ct.startswith("application/pdf") and ct != "application/octet-stream":
+        return False
+    return True
 
 
 def is_parallel_extract_enabled() -> bool:
@@ -38,7 +47,8 @@ def run_e055_job(file_bytes: bytes, source_filename: str):
     input_pdf_path = job.job_dir / "input.pdf"
     input_pdf_path.write_bytes(file_bytes)
     csv_path = job.job_dir / "e055.csv"
-    debug_dir = Path("/tmp") / "plan2table" / "debug" / job.job_id
+    debug_dir = job.job_dir / "debug" / job.job_id
+    debug_dir.mkdir(parents=True, exist_ok=True)
     extract_result = extract_e055_pdf(
         pdf_path=input_pdf_path,
         out_csv=csv_path,
@@ -70,7 +80,8 @@ def run_e251_job(file_bytes: bytes, source_filename: str):
     input_pdf_path = job.job_dir / "input.pdf"
     input_pdf_path.write_bytes(file_bytes)
     csv_path = job.job_dir / "e251.csv"
-    debug_dir = Path("/tmp") / "plan2table" / "debug" / job.job_id
+    debug_dir = job.job_dir / "debug" / job.job_id
+    debug_dir.mkdir(parents=True, exist_ok=True)
     extract_result = extract_e251_pdf(
         pdf_path=input_pdf_path,
         out_csv=csv_path,
