@@ -29,6 +29,7 @@
 - Recommended login command:
   - `eval "$(op signin --account my.1password.com)"`
 - Recommended secret read: use `op read '...'` for project ID and for the JSON key; pass to `GOOGLE_CLOUD_PROJECT` and `GCP_SERVICE_ACCOUNT_KEY`. See Makefile.
+- **Credential precedence**: アプリは `VERTEX_SERVICE_ACCOUNT_KEY` と `VISION_SERVICE_ACCOUNT_KEY` をそれぞれ参照するが、未設定の場合は両方とも `GCP_SERVICE_ACCOUNT_KEY` にフォールバックする。そのため **Makefile のように `GCP_SERVICE_ACCOUNT_KEY` だけ渡す従来の運用でそのまま動く**。Vertex と Vision で別キーを使う場合のみ、上記2つを個別に設定する。
 - Use it directly for command execution in the same shell, and avoid persisting the value.
 
 ## If file-based secret handling is unavoidable

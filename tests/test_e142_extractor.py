@@ -1,31 +1,10 @@
+from tests.helpers import _segment
 from extractors.e142_extractor import (
     FrameRow,
     _refine_titles_for_reference_rows,
-    Segment,
     build_frame_rows_from_segments,
     extract_label_value_pairs,
 )
-
-
-def _segment(
-    text: str,
-    *,
-    y: float,
-    x0: float,
-    x1: float,
-    page: int = 1,
-) -> Segment:
-    compact = text.replace(" ", "").replace("　", "")
-    return Segment(
-        page=page,
-        row_y=y,
-        x0=x0,
-        x1=x1,
-        top=y - 6.0,
-        bottom=y + 6.0,
-        text=text,
-        text_compact=compact,
-    )
 
 
 def test_extract_label_value_pairs_supports_multiple_labels_in_one_segment():

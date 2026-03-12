@@ -10,12 +10,21 @@ import re
 import subprocess
 import sys
 import tempfile
-import unicodedata
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
 from typing import Dict, List, Optional, Set, Tuple
+
+from extractors.common import (
+    RowCluster,
+    WordBox,
+    cluster_by_y,
+    normalize_drawing_number_candidate as _common_normalize_drawing_number_candidate,
+    normalize_text as _common_normalize_text,
+    row_text,
+    split_cluster_by_x_gap,
+)
 
 try:
     from google.cloud import vision
@@ -74,7 +83,6 @@ DRAWING_NO_LABEL_X_TOLERANCE_RIGHT = 320.0
 DRAWING_NO_VALUE_Y_CLUSTER = 12.0
 DRAWING_NO_BOTTOM_REGION_Y_RATIO = 0.70
 DRAWING_NO_BOTTOM_REGION_X_RATIO = 0.70
-DRAWING_NO_PATTERN = re.compile(r"^[A-Z]{1,4}-[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})*$")
 
 ROW_FILTER_NAME_KEYWORDS = [
     "ポンプ",
@@ -118,20 +126,6 @@ FOOTER_KEYWORDS = [
     "日付",
     "登録",
 ]
-
-
-@dataclass
-class WordBox:
-    text: str
-    cx: float
-    cy: float
-    bbox: Tuple[float, float, float, float]
-
-
-@dataclass
-class RowCluster:
-    row_y: float
-    words: List[WordBox]
 
 
 @dataclass
@@ -199,17 +193,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def normalize_text(text: str) -> str:
-    return unicodedata.normalize("NFKC", text or "")
+    """Re-export for backward compatibility."""
+    return _common_normalize_text(text)
 
 
 def normalize_drawing_number_candidate(text: str) -> Optional[str]:
-    normalized = normalize_text(text).upper()
-    normalized = normalized.replace(" ", "").replace("　", "")
-    normalized = re.sub(r"[‐‑‒–—―ー−－]", "-", normalized)
-    normalized = normalized.strip("|,:;[](){}<>「」『』")
-    if DRAWING_NO_PATTERN.fullmatch(normalized):
-        return normalized
-    return None
+    """Re-export for backward compatibility."""
+    return _common_normalize_drawing_number_candidate(text)
 
 
 def is_drawing_number_label(text: str) -> bool:
@@ -434,28 +424,6 @@ def extract_words(
                         )
                     )
     return words
-
-
-def cluster_by_y(words: List[WordBox], threshold: float) -> List[RowCluster]:
-    if not words:
-        return []
-    sorted_words = sorted(words, key=lambda w: w.cy)
-    clusters: List[RowCluster] = [
-        RowCluster(row_y=sorted_words[0].cy, words=[sorted_words[0]])
-    ]
-    for word in sorted_words[1:]:
-        last = clusters[-1]
-        if abs(word.cy - last.row_y) <= threshold:
-            last.words.append(word)
-            n = len(last.words)
-            last.row_y = ((last.row_y * (n - 1)) + word.cy) / n
-        else:
-            clusters.append(RowCluster(row_y=word.cy, words=[word]))
-    return clusters
-
-
-def row_text(cluster: RowCluster) -> str:
-    return "".join(w.text for w in sorted(cluster.words, key=lambda x: x.cx))
 
 
 def header_score(cluster: RowCluster) -> int:
@@ -1045,28 +1013,8 @@ def is_data_row(row: Dict[str, str]) -> bool:
 
 
 def _split_cluster_by_x_gap(cluster: RowCluster, max_gap: float) -> List[RowCluster]:
-    if not cluster.words:
-        return []
-    words = sorted(cluster.words, key=lambda w: w.cx)
-    grouped: List[List[WordBox]] = [[words[0]]]
-    prev = words[0]
-    for word in words[1:]:
-        gap = word.bbox[0] - prev.bbox[2]
-        if gap > max_gap:
-            grouped.append([word])
-        else:
-            grouped[-1].append(word)
-        prev = word
-
-    split_clusters: List[RowCluster] = []
-    for group in grouped:
-        split_clusters.append(
-            RowCluster(
-                row_y=sum(w.cy for w in group) / max(1, len(group)),
-                words=group,
-            )
-        )
-    return split_clusters
+    """Re-export for backward compatibility."""
+    return split_cluster_by_x_gap(cluster, max_gap)
 
 
 def infer_dynamic_data_start_y(words: List[WordBox], header_y: float) -> float:

@@ -4,7 +4,7 @@
 > 📐 **建築図面を「読む」から「使えるデータ」に変えるAIエージェント（Domain-Specific Agent）**
 
 建築図面（PDF）から部屋情報を自動抽出し、美しいMarkdownレポートを生成するWebアプリケーションです。  
-Google Cloud Vertex AI（Gemini 3.0 Pro Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。  
+Google Cloud Vertex AI（Gemini 3.1 Pro Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。  
 **図面タイプ自動判断機能**により、寸法線がある詳細図面と面積が記載されている簡易図面の両方に対応しています。
 
 ## 特徴
@@ -30,7 +30,7 @@ flowchart LR
     end
     
     subgraph agent [エージェント]
-        Gemini[Gemini 3.0 Pro Preview]
+        Gemini[Gemini 3.1 Pro Preview]
     end
     
     subgraph skills [スキル群]
@@ -63,7 +63,7 @@ flowchart LR
 
 
 1. **Ingest: データの入力と送信**
-   図面PDFをバイナリ形式のまま、**Gemini 3.0 Pro Preview** へダイレクトにストリーム。プロンプトと共にコンテキストを保持した状態で処理を開始します。
+   図面PDFをバイナリ形式のまま、**Gemini 3.1 Pro Preview** へダイレクトにストリーム。プロンプトと共にコンテキストを保持した状態で処理を開始します。
 
 2. **Analyze: マルチモーダル図面解析とタイプ判断**
    LLMによる視覚的解析を実行。図面内の線画・記号・レイアウトを直接読み取り、室名や面積などの情報を**空間的に認識**して抽出します。  
@@ -120,13 +120,18 @@ AIエージェントは以下のスキルを自律的に呼び出すことがで
 
 ```
 plan2table/
-├── main.py                     # FastAPIアプリケーション本体
+├── main.py                     # FastAPIアプリケーションエントリ
+├── app/
+│   ├── main.py                 # FastAPIアプリ本体
+│   ├── core/                   # 設定・レンダラ・ユーティリティ
+│   ├── routers/                # area, extractors, mecheck, pages, downloads
+│   └── services/               # 抽出ジョブ・Gemini・ジョブランナー等
 ├── extractors/
-│   ├── __init__.py
 │   ├── area_regex.py           # 正規表現による面積抽出（デバッグ用）
 │   ├── text_extractor.py       # PDFからのテキスト抽出
 │   ├── skills.py               # スキル関数の実装
-│   └── tool_definitions.py     # Function Calling用のツール定義
+│   ├── tool_definitions.py     # Function Calling用のツール定義
+│   └── ...
 ├── prompts/
 │   ├── __init__.py             # プロンプト読み込みユーティリティ
 │   └── area_extract.md         # AIへのプロンプト
@@ -134,15 +139,18 @@ plan2table/
 │   ├── index.html              # ポータルUI
 │   ├── me-check.html           # お客さん向けUI
 │   ├── develop.html            # 開発者向けUI
-│   └── area.html               # LLM解析UI
+│   └── area.html               # 図面解析（LLM）UI
 ├── tests/
-│   ├── test_area_regex.py      # 正規表現抽出のテスト
-│   └── test_prompt_load.py     # プロンプト読み込みのテスト
-├── .github/
-│   └── workflows/
-│       └── sync-to-hf-spaces.yml  # Hugging Face Spaces自動同期
+│   ├── conftest.py             # pytest fixtures
+│   ├── helpers.py              # テスト用ビルダ（WordBox/Segment等）
+│   ├── test_area_regex.py
+│   ├── test_prompt_load.py
+│   └── ...
+├── scripts/
+│   └── pre-commit              # pre-commitフック（make lint + make format + diff確認）
 ├── Dockerfile
 ├── Makefile
+├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
@@ -151,7 +159,7 @@ plan2table/
 ## 技術スタック
 
 - **Backend**: FastAPI + Uvicorn
-- **AI**: Google Cloud Vertex AI (Gemini 3.0 Pro Preview)
+- **AI**: Google Cloud Vertex AI (Gemini 3.1 Pro Preview)
 - **SDK**: google-genai
 - **PDF処理**: pdfplumber
 - **Frontend**: HTML + Tailwind CSS + htmx
@@ -173,12 +181,12 @@ make test           # テスト実行
 make lint           # ruff でリント
 make format         # black でフォーマット
 make format-check   # フォーマットチェックのみ（CI 用）
-make check-all      # lint + format-check をまとめて実行
+make check-all      # lint + format-check + test をまとめて実行（CI で使用）
 make run            # アプリ起動（1Password で GCP 認証が必要）
-make install-hooks  # pre-push で make check-all を実行するフックを入れる（任意）
+make install-hooks  # pre-commit で make lint と make format を実行するフックを入れる（任意）
 ```
 
-push 前に lint/format をかけたい場合は `make install-hooks` を一度実行すると、以降 `git push` の直前に `make check-all` が走ります。失敗すると push は行われません。
+コミット前に lint/format をかけたい場合は `make install-hooks` を一度実行すると、以降 `git commit` の直前に `make lint` と `make format` が走ります。フォーマットでファイルが変更された場合はコミットが中止され、変更を確認してステージし直してから再度 `git commit` してください。
 
 初回は `make build` を実行してから `make test` などを使います。以降はソースを変更しただけなら再ビルド不要で、そのまま `make test` でカレントのコードがコンテナにマウントされて実行されます。
 

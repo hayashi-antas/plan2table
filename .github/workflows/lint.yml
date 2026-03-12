@@ -1,4 +1,4 @@
-name: Lint and format check
+name: Lint, format and test
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - main
 
 jobs:
-  lint:
+  check-all:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -18,5 +18,5 @@ jobs:
       - name: Build image
         run: make build
 
-      - name: Lint and format check (Docker)
+      - name: Lint, format check and test (Docker)
         run: make check-all

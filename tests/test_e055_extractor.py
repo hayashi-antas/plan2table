@@ -1,9 +1,13 @@
 # ruff: noqa: RUF001
 
+from pathlib import Path
+
+from PIL import Image
+
+from tests.helpers import _word
 from extractors.e055_extractor import (
     LineAssistConfig,
     RowCluster,
-    WordBox,
     _apply_line_assist_if_confident,
     _char_pos_to_token_index,
     _cleanup_model_text,
@@ -15,8 +19,6 @@ from extractors.e055_extractor import (
     split_equivalent_model,
     strip_times_marker_from_model,
 )
-from PIL import Image
-from pathlib import Path
 
 
 def test_split_equivalent_model_ascii_colon():
@@ -70,12 +72,6 @@ def test_split_equivalent_model_keeps_multi_pair_in_single_cell():
     maker, model = split_equivalent_model("Panasonic:NNN111 / ODELIC:OD222")
     assert maker == "Panasonic"
     assert model == "NNN111 / ODELIC:OD222"
-
-
-def _word(text: str, cx: float, cy: float = 100.0) -> WordBox:
-    return WordBox(
-        text=text, cx=cx, cy=cy, bbox=(cx - 5.0, cy - 5.0, cx + 5.0, cy + 5.0)
-    )
 
 
 def test_build_output_rows_keeps_duplicates_and_page_order():

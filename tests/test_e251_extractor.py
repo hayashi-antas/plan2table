@@ -1,20 +1,14 @@
 # ruff: noqa: RUF001
 
+from tests.helpers import _word
 from extractors.e251_extractor import (
     EquipmentAnchor,
     RowCluster,
-    WordBox,
     _assign_equipment_from_anchors,
     _detect_anchors,
     _extract_candidates_from_cluster,
     build_output_rows,
 )
-
-
-def _word(text: str, cx: float, cy: float = 100.0) -> WordBox:
-    return WordBox(
-        text=text, cx=cx, cy=cy, bbox=(cx - 5.0, cy - 5.0, cx + 5.0, cy + 5.0)
-    )
 
 
 def test_extract_candidates_from_cluster_maker_space_model():

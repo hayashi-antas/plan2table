@@ -14,17 +14,17 @@ DOCKER_RUN := docker run --rm -v "$$(pwd):/app" -w /app --user "$$(id -u):$$(id 
 
 .PHONY: build check run lint format format-check check-all test install-hooks
 
-# Install git pre-push hook that runs make check-all (optional, for local dev).
-# Do not overwrite an existing pre-push hook.
+# Install git pre-commit hook that runs make lint and make format (optional, for local dev).
+# Do not overwrite an existing pre-commit hook.
 install-hooks:
 	@mkdir -p .git/hooks
-	@if [ -f .git/hooks/pre-push ]; then \
-		echo "Error: .git/hooks/pre-push already exists. Remove or rename it first."; \
+	@if [ -f .git/hooks/pre-commit ]; then \
+		echo "Error: .git/hooks/pre-commit already exists. Remove or rename it first."; \
 		exit 1; \
 	fi
-	@cp scripts/pre-push .git/hooks/pre-push
-	@chmod +x .git/hooks/pre-push
-	@echo "✔ Installed pre-push hook (runs make check-all before push)"
+	@cp scripts/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✔ Installed pre-commit hook (runs make lint and make format before commit)"
 
 build:
 	docker build -t $(IMAGE) .
@@ -63,5 +63,8 @@ format-check:
 	$(DOCKER_RUN) black --target-version py313 --check .
 
 check-all:
+	@echo "Running lint, format check and test..."
 	$(DOCKER_RUN) ruff check . && $(DOCKER_RUN) black --target-version py313 --check .
 	@echo "✔ lint and format check passed"
+	$(MAKE) test
+	@echo "✔ check-all passed (lint, format, test)"
