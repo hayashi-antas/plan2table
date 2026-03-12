@@ -6,6 +6,8 @@ from google.genai import types
 
 from extractors.tool_definitions import TOOLS, SKILL_REGISTRY
 
+MAX_TOOL_CALL_ITERATIONS = 6
+
 
 def extract_json(raw_text):
     if not raw_text:
@@ -102,7 +104,7 @@ def generate_with_tools(client, model_name, parts, generation_config):
 
     tool_calls_log = []
 
-    for _ in range(6):
+    for _ in range(MAX_TOOL_CALL_ITERATIONS):
         func_calls = get_function_calls(response)
         if not func_calls:
             break
@@ -122,7 +124,13 @@ def generate_with_tools(client, model_name, parts, generation_config):
             )
             print(f"[Tool Call] {name}({args}) -> {payload}")
 
-        messages.append(response.candidates[0].content)
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates or not getattr(candidates[0], "content", None):
+            raise RuntimeError(
+                "Model response contained no candidates/content during tool loop; "
+                "cannot continue tool-based generation."
+            )
+        messages.append(candidates[0].content)
         messages.append(types.Content(role="user", parts=tool_responses))
 
         response = client.models.generate_content(

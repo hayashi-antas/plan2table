@@ -5,4 +5,10 @@ set -e
 echo "Running make lint and make format before commit..."
 make lint
 make format
+# If formatting changed files, prevent the commit so the user can review and stage them.
+if ! git diff --quiet; then
+  echo "Formatting made changes to your working tree."
+  echo "Please review the changes, add them to the commit, and run 'git commit' again."
+  exit 1
+fi
 echo "✔ lint and format done"
