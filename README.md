@@ -9,7 +9,15 @@ pinned: false
 license: mit
 ---
 
- <br>
+## デモ URL
+
+- メイン環境（Hugging Face）
+  https://peeaaa-ant-plan2table.hf.space/me-check
+
+- 予備環境（Railway）
+  https://plan2table-production.up.railway.app/
+
+※ メイン環境が停止している場合は、予備環境をご利用ください。
  
 ## 建築図面・機器表PDFのチェックとデータ化を、一つのツールで行えます。
 
