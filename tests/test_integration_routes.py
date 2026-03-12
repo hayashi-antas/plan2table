@@ -324,7 +324,7 @@ def test_e142_upload_returns_generic_error_on_internal_exception(tmp_path, monke
     def _boom(**kwargs):
         raise RuntimeError("internal details should not be exposed")
 
-    monkeypatch.setattr(extraction_jobs, "run_e142_job", _boom)
+    monkeypatch.setattr(extractors_router, "run_e142_job", _boom)
 
     resp = client.post(
         "/e-142/upload",

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from app.core.config import templates
+from app.core.config import MODEL_DISPLAY_NAME, templates
 
 router = APIRouter()
 
@@ -40,4 +40,6 @@ async def read_e142(request: Request):
 
 @router.get("/area", response_class=HTMLResponse)
 async def read_area(request: Request):
-    return templates.TemplateResponse(request, "area.html")
+    return templates.TemplateResponse(
+        request, "area.html", {"model_display_name": MODEL_DISPLAY_NAME}
+    )
