@@ -11,14 +11,15 @@ license: mit
 
 ## デモ URL
 
-[<img src="public/brand-icons/huggingface.png" alt="Hugging Face" width="20">](https://huggingface.co/spaces/Peeaaa-ant/plan2table/tree/main)
-[<img src="public/brand-icons/railway-dark.svg" alt="Railway" width="20">](https://plan2table-production.up.railway.app/me-check)
 
-
-- メイン環境（Hugging Face）
+- メイン環境（
+  <img src="https://github.com/user-attachments/assets/71a2a49c-fc99-4ab4-b0ad-23cc2d9d566c" alt="Hugging Face" width="20" height="20">
+  Hugging Face）
   https://peeaaa-ant-plan2table.hf.space/
 
-- 予備環境（Railway）
+- 予備環境（
+  <img src="https://github.com/user-attachments/assets/eee209f9-5d60-40b5-87b2-0dde2717f83f" alt="Railway" width="20" height="20">
+Railway）
   https://plan2table-production.up.railway.app/
 
 ※ メイン環境が停止している場合は、予備環境をご利用ください。
