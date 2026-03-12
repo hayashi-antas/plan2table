@@ -11,6 +11,10 @@ license: mit
 
 ## デモ URL
 
+[<img src="public/brand-icons/huggingface.png" alt="Hugging Face" width="20">](https://huggingface.co/spaces/Peeaaa-ant/plan2table/tree/main)
+[<img src="public/brand-icons/railway-dark.svg" alt="Railway" width="20">](https://plan2table-production.up.railway.app/me-check)
+
+
 - メイン環境（Hugging Face）
   https://peeaaa-ant-plan2table.hf.space/
 
