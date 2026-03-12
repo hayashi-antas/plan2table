@@ -11,10 +11,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main as app_main
+from app.core import config as app_config
+from app.core.renderers import build_e142_rows_html
+from app.routers import area as area_router
+from app.routers import extractors as extractors_router
+from app.routers import mecheck as mecheck_router
+from app.services import extraction_jobs
 from extractors import job_store
-from renderers import build_e142_rows_html
 
 client = TestClient(app_main.app)
+
+
+def _patch_vision_key(monkeypatch, value: str = '{"type":"service_account"}'):
+    """Patch vision_service_account_json everywhere the app reads it (config + routers + extraction_jobs)."""
+    monkeypatch.setattr(app_config, "vision_service_account_json", value)
+    monkeypatch.setattr(extractors_router, "vision_service_account_json", value)
+    monkeypatch.setattr(mecheck_router, "vision_service_account_json", value)
+    monkeypatch.setattr(extraction_jobs, "vision_service_account_json", value)
 
 
 def _extract_download_path(html: str, kind: str) -> str:
@@ -84,9 +97,7 @@ def _fake_e142_extract_success(**kwargs):
 
 def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
+    _patch_vision_key(monkeypatch)
 
     def fake_extract_raster_pdf(**kwargs):
         assert kwargs["page"] == 0
@@ -100,7 +111,7 @@ def test_raster_upload_and_download_fixed_path(tmp_path, monkeypatch):
             "columns": ["機器番号", "機器名称", "電圧(V)", "容量(kW)", "図面番号"],
         }
 
-    monkeypatch.setattr(app_main, "extract_raster_pdf", fake_extract_raster_pdf)
+    monkeypatch.setattr(extraction_jobs, "extract_raster_pdf", fake_extract_raster_pdf)
 
     resp = client.post(
         "/raster/upload",
@@ -129,7 +140,7 @@ def test_vector_upload_and_download_fixed_path(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(
-        app_main,
+        extraction_jobs,
         "extract_vector_pdf_four_columns",
         fake_extract_vector_pdf_four_columns,
     )
@@ -149,10 +160,8 @@ def test_vector_upload_and_download_fixed_path(tmp_path, monkeypatch):
 
 def test_e055_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
-    monkeypatch.setattr(app_main, "extract_e055_pdf", _fake_e055_extract_success)
+    _patch_vision_key(monkeypatch)
+    monkeypatch.setattr(extraction_jobs, "extract_e055_pdf", _fake_e055_extract_success)
 
     resp = client.post(
         "/e-055/upload",
@@ -173,7 +182,7 @@ def test_e055_upload_and_download_fixed_path(tmp_path, monkeypatch):
 
 def test_e055_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(app_main, "vision_service_account_json", "")
+    _patch_vision_key(monkeypatch, "")
 
     resp = client.post(
         "/e-055/upload",
@@ -186,10 +195,8 @@ def test_e055_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
 
 def test_e055_upload_contract_unchanged_across_line_assist_modes(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
-    monkeypatch.setattr(app_main, "extract_e055_pdf", _fake_e055_extract_success)
+    _patch_vision_key(monkeypatch)
+    monkeypatch.setattr(extraction_jobs, "extract_e055_pdf", _fake_e055_extract_success)
 
     baseline_csv_text = ""
     for mode in ("off", "auto", "force"):
@@ -213,10 +220,8 @@ def test_e055_upload_contract_unchanged_across_line_assist_modes(tmp_path, monke
 
 def test_e251_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
-    monkeypatch.setattr(app_main, "extract_e251_pdf", _fake_e251_extract_success)
+    _patch_vision_key(monkeypatch)
+    monkeypatch.setattr(extraction_jobs, "extract_e251_pdf", _fake_e251_extract_success)
 
     resp = client.post(
         "/e-251/upload",
@@ -237,7 +242,7 @@ def test_e251_upload_and_download_fixed_path(tmp_path, monkeypatch):
 
 def test_e251_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(app_main, "vision_service_account_json", "")
+    _patch_vision_key(monkeypatch, "")
 
     resp = client.post(
         "/e-251/upload",
@@ -250,10 +255,8 @@ def test_e251_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch
 
 def test_e142_upload_and_download_fixed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
-    monkeypatch.setattr(app_main, "extract_e142_pdf", _fake_e142_extract_success)
+    _patch_vision_key(monkeypatch)
+    monkeypatch.setattr(extraction_jobs, "extract_e142_pdf", _fake_e142_extract_success)
 
     resp = client.post(
         "/e-142/upload",
@@ -273,7 +276,7 @@ def test_e142_upload_and_download_fixed_path(tmp_path, monkeypatch):
 
 def test_e142_upload_returns_error_when_vision_key_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(app_main, "vision_service_account_json", "")
+    _patch_vision_key(monkeypatch, "")
 
     resp = client.post(
         "/e-142/upload",
@@ -296,9 +299,7 @@ def test_build_e142_rows_html_preserves_csv_quoting(tmp_path):
 
 def test_run_e142_job_uses_job_scoped_debug_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
+    _patch_vision_key(monkeypatch)
     captured = {}
 
     def _fake_extract(**kwargs):
@@ -306,8 +307,8 @@ def test_run_e142_job_uses_job_scoped_debug_dir(tmp_path, monkeypatch):
         kwargs["out_csv"].write_text("title,code\nA,AA-001\n", encoding="utf-8-sig")
         return {"rows": 1, "columns": ["column_1", "column_2"]}
 
-    monkeypatch.setattr(app_main, "extract_e142_pdf", _fake_extract)
-    job, _profile = app_main._run_e142_job(
+    monkeypatch.setattr(extraction_jobs, "extract_e142_pdf", _fake_extract)
+    job, _profile = extraction_jobs.run_e142_job(
         file_bytes=b"%PDF-1.4\n", source_filename="e142.pdf"
     )
 
@@ -318,14 +319,12 @@ def test_run_e142_job_uses_job_scoped_debug_dir(tmp_path, monkeypatch):
 
 def test_e142_upload_returns_generic_error_on_internal_exception(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
+    _patch_vision_key(monkeypatch)
 
     def _boom(**kwargs):
         raise RuntimeError("internal details should not be exposed")
 
-    monkeypatch.setattr(app_main, "_run_e142_job", _boom)
+    monkeypatch.setattr(extraction_jobs, "run_e142_job", _boom)
 
     resp = client.post(
         "/e-142/upload",
@@ -357,7 +356,7 @@ def test_upload_route_compat_delegates_to_area_upload(monkeypatch):
     async def fake_area_upload(file):
         return "<div>compat-ok</div>"
 
-    monkeypatch.setattr(app_main, "handle_area_upload", fake_area_upload)
+    monkeypatch.setattr(area_router, "handle_area_upload", fake_area_upload)
 
     resp = client.post(
         "/upload",
@@ -405,12 +404,12 @@ def test_root_and_develop_routes_are_split():
 
 def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
+        extraction_jobs, "extract_raster_pdf", _fake_raster_extract_success
     )
-    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
     monkeypatch.setattr(
-        app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success
+        extraction_jobs, "extract_vector_pdf_four_columns", _fake_vector_extract_success
     )
 
     resp = client.post(
@@ -481,9 +480,7 @@ def test_customer_run_success_returns_contract_and_download(tmp_path, monkeypatc
 
 def test_customer_run_summary_uses_vector_raster_row_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
-    monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
+    _patch_vision_key(monkeypatch)
 
     def fake_extract_raster_pdf(**kwargs):
         out_csv = kwargs["out_csv"]
@@ -519,9 +516,9 @@ def test_customer_run_summary_uses_vector_raster_row_counts(tmp_path, monkeypatc
             ],
         }
 
-    monkeypatch.setattr(app_main, "extract_raster_pdf", fake_extract_raster_pdf)
+    monkeypatch.setattr(extraction_jobs, "extract_raster_pdf", fake_extract_raster_pdf)
     monkeypatch.setattr(
-        app_main,
+        extraction_jobs,
         "extract_vector_pdf_four_columns",
         fake_extract_vector_pdf_four_columns,
     )
@@ -564,12 +561,12 @@ def test_customer_run_handles_judgment_header_variants(
     expected_mismatch,
 ):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
+        extraction_jobs, "extract_raster_pdf", _fake_raster_extract_success
     )
-    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
     monkeypatch.setattr(
-        app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success
+        extraction_jobs, "extract_vector_pdf_four_columns", _fake_vector_extract_success
     )
 
     def fake_merge_vector_raster_csv(vector_csv_path, raster_csv_path, out_csv_path):
@@ -607,7 +604,7 @@ def test_customer_run_handles_judgment_header_variants(
         return {"rows": 1, "columns": fieldnames}
 
     monkeypatch.setattr(
-        app_main, "merge_vector_raster_csv", fake_merge_vector_raster_csv
+        extraction_jobs, "merge_vector_raster_csv", fake_merge_vector_raster_csv
     )
 
     resp = client.post(
@@ -630,17 +627,15 @@ def test_customer_run_handles_judgment_header_variants(
 
 def test_customer_run_returns_stage_for_panel_to_raster_error(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
-    )
-    monkeypatch.setattr(
-        app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success
+        extraction_jobs, "extract_vector_pdf_four_columns", _fake_vector_extract_success
     )
 
     def fake_raster_failure(**kwargs):
         raise RuntimeError("panel raster failed")
 
-    monkeypatch.setattr(app_main, "extract_raster_pdf", fake_raster_failure)
+    monkeypatch.setattr(extraction_jobs, "extract_raster_pdf", fake_raster_failure)
 
     resp = client.post(
         "/customer/run",
@@ -659,16 +654,16 @@ def test_customer_run_returns_stage_for_equipment_to_vector_error(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
+        extraction_jobs, "extract_raster_pdf", _fake_raster_extract_success
     )
-    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
 
     def fake_vector_failure(pdf_path, out_csv_path):
         raise RuntimeError("equipment vector failed")
 
     monkeypatch.setattr(
-        app_main, "extract_vector_pdf_four_columns", fake_vector_failure
+        extraction_jobs, "extract_vector_pdf_four_columns", fake_vector_failure
     )
 
     resp = client.post(
@@ -686,18 +681,20 @@ def test_customer_run_returns_stage_for_equipment_to_vector_error(
 
 def test_customer_run_returns_stage_for_unified_error(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setattr(
-        app_main, "vision_service_account_json", '{"type":"service_account"}'
+        extraction_jobs, "extract_raster_pdf", _fake_raster_extract_success
     )
-    monkeypatch.setattr(app_main, "extract_raster_pdf", _fake_raster_extract_success)
     monkeypatch.setattr(
-        app_main, "extract_vector_pdf_four_columns", _fake_vector_extract_success
+        extraction_jobs, "extract_vector_pdf_four_columns", _fake_vector_extract_success
     )
 
     def fake_unified_failure(vector_csv_path, raster_csv_path, out_csv_path):
         raise RuntimeError("unified failed\ndetail")
 
-    monkeypatch.setattr(app_main, "merge_vector_raster_csv", fake_unified_failure)
+    monkeypatch.setattr(
+        extraction_jobs, "merge_vector_raster_csv", fake_unified_failure
+    )
 
     resp = client.post(
         "/customer/run",
@@ -714,6 +711,7 @@ def test_customer_run_returns_stage_for_unified_error(tmp_path, monkeypatch):
 
 def test_customer_run_executes_raster_and_vector_in_parallel(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
 
     raster_started = threading.Event()
@@ -749,9 +747,12 @@ def test_customer_run_executes_raster_and_vector_in_parallel(tmp_path, monkeypat
         (job.job_dir / "unified.csv").write_text("照合結果\n一致\n", encoding="utf-8")
         return job, {"rows": 1, "columns": ["照合結果"]}
 
-    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
-    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
-    monkeypatch.setattr(app_main, "_run_unified_job", fake_unified_job)
+    monkeypatch.setattr(extraction_jobs, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(extraction_jobs, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(extraction_jobs, "run_unified_job", fake_unified_job)
+    monkeypatch.setattr(mecheck_router, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(mecheck_router, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(mecheck_router, "run_unified_job", fake_unified_job)
 
     resp = client.post(
         "/customer/run",
@@ -769,6 +770,7 @@ def test_customer_run_falls_back_to_sequential_when_parallel_is_disabled(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "0")
 
     execution_order = []
@@ -799,9 +801,12 @@ def test_customer_run_falls_back_to_sequential_when_parallel_is_disabled(
         (job.job_dir / "unified.csv").write_text("照合結果\n一致\n", encoding="utf-8")
         return job, {"rows": 1, "columns": ["照合結果"]}
 
-    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
-    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
-    monkeypatch.setattr(app_main, "_run_unified_job", fake_unified_job)
+    monkeypatch.setattr(extraction_jobs, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(extraction_jobs, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(extraction_jobs, "run_unified_job", fake_unified_job)
+    monkeypatch.setattr(mecheck_router, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(mecheck_router, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(mecheck_router, "run_unified_job", fake_unified_job)
 
     resp = client.post(
         "/customer/run",
@@ -819,6 +824,7 @@ def test_customer_run_prefers_panel_stage_when_both_extracts_fail(
     tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
 
     def fake_raster_job(file_bytes, source_filename):
@@ -827,8 +833,10 @@ def test_customer_run_prefers_panel_stage_when_both_extracts_fail(
     def fake_vector_job(file_bytes, source_filename):
         raise RuntimeError("equipment vector failed")
 
-    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
-    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+    monkeypatch.setattr(extraction_jobs, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(extraction_jobs, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(mecheck_router, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(mecheck_router, "run_vector_job", fake_vector_job)
 
     resp = client.post(
         "/customer/run",
@@ -852,6 +860,7 @@ def test_customer_run_prefers_panel_stage_when_both_extracts_fail(
 
 def test_customer_run_handles_non_exception_base_exception(tmp_path, monkeypatch):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
 
     class NonExceptionFailure(BaseException):
@@ -867,8 +876,10 @@ def test_customer_run_handles_non_exception_base_exception(tmp_path, monkeypatch
         )
         return job, {"rows": 1, "columns": ["機器番号", "名称"]}
 
-    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
-    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+    monkeypatch.setattr(extraction_jobs, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(extraction_jobs, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(mecheck_router, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(mecheck_router, "run_vector_job", fake_vector_job)
 
     resp = client.post(
         "/customer/run",
@@ -887,6 +898,7 @@ def test_customer_run_reraises_cancelled_error_from_parallel_extract(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(job_store, "JOBS_ROOT", tmp_path)
+    _patch_vision_key(monkeypatch)
     monkeypatch.setenv("ME_CHECK_PARALLEL_EXTRACT", "1")
 
     def fake_raster_job(file_bytes, source_filename):
@@ -899,8 +911,10 @@ def test_customer_run_reraises_cancelled_error_from_parallel_extract(
         )
         return job, {"rows": 1, "columns": ["機器番号", "名称"]}
 
-    monkeypatch.setattr(app_main, "_run_raster_job", fake_raster_job)
-    monkeypatch.setattr(app_main, "_run_vector_job", fake_vector_job)
+    monkeypatch.setattr(extraction_jobs, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(extraction_jobs, "run_vector_job", fake_vector_job)
+    monkeypatch.setattr(mecheck_router, "run_raster_job", fake_raster_job)
+    monkeypatch.setattr(mecheck_router, "run_vector_job", fake_vector_job)
 
     with pytest.raises((asyncio.CancelledError, concurrent.futures.CancelledError)):
         client.post(
