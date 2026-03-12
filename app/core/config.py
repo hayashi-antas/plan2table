@@ -13,16 +13,13 @@ from google import genai
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
 location = os.getenv("VERTEX_LOCATION", "global")
 MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-3.1-pro-preview")
+MODEL_DISPLAY_NAME = os.getenv("VERTEX_MODEL_DISPLAY_NAME", "Gemini 3.1 Pro Preview")
 
-# One service account key for both Vertex AI and Vision API (GCP_SERVICE_ACCOUNT_KEY preferred)
-_gcp_service_account_json = (
-    os.getenv("GCP_SERVICE_ACCOUNT_KEY")
-    or os.getenv("VERTEX_SERVICE_ACCOUNT_KEY")
-    or os.getenv("VISION_SERVICE_ACCOUNT_KEY")
-    or ""
-)
-vertex_service_account_json = _gcp_service_account_json
-vision_service_account_json = _gcp_service_account_json
+# Vertex AI and Vision API credentials: each has its own env; both can fall back to
+# GCP_SERVICE_ACCOUNT_KEY so one key (e.g. from 1Password) can still drive both.
+_gcp_common_key = os.getenv("GCP_SERVICE_ACCOUNT_KEY") or ""
+vertex_service_account_json = os.getenv("VERTEX_SERVICE_ACCOUNT_KEY") or _gcp_common_key
+vision_service_account_json = os.getenv("VISION_SERVICE_ACCOUNT_KEY") or _gcp_common_key
 
 # Credential temp file handling (secure, 0o600, cleanup on exit)
 _cred_temp_paths: list[str] = []
