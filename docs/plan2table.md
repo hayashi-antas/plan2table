@@ -4,7 +4,7 @@
 > 📐 **建築図面を「読む」から「使えるデータ」に変えるAIエージェント（Domain-Specific Agent）**
 
 建築図面（PDF）から部屋情報を自動抽出し、美しいMarkdownレポートを生成するWebアプリケーションです。  
-Google Cloud Vertex AI（Gemini 3.0 Pro Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。  
+Google Cloud Vertex AI（Gemini 3.1 Pro Preview）と **Function Calling**[^1] を活用した「エージェント方式」により、高精度な数値抽出と検証を実現しています。  
 **図面タイプ自動判断機能**により、寸法線がある詳細図面と面積が記載されている簡易図面の両方に対応しています。
 
 ## 特徴
@@ -30,7 +30,7 @@ flowchart LR
     end
     
     subgraph agent [エージェント]
-        Gemini[Gemini 3.0 Pro Preview]
+        Gemini[Gemini 3.1 Pro Preview]
     end
     
     subgraph skills [スキル群]
@@ -63,7 +63,7 @@ flowchart LR
 
 
 1. **Ingest: データの入力と送信**
-   図面PDFをバイナリ形式のまま、**Gemini 3.0 Pro Preview** へダイレクトにストリーム。プロンプトと共にコンテキストを保持した状態で処理を開始します。
+   図面PDFをバイナリ形式のまま、**Gemini 3.1 Pro Preview** へダイレクトにストリーム。プロンプトと共にコンテキストを保持した状態で処理を開始します。
 
 2. **Analyze: マルチモーダル図面解析とタイプ判断**
    LLMによる視覚的解析を実行。図面内の線画・記号・レイアウトを直接読み取り、室名や面積などの情報を**空間的に認識**して抽出します。  
@@ -151,7 +151,7 @@ plan2table/
 ## 技術スタック
 
 - **Backend**: FastAPI + Uvicorn
-- **AI**: Google Cloud Vertex AI (Gemini 3.0 Pro Preview)
+- **AI**: Google Cloud Vertex AI (Gemini 3.1 Pro Preview)
 - **SDK**: google-genai
 - **PDF処理**: pdfplumber
 - **Frontend**: HTML + Tailwind CSS + htmx
