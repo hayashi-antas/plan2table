@@ -12,7 +12,7 @@ license: mit
 ## デモ URL
 
 - メイン環境（Hugging Face）
-  https://peeaaa-ant-plan2table.hf.space/me-check
+  https://peeaaa-ant-plan2table.hf.space/
 
 - 予備環境（Railway）
   https://plan2table-production.up.railway.app/
