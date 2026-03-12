@@ -1,6 +1,6 @@
 # ruff: noqa: RUF001
 
-from conftest import _word
+from tests.helpers import _word
 from extractors.e251_extractor import (
     EquipmentAnchor,
     RowCluster,

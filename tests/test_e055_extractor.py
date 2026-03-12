@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from conftest import _word
+from tests.helpers import _word
 from extractors.e055_extractor import (
     LineAssistConfig,
     RowCluster,

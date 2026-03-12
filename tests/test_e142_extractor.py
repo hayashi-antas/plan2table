@@ -1,4 +1,4 @@
-from conftest import _segment
+from tests.helpers import _segment
 from extractors.e142_extractor import (
     FrameRow,
     _refine_titles_for_reference_rows,

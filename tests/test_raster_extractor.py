@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from conftest import _wb
+from tests.helpers import _wb
 from extractors.raster_extractor import (
     ColumnBounds,
     RowsFromWordsResult,
