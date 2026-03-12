@@ -181,7 +181,7 @@ make test           # テスト実行
 make lint           # ruff でリント
 make format         # black でフォーマット
 make format-check   # フォーマットチェックのみ（CI 用）
-make check-all      # lint + format-check をまとめて実行
+make check-all      # lint + format-check + test をまとめて実行（CI で使用）
 make run            # アプリ起動（1Password で GCP 認証が必要）
 make install-hooks  # pre-commit で make lint と make format を実行するフックを入れる（任意）
 ```

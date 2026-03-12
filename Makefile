@@ -63,7 +63,8 @@ format-check:
 	$(DOCKER_RUN) black --target-version py313 --check .
 
 check-all:
+	@echo "Running lint, format check and test..."
 	$(DOCKER_RUN) ruff check . && $(DOCKER_RUN) black --target-version py313 --check .
 	@echo "✔ lint and format check passed"
 	$(MAKE) test
-	@echo "✔ check-all passed"
+	@echo "✔ check-all passed (lint, format, test)"
