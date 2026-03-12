@@ -5,8 +5,7 @@ import unicodedata
 from pathlib import Path
 from typing import Optional
 
-from app.core.renderers import single_line_message as renderer_single_line_message
-from app.core.utils import parse_float_or_none
+from app.core.utils import parse_float_or_none, single_line_message
 from extractors.csv_utils import read_csv_dict_rows
 
 CUSTOMER_JUDGMENT_COLUMN_CANDIDATES = [
@@ -363,7 +362,7 @@ def render_customer_success_html(unified_job_id: str, table_html: str) -> str:
 
 def render_customer_error_html(stage: str, message: str) -> str:
     safe_stage = html.escape(stage, quote=True)
-    safe_message = html.escape(renderer_single_line_message(message), quote=True)
+    safe_message = html.escape(single_line_message(message), quote=True)
     return f"""
     <section class="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm"
       data-status="error"

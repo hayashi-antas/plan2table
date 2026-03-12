@@ -22,7 +22,7 @@ def exception_message(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
-def parse_float_or_none(value: str) -> Optional[float]:
+def parse_float_or_none(value: Optional[str]) -> Optional[float]:
     """Parse string to float; return None for empty or invalid."""
     text = str(value or "").strip()
     if not text:

@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path
 
+from app.core.utils import single_line_message
 from extractors.csv_utils import read_csv_dict_rows, read_csv_rows
 
 
@@ -50,11 +51,11 @@ def normalize_columns(columns: list, rows: list) -> list[dict]:
             if not isinstance(row, dict):
                 continue
             for k in row.keys():
-                k = str(k)
-                if k in seen:
+                key_str = str(k)
+                if key_str in seen:
                     continue
-                normalized.append({"key": k, "label": k, "hint": ""})
-                seen.add(k)
+                normalized.append({"key": key_str, "label": key_str, "hint": ""})
+                seen.add(key_str)
     return normalized
 
 
@@ -299,10 +300,6 @@ def build_e142_rows_html(csv_path: Path) -> str:
             "</li>"
         )
     return f"<ol class=\"space-y-2\">{''.join(line_items)}</ol>"
-
-
-def single_line_message(message: object) -> str:
-    return " ".join(str(message or "").split())
 
 
 def render_extractor_success_html(

@@ -56,7 +56,8 @@ def normalize_drawing_number_candidate(text: str) -> Optional[str]:
     """Normalize and validate drawing number pattern; return None if no match."""
     normalized = normalize_text(text).upper()
     normalized = normalized.replace(" ", "").replace("　", "")
-    normalized = re.sub(r"[‐‑‒–—―ー−－]", "-", normalized)
+    # RUF001: intentional normalization of Unicode dash/hyphen variants to ASCII hyphen for drawing-number matching
+    normalized = re.sub(r"[‐‑‒–—―ー−－]", "-", normalized)  # noqa: RUF001
     normalized = normalized.strip("|,:;[](){}<>「」『』")
     if DRAWING_NO_PATTERN.fullmatch(normalized):
         return normalized

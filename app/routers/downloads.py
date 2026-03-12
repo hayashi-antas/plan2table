@@ -13,8 +13,8 @@ def _download_job_csv(job_id: UUID, kind: str):
     job_id_str = str(job_id)
     try:
         csv_path = resolve_job_csv_path(job_id=job_id_str, kind=kind)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Job not found")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail="Job not found") from e
     if not csv_path.parent.exists():
         raise HTTPException(status_code=404, detail="Job not found")
     if not csv_path.exists():
