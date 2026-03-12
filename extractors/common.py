@@ -100,9 +100,7 @@ def row_text_normalized(cluster: RowCluster) -> str:
     )
 
 
-def split_cluster_by_x_gap(
-    cluster: RowCluster, max_gap: float
-) -> List[RowCluster]:
+def split_cluster_by_x_gap(cluster: RowCluster, max_gap: float) -> List[RowCluster]:
     """Split a row cluster into sub-clusters where horizontal gap exceeds max_gap."""
     if not cluster.words:
         return []
